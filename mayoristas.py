@@ -284,6 +284,56 @@ def simular(pubs, regs=None, cats=None, codigos=None, solo_activas=True):
 
 # ------------------------------------------------------------------ aplicacion
 
+def leer_tramos(ml, item_id, cantidades=(2, 3, 4, 6, 12, 18)):
+    """
+    Devuelve los tramos mayoristas vigentes: [(unidades, precio), ...].
+
+    OJO: `/items/{id}/prices` **NO lista los nodos de precio por cantidad**.
+    La unica forma de verlos es preguntando el precio de venta para una
+    cantidad, con el contexto de negocios:
+
+        /items/{id}/sale_price?context=user_type_business&quantity=N
+
+    y mirando `metadata.is_price_per_quantity`. Verificar con el endpoint de
+    precios da un falso negativo: parece que no se guardo nada cuando en
+    realidad si.
+    """
+    vistos, salida = {}, []
+    for q in sorted(cantidades):
+        try:
+            r = ml.get(f"/items/{item_id}/sale_price",
+                       context="user_type_business", quantity=q)
+        except MeliError:
+            continue
+        if not (r.get("metadata") or {}).get("is_price_per_quantity"):
+            continue
+        pid = r.get("price_id")
+        if pid in vistos:      # el mismo tramo aplica a varias cantidades
+            continue
+        vistos[pid] = True
+        salida.append((q, float(r["amount"])))
+    return salida
+
+
+def borrar_tramos(ml, item_id):
+    """
+    Quita los tramos mayoristas dejando solo el precio estandar.
+    Funciona justamente porque la API borra los nodos que no se envian.
+    """
+    actuales = ml.get(f"/items/{item_id}/prices")
+    base = [{"id": p["id"]} for p in actuales.get("prices", [])
+            if p.get("type") == "standard"
+            and not (p.get("conditions") or {}).get("min_purchase_unit")]
+    if not base:
+        return False, "No encontre el precio estandar."
+    try:
+        ml._request("POST", f"/items/{item_id}/prices/standard/quantity",
+                    json_body={"prices": base})
+        return True, ""
+    except MeliError as e:
+        return False, str(e)[:200]
+
+
 def aplicar_uno(ml, item_id, tramos_item, operador=""):
     """
     Carga los tramos mayoristas de UNA publicacion.

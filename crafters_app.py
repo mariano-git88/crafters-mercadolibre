@@ -366,12 +366,9 @@ elif seccion == "Mayoristas":
         "generales. La herramienta toma el precio publicado de cada item y "
         "arma los tramos automáticamente.")
 
-    st.warning(
-        "**MercadoLibre todavía no tiene habilitado el precio mayorista en "
-        "esta cuenta.** La API acepta la carga pero no la guarda, y el panel "
-        "de ML da el mismo error. Hay que pedirle a MercadoLibre que active "
-        "*precio por cantidad B2B*. Mientras tanto se puede simular todo: "
-        "cuando lo habiliten, la carga funciona sin tocar nada.", icon="⚠️")
+    st.caption(
+        "Los tramos se cargan como **precio mayorista exclusivo para negocios**, "
+        "igual que desde el panel de MercadoLibre.")
 
     sub = st.radio("Vista", ["Simulación", "Reglas"], horizontal=True,
                    label_visibility="collapsed")
@@ -444,11 +441,15 @@ elif seccion == "Mayoristas":
                         i / t, text=f"Aplicando {i} de {t}..."))
                 barra.empty()
                 ok = (res["resultado"] == "OK").sum()
-                st.info(f"{ok} aceptadas por la API, {len(res) - ok} con error. "
-                        "Recordá que hasta que ML habilite la función, "
-                        "**aceptar no significa que quede guardado**: "
-                        "verificá una publicación en el panel.")
+                if ok == len(res):
+                    st.success(f"{ok} publicaciones con precio mayorista cargado.")
+                else:
+                    st.error(f"{ok} cargadas, {len(res) - ok} con error.")
                 st.dataframe(res, use_container_width=True, height=260)
+                st.caption(
+                    "Los tramos tardan unos segundos en verse en la publicación. "
+                    "El editor de MercadoLibre los muestra en el bloque "
+                    "*Precios mayoristas*.")
 
 elif seccion == "Stock ML":
     bloque_carga("stock")
