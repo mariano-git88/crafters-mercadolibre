@@ -4,12 +4,12 @@ Herramientas de MercadoLibre para CRAFTERS.
 
     streamlit run crafters_app.py
 
-Tres secciones: actualizacion masiva de precios, de stock, y analisis de
-rentabilidad por SKU.
+Cinco secciones: precios, precios mayoristas por reglas, stock de ML,
+control de stock propio y rentabilidad por SKU.
 
-Las dos primeras ESCRIBEN en la cuenta real, asi que el flujo siempre es
-subir planilla -> simular -> revisar -> confirmar -> aplicar. Nunca se
-aplica nada sin pasar por la simulacion.
+Las que escriben en la cuenta real siguen siempre el mismo flujo:
+simular -> revisar -> confirmar -> aplicar. Nunca se aplica nada sin pasar
+por la simulacion.
 """
 
 import json
@@ -22,6 +22,7 @@ import streamlit as st
 import actualizador as act
 import almacen
 import rentabilidad as rent
+import mayoristas
 import stock_control
 import tutorial_crafters
 from catalogo import CACHE as CACHE_CATALOGO, bajar_catalogo
@@ -155,7 +156,8 @@ with enc_btn:
         st.rerun()
 
 seccion = st.segmented_control(
-    "Sección", ["Precios", "Stock ML", "Control de stock", "Rentabilidad"],
+    "Sección", ["Precios", "Mayoristas", "Stock ML", "Control de stock",
+                "Rentabilidad"],
     default="Precios", label_visibility="collapsed")
 
 # En la nube el disco se borra en cada reinicio: si no hay Sheet configurada,
@@ -356,6 +358,97 @@ def bloque_carga(operacion):
 
 if seccion == "Precios":
     bloque_carga("precio")
+
+elif seccion == "Mayoristas":
+    st.markdown("#### Precios mayoristas por reglas")
+    st.caption(
+        "Define descuentos por cantidad con reglas por familia, por SKU o "
+        "generales. La herramienta toma el precio publicado de cada item y "
+        "arma los tramos automáticamente.")
+
+    st.warning(
+        "**MercadoLibre todavía no tiene habilitado el precio mayorista en "
+        "esta cuenta.** La API acepta la carga pero no la guarda, y el panel "
+        "de ML da el mismo error. Hay que pedirle a MercadoLibre que active "
+        "*precio por cantidad B2B*. Mientras tanto se puede simular todo: "
+        "cuando lo habiliten, la carga funciona sin tocar nada.", icon="⚠️")
+
+    sub = st.radio("Vista", ["Simulación", "Reglas"], horizontal=True,
+                   label_visibility="collapsed")
+
+    if sub == "Reglas":
+        st.caption(
+            "Gana la regla de **menor orden**, así que lo específico pisa a lo "
+            "general. Los criterios son: `sku` (código exacto), `familia` "
+            "(código dentro del SKU, ej. CDB), `categoria` (texto de la "
+            "categoría de ML), `titulo` y `general`. Separá varios valores "
+            "con `|`. Se editan en la hoja "
+            f"`{mayoristas.HOJA_REGLAS}` de la planilla.")
+        regs = pd.DataFrame(almacen.leer_hoja(mayoristas.HOJA_REGLAS,
+                                              mayoristas.COLS_REGLAS))
+        if not len(regs):
+            regs = pd.DataFrame(mayoristas.REGLAS_INICIALES)
+        st.dataframe(regs, use_container_width=True, height=460)
+
+    else:
+        if st.button("Simular precios mayoristas"):
+            with st.spinner("Aplicando las reglas al catálogo..."):
+                st.session_state["may"] = mayoristas.simular(pubs)
+
+        sim = st.session_state.get("may")
+        if sim is not None and len(sim):
+            aplicables = sim[sim["accion"] == "aplicar"]
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Publicaciones alcanzadas", len(sim))
+            m2.metric("Con tramos calculados", len(aplicables))
+            m3.metric("Sin regla o sin tramos", len(sim) - len(aplicables))
+
+            st.markdown("##### Cuántas publicaciones toma cada regla")
+            st.dataframe(sim["regla"].value_counts().rename_axis("Regla")
+                         .reset_index(name="Publicaciones"),
+                         use_container_width=True, height=220)
+
+            filtro = st.multiselect("Filtrar por regla",
+                                    sorted(sim["regla"].unique()),
+                                    default=sorted(sim["regla"].unique()))
+            vista_m = sim[sim["regla"].isin(filtro)]
+
+            st.dataframe(
+                vista_m, use_container_width=True, height=380,
+                column_config={
+                    "item_id": "Publicación", "sku": "SKU", "titulo": "Título",
+                    "regla": "Regla",
+                    "precio": st.column_config.NumberColumn("Precio", format="%.0f"),
+                    "q1_unidades": "Desde (Q1)",
+                    "q1_precio": st.column_config.NumberColumn("Precio Q1", format="%.0f"),
+                    "q2_unidades": "Desde (Q2)",
+                    "q2_precio": st.column_config.NumberColumn("Precio Q2", format="%.0f"),
+                    "accion": "Acción", "motivo": "Motivo"})
+
+            st.download_button("Descargar la simulación",
+                               vista_m.to_csv(index=False).encode("utf-8"),
+                               f"mayoristas_{datetime.now():%Y%m%d_%H%M}.csv",
+                               "text/csv")
+
+            st.divider()
+            op_may = st.text_input("Tu nombre (queda en el registro)", key="op_may")
+            conf_may = st.checkbox(
+                f"Confirmo que quiero cargar los tramos en {len(aplicables)} "
+                "publicaciones", key="conf_may")
+            if st.button("Aplicar en MercadoLibre", key="go_may",
+                         disabled=not (conf_may and op_may.strip())):
+                barra = st.progress(0.0, text="Aplicando...")
+                res = mayoristas.aplicar(
+                    ml, sim, operador=op_may.strip(),
+                    callback=lambda i, t, f: barra.progress(
+                        i / t, text=f"Aplicando {i} de {t}..."))
+                barra.empty()
+                ok = (res["resultado"] == "OK").sum()
+                st.info(f"{ok} aceptadas por la API, {len(res) - ok} con error. "
+                        "Recordá que hasta que ML habilite la función, "
+                        "**aceptar no significa que quede guardado**: "
+                        "verificá una publicación en el panel.")
+                st.dataframe(res, use_container_width=True, height=260)
 
 elif seccion == "Stock ML":
     bloque_carga("stock")

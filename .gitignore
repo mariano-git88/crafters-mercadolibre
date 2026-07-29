@@ -26,3 +26,6 @@ __pycache__/
 
 # Bloque de secrets con la clave privada — NO subir
 secrets_para_streamlit_cloud.txt
+
+# La tabla de familias sí va al repo: la necesita el motor de mayoristas
+!_assets/sku_familia_subgrupo.xlsx
