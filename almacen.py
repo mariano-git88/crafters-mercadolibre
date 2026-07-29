@@ -214,6 +214,95 @@ def _append_local(filas):
             w.writerow({c: fila.get(c, "") for c in COLUMNAS_AUDITORIA})
 
 
+# ------------------------------------------------------------------ hojas genericas
+#
+# Lo de abajo lo usa el control de stock, que necesita varias hojas propias.
+# Con fallback a CSV local para poder trabajar sin Sheet configurada.
+
+def _csv_local(titulo):
+    return DIR / f"{titulo}.csv"
+
+
+def leer_hoja(titulo, columnas):
+    """Devuelve la hoja como lista de dicts. Si no existe, lista vacia."""
+    if hay_sheet():
+        try:
+            return _hoja(_abrir(), titulo, columnas).get_all_records()
+        except Exception as e:
+            raise AlmacenError(f"No pude leer la hoja '{titulo}': {e}") from e
+
+    ruta = _csv_local(titulo)
+    if not ruta.exists():
+        return []
+    import csv
+    with open(ruta, newline="", encoding="utf-8") as f:
+        return list(csv.DictReader(f))
+
+
+def columna_hoja(titulo, columnas, nombre):
+    """
+    Devuelve los valores de UNA columna. Se usa para las claves de
+    idempotencia: traer solo esa columna es mucho mas liviano que bajar
+    todas las filas cada vez que corre la sincronizacion.
+    """
+    if hay_sheet():
+        try:
+            hoja = _hoja(_abrir(), titulo, columnas)
+            idx = columnas.index(nombre) + 1
+            return [v for v in hoja.col_values(idx)[1:] if v]
+        except Exception as e:
+            raise AlmacenError(f"No pude leer la columna '{nombre}': {e}") from e
+    return [str(f.get(nombre, "")) for f in leer_hoja(titulo, columnas)
+            if f.get(nombre)]
+
+
+def append_hoja(titulo, columnas, filas):
+    """Agrega filas al final. Devuelve (ok, detalle)."""
+    if not filas:
+        return True, ""
+    if hay_sheet():
+        try:
+            hoja = _hoja(_abrir(), titulo, columnas)
+            hoja.append_rows([[str(f.get(c, "")) for c in columnas] for f in filas])
+            return True, ""
+        except Exception as e:
+            return False, f"No pude escribir en '{titulo}': {e}"
+
+    import csv
+    ruta = _csv_local(titulo)
+    nuevo = not ruta.exists()
+    with open(ruta, "a", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=columnas)
+        if nuevo:
+            w.writeheader()
+        for fila in filas:
+            w.writerow({c: fila.get(c, "") for c in columnas})
+    return True, ""
+
+
+def reescribir_hoja(titulo, columnas, filas):
+    """Reemplaza el contenido completo. Se usa al resolver devoluciones."""
+    if hay_sheet():
+        try:
+            hoja = _hoja(_abrir(), titulo, columnas)
+            hoja.clear()
+            hoja.append_row(columnas)
+            if filas:
+                hoja.append_rows([[str(f.get(c, "")) for c in columnas]
+                                  for f in filas])
+            return True, ""
+        except Exception as e:
+            return False, f"No pude reescribir '{titulo}': {e}"
+
+    import csv
+    with open(_csv_local(titulo), "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=columnas)
+        w.writeheader()
+        for fila in filas:
+            w.writerow({c: fila.get(c, "") for c in columnas})
+    return True, ""
+
+
 # ------------------------------------------------------------------ estado
 
 def describir():

@@ -204,31 +204,70 @@ def leer_costos(archivo):
 
 # ------------------------------------------------------------------ calculo
 
-def calcular(costos_df, cargos_df, pubs, iva=0.0):
+def items_de_costos(costos_df, pubs):
+    """Publicaciones de referencia de los SKU de la planilla de costos."""
+    from resolver import indexar_por_sku, resolver_precio
+    indice = indexar_por_sku(pubs)
+    ids = []
+    for sku in costos_df["sku"]:
+        res = resolver_precio(sku, indice)
+        if res.ok:
+            ids.append(res.destinos[0]["id"])
+    return ids
+
+
+def precios_reales(ml, item_ids, callback=None):
+    """
+    Devuelve el precio que REALMENTE paga el comprador de cada publicacion.
+
+    Hace falta porque `price` del item es el precio de lista, y ~12% de las
+    publicaciones activas tienen una promocion encima. Si se calcula el margen
+    con el precio de lista, sale mas optimista de lo que es.
+    """
+    salida = {}
+    ids = list(dict.fromkeys(item_ids))
+    for i, iid in enumerate(ids, start=1):
+        try:
+            r = ml.get(f"/items/{iid}/sale_price")
+            salida[iid] = float(r["amount"]) if r.get("amount") is not None else None
+        except MeliError:
+            salida[iid] = None      # nos quedamos con el de lista
+        if callback and i % 20 == 0:
+            callback(i, len(ids))
+    return salida
+
+
+def calcular(costos_df, cargos_df, pubs, iva=0.0, precios_venta=None):
     """
     Cruza costos + cargos + precio actual y devuelve la rentabilidad por SKU.
 
     `iva`: si los precios de ML son con IVA y el costo esta sin IVA, pasar
     0.21 para descontarlo del ingreso antes de comparar. Por defecto 0 (se
     asume que costo y precio estan en la misma base).
+
+    `precios_venta`: dict item_id -> precio real (de `precios_reales()`). Si
+    se pasa, el margen se calcula sobre lo que efectivamente paga el
+    comprador en vez del precio de lista.
     """
-    from catalogo import sku_del_atributo
     from resolver import indexar_por_sku, resolver_precio
 
     indice = indexar_por_sku(pubs)
+    precios_venta = precios_venta or {}
 
     filas = []
     for _, fila in costos_df.iterrows():
         sku, costo = fila["sku"], float(fila["costo"])
 
         res = resolver_precio(sku, indice)
-        precio_actual = None
+        precio_lista = precio_actual = None
         item_id = tipo = ""
         if res.ok:
             # Si hay varias, tomamos la de referencia (la primera del destino).
             pub = res.destinos[0]
-            precio_actual = pub.get("price")
             item_id = pub["id"]
+            precio_lista = pub.get("price")
+            # El precio real manda: puede haber una promocion activa.
+            precio_actual = precios_venta.get(item_id) or precio_lista
             tipo = "Premium" if pub.get("listing_type_id") == "gold_pro" else "Clasica"
 
         h = cargos_df[cargos_df["sku"] == sku]
@@ -250,11 +289,16 @@ def calcular(costos_df, cargos_df, pubs, iva=0.0):
             margen = ingreso_neto - comision - envio - costo
             margen_pct = margen / float(precio_actual)
 
+        en_promo = (precio_lista is not None and precio_actual is not None
+                    and abs(precio_lista - precio_actual) > 0.01)
+
         filas.append({
             "sku": sku,
             "item_id": item_id,
             "tipo": tipo,
             "precio_ml": precio_actual,
+            "precio_lista": precio_lista,
+            "en_promo": en_promo,
             "costo": costo,
             "comision_prom": comision,
             "envio_prom": envio,
