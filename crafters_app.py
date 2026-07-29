@@ -14,6 +14,7 @@ aplica nada sin pasar por la simulacion.
 
 import json
 from datetime import datetime
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
@@ -21,12 +22,17 @@ import streamlit as st
 import actualizador as act
 import almacen
 import rentabilidad as rent
+import tutorial_crafters
 from catalogo import CACHE as CACHE_CATALOGO, bajar_catalogo
 from meli import Meli, MeliError
 
+_ASSETS = Path(__file__).resolve().parent / "_assets"
+LOGO = _ASSETS / "logo_crafters.png"          # horizontal, para el encabezado
+ICONO = _ASSETS / "icono_crafters.png"        # cuadrado, para la pestaña
+
 st.set_page_config(page_title="MercadoLibre — CRAFTERS",
-                   page_icon="🛒", layout="wide",
-                   initial_sidebar_state="collapsed")
+                   page_icon=str(ICONO) if ICONO.exists() else "🛒",
+                   layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown("""
     <style>
@@ -73,10 +79,11 @@ def autenticado():
 
     izq, centro, der = st.columns([1, 2, 1])
     with centro:
-        st.markdown("<h1 style='margin-bottom:0.25rem;'>MercadoLibre — CRAFTERS</h1>",
-                    unsafe_allow_html=True)
-        st.caption("Herramientas de precios, stock y rentabilidad. "
-                   "Acceso restringido.")
+        if LOGO.exists():
+            st.image(str(LOGO), width=280)
+        st.markdown("<h3 style='margin:0.5rem 0 0.25rem 0;'>Herramientas de "
+                    "MercadoLibre</h3>", unsafe_allow_html=True)
+        st.caption("Precios, stock y rentabilidad. Acceso restringido.")
         with st.form("login"):
             ingresada = st.text_input("Contraseña", type="password")
             if st.form_submit_button("Ingresar", use_container_width=True):
@@ -123,11 +130,24 @@ activas = [p for p in pubs if p.get("status") == "active"]
 
 # ===================================================================== header
 
-enc_izq, enc_der = st.columns([3, 1])
-with enc_izq:
-    st.markdown("### 🛒 MercadoLibre — CRAFTERS")
-    st.caption(f"{len(pubs):,} publicaciones · {len(activas):,} activas".replace(",", "."))
-with enc_der:
+@st.dialog("Tutorial — Herramientas de MercadoLibre", width="large")
+def _tutorial_dialog():
+    tutorial_crafters.render()
+
+
+enc_logo, enc_info, enc_btn = st.columns([1.1, 2, 1.3])
+with enc_logo:
+    if LOGO.exists():
+        st.image(str(LOGO), width=190)
+    else:
+        st.markdown("### CRAFTERS")
+with enc_info:
+    st.markdown("##### Herramientas de MercadoLibre")
+    st.caption(f"{len(pubs):,} publicaciones · {len(activas):,} activas"
+               .replace(",", "."))
+with enc_btn:
+    if st.button("📖 Tutorial", use_container_width=True):
+        _tutorial_dialog()
     if st.button("↻ Actualizar catálogo", use_container_width=True):
         st.session_state["sello_catalogo"] += 1
         st.cache_data.clear()
