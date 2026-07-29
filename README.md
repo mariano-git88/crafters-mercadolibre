@@ -209,6 +209,43 @@ llamada por envío. Las ventas sin dato de envío se excluyen del promedio en ve
 de contarse como cero, así el costo no queda subestimado; la columna
 `cobertura_envio` dice qué proporción tiene dato real.
 
+## Control de stock
+
+Registro propio de unidades, **paralelo al de MercadoLibre** (no lo modifica).
+Vive en `stock_control.py` y en las hojas `stock_inicial`, `movimientos` y
+`devoluciones` de la Google Sheet.
+
+Reglas:
+
+- La unidad se descuenta **al pagarse la orden**. Si después se cancela, el
+  movimiento se revierte solo.
+- Las **devoluciones no vuelven solas**: quedan en una bandeja hasta que
+  alguien confirme que la unidad está apta para revenderse.
+- Compras y ajustes los carga el operador.
+
+**Es idempotente**, y eso es lo que permite correrlo cada 15 minutos: cada
+movimiento lleva una clave derivada de la orden y la publicación
+(`v:{order_id}:{item_id}`), así que reprocesar el mismo período no duplica
+nada. Verificado: correr dos veces sobre el mismo rango agrega 0 movimientos.
+
+La ventana por defecto son varios días hacia atrás, no solo lo nuevo, para
+que las **cancelaciones tardías** se enteren.
+
+### Sincronización automática
+
+`.github/workflows/sincronizar_stock.yml` corre cada 15 minutos, de 8 a 21 hs
+de Argentina, de lunes a sábado.
+
+> **Por qué no 24/7:** en un repo privado el plan gratuito da 2000 minutos de
+> Actions al mes. Cada 15 minutos todo el día serían ~3450 y se cortaría a
+> mitad de mes. Esta ventana usa ~950 (cada corrida tarda ~42 s). No se pierde
+> ninguna venta: lo de la madrugada o el domingo entra en la primera corrida
+> siguiente.
+
+Requiere el secret **`CRAFTERS_SECRETS_TOML`** en el repositorio, con el mismo
+contenido que los secrets de Streamlit Cloud (service account **inline**, no
+como ruta a un archivo, porque el `sa.json` no está en el repo).
+
 ## Deploy en Streamlit Cloud
 
 ### Por qué hace falta la Google Sheet

@@ -25,11 +25,15 @@ Tres cosas, cada una en su sección:
 | Sección | Para qué sirve |
 |---|---|
 | **Precios** | Cambiar precios de muchas publicaciones de una, desde una planilla |
-| **Stock** | Lo mismo pero con las unidades disponibles |
+| **Stock ML** | Lo mismo pero con las unidades publicadas en MercadoLibre |
+| **Control de stock** | Llevar tu propia cuenta de unidades, con historial de movimientos |
 | **Rentabilidad** | Ver cuánto ganás realmente con cada producto, después de todo lo que se lleva MercadoLibre |
 
-Las dos primeras **modifican la cuenta de verdad**. Por eso nunca aplican
+**Precios** y **Stock ML** modifican la cuenta de verdad. Por eso nunca aplican
 nada sin mostrarte antes, en pantalla, exactamente qué va a pasar.
+
+**Control de stock** no toca nada en MercadoLibre: es un registro tuyo,
+aparte.
 """
     )
 
@@ -172,6 +176,43 @@ a dar más alto de lo que realmente es.
 
 **Qué mirar primero:** los productos con margen negativo aparecen arriba de
 todo. Son los que se están vendiendo a pérdida.
+"""
+    )
+
+    st.divider()
+    st.markdown(
+        """
+### Sección Control de stock
+
+Lleva **tu propia cuenta** de unidades. No modifica el stock de MercadoLibre:
+sirve para saber qué tenés realmente y poder rastrear cada movimiento.
+
+**Cómo arranca:** cargás una vez el **stock inicial** (planilla con SKU y
+cantidad). De ahí en más, la app va descontando las ventas sola.
+
+**Cuándo baja una unidad:** apenas MercadoLibre confirma el pago. Si la orden
+después se cancela, la unidad **vuelve sola** al stock.
+
+**Las devoluciones no vuelven solas.** Quedan en la pestaña *Devoluciones*
+esperando que alguien las revise. Recién cuando marcás que la unidad está
+**apta**, se suma al stock. Si está rota o no se puede revender, marcás
+*descarte* y no suma nada.
+
+**Cuando entra mercadería** (compra a proveedor, o el conteo físico no
+coincide) la cargás en *Ingresos*. Usá **compra** para mercadería nueva y
+**ajuste** para corregir diferencias, así después se puede distinguir en el
+historial.
+
+**Se actualiza solo** cada 15 minutos, de 8 a 21 hs, de lunes a sábado.
+También podés forzarlo con **↻ Sincronizar ventas**. Lo que se venda de noche
+o el domingo entra en la primera sincronización siguiente: no se pierde nada,
+porque cada corrida revisa los últimos días.
+
+**Si un SKU da negativo** casi siempre es una de dos: nunca se cargó su stock
+inicial, o entró mercadería que no se registró en Ingresos.
+
+> Las ventas de Shopify y los pedidos especiales no se leen automáticamente.
+> Cargalos como **ajuste** en Ingresos, con cantidad negativa.
 """
     )
 
