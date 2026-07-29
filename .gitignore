@@ -23,3 +23,6 @@ cargos_por_sku.csv
 
 __pycache__/
 *.pyc
+
+# Bloque de secrets con la clave privada — NO subir
+secrets_para_streamlit_cloud.txt
