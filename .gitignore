@@ -1,0 +1,25 @@
+# Credenciales — NUNCA subir
+credentials.txt
+tokens.json
+tokens.json.tmp
+.streamlit/secrets.toml
+.gsheets/
+
+# Registro de cambios aplicados (queda en la Google Sheet)
+auditoria.csv
+backup_prueba_*.json
+
+# Caches que se regeneran solos
+catalogo.json
+exploracion.json
+historico_ventas.json
+costos_envio.json
+cargos_por_sku.csv
+
+# Planillas de trabajo
+*.xlsx
+*.xls
+!ejemplo_*.xlsx
+
+__pycache__/
+*.pyc
