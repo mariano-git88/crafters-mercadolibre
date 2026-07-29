@@ -4,8 +4,8 @@ Herramientas de MercadoLibre para CRAFTERS.
 
     streamlit run crafters_app.py
 
-Cinco secciones: precios, precios mayoristas por reglas, stock de ML,
-control de stock propio y rentabilidad por SKU.
+Seis secciones: precios, precios mayoristas por reglas, stock de ML,
+control de stock propio, rentabilidad por SKU y precios de la competencia.
 
 Las que escriben en la cuenta real siguen siempre el mismo flujo:
 simular -> revisar -> confirmar -> aplicar. Nunca se aplica nada sin pasar
@@ -21,6 +21,7 @@ import streamlit as st
 
 import actualizador as act
 import almacen
+import competencia
 import rentabilidad as rent
 import mayoristas
 import stock_control
@@ -157,7 +158,7 @@ with enc_btn:
 
 seccion = st.segmented_control(
     "Sección", ["Precios", "Mayoristas", "Stock ML", "Control de stock",
-                "Rentabilidad"],
+                "Rentabilidad", "Competencia"],
     default="Precios", label_visibility="collapsed")
 
 # En la nube el disco se borra en cada reinicio: si no hay Sheet configurada,
@@ -696,6 +697,92 @@ elif seccion == "Control de stock":
                         st.error(f"No se pudo cargar: {det}")
             except Exception as e:
                 st.error(f"No pude leer la planilla: {e}")
+
+elif seccion == "Competencia":
+    st.markdown("#### Mejor precio de la competencia por EAN")
+    st.caption(
+        "Subí una planilla con los **EAN** (códigos de barras) y te dice quién "
+        "vende más barato cada producto, a cuánto, y en qué posición estamos.")
+
+    with st.expander("Qué alcance tiene esta búsqueda"):
+        st.markdown(
+            "MercadoLibre **cerró el buscador libre** para aplicaciones, así que "
+            "la búsqueda va por el **catálogo**: vemos a todos los que venden ese "
+            "producto de catálogo.\n\n"
+            "- Si alguien publica el producto **por fuera del catálogo**, no "
+            "aparece.\n"
+            "- Si el EAN no tiene producto de catálogo, se reporta como "
+            "`sin_catalogo`.\n\n"
+            "Antes de reaccionar a una diferencia grande, conviene abrir la "
+            "publicación del competidor: puede tratarse de otra presentación "
+            "(unidad contra pack) aunque comparta el catálogo.")
+
+    arch_ean = st.file_uploader("Planilla con EAN (.xlsx o .csv)",
+                               type=["xlsx", "xls", "csv"], key="up_ean")
+    if arch_ean:
+        try:
+            eans, col_detectada = competencia.leer_planilla_eans(arch_ean)
+            st.caption(f"Columna detectada: **{col_detectada}** · "
+                       f"{len(eans)} EAN únicos")
+        except Exception as e:
+            st.error(f"No pude leer la planilla: {e}")
+            eans = []
+
+        if eans and st.button(f"Buscar precios de {len(eans)} EAN"):
+            barra = st.progress(0.0, text="Consultando MercadoLibre...")
+            st.session_state["comp"] = competencia.analizar(
+                ml, eans,
+                callback=lambda i, t, e: barra.progress(
+                    i / t, text=f"Consultando {i} de {t} ({e})..."))
+            barra.empty()
+
+    df = st.session_state.get("comp")
+    if df is not None and len(df):
+        ok = df[df["estado"] == "ok"]
+        perdiendo = ok[ok["diferencia"].notna() & (ok["diferencia"] > 0)]
+        ganando = ok[ok["mejor_vendedor"] == "NOSOTROS"]
+
+        m1, m2, m3 = st.columns(3)
+        m1.metric("EAN con competencia", len(ok))
+        m2.metric("Somos los más baratos", len(ganando))
+        m3.metric("Estamos por encima", len(perdiendo))
+
+        if len(perdiendo):
+            peor = perdiendo.nlargest(1, "diferencia").iloc[0]
+            st.warning(
+                f"**En {len(perdiendo)} productos estamos más caros que el "
+                f"más barato.** El caso extremo: EAN {peor['ean']}, "
+                f"nosotros {pesos(peor['nuestro_precio'])} contra "
+                f"{pesos(peor['mejor_precio'])} de *{peor['mejor_vendedor']}* "
+                f"({peor['diferencia']:+.0%}).", icon="📉")
+
+        sin_cat = df[df["estado"] != "ok"]
+        if len(sin_cat):
+            st.info(f"{len(sin_cat)} EAN sin datos de competencia "
+                    "(sin producto de catálogo o sin vendedores activos).")
+
+        st.dataframe(
+            df, use_container_width=True, height=420,
+            column_config={
+                "ean": "EAN", "producto": "Producto",
+                "mejor_precio": st.column_config.NumberColumn(
+                    "Mejor precio", format="%.0f"),
+                "mejor_vendedor": "Lo vende",
+                "reputacion": "Reputación",
+                "nuestro_precio": st.column_config.NumberColumn(
+                    "Nuestro precio", format="%.0f"),
+                "diferencia": st.column_config.NumberColumn(
+                    "Diferencia", format="%.1f%%",
+                    help="Cuánto estamos por encima del más barato"),
+                "posicion": "Posición",
+                "competidores": "Vendedores",
+                "estado": "Estado", "detalle": "Detalle",
+                "product_id": "Producto ML"})
+
+        st.download_button("Descargar el análisis",
+                           df.to_csv(index=False).encode("utf-8"),
+                           f"competencia_{datetime.now():%Y%m%d_%H%M}.csv",
+                           "text/csv")
 
 elif seccion == "Rentabilidad":
     st.markdown("#### Rentabilidad por SKU")
