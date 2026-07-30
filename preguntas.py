@@ -1,0 +1,535 @@
+#!/usr/bin/env python3
+"""
+Respuesta automatica de preguntas de compradores, con IA.
+
+    python preguntas.py --simular     -> redacta sin publicar (recomendado para probar)
+    python preguntas.py --publicar    -> redacta Y PUBLICA en MercadoLibre
+
+De donde saca el contexto, en orden de peso:
+
+  1. **El historico de respuestas de CRAFTERS** (~1.585 preguntas ya
+     contestadas). Es la fuente mas valiosa: mismo producto, mismo tono,
+     respuestas ya validadas por el equipo. Se busca con BM25.
+  2. **Los datos de la publicacion**: titulo, descripcion, atributos, precio,
+     stock, y las preguntas anteriores del MISMO articulo.
+  3. **Documentos y sitios** que cargue el operador (fichas tecnicas, etc.).
+
+Sobre el modo automatico: publica sin intervencion, como se pidio. Dos cosas
+que si estan puestas, porque son parte de responder bien y no un limite al
+alcance:
+
+  - El modelo puede **abstenerse**. Si el contexto no alcanza para responder
+    con certeza, marca la pregunta para que la vea una persona en vez de
+    inventar. Una respuesta equivocada queda publica.
+  - Hay un **interruptor** en la Sheet (`ia_activa`) y queda registro de todo
+    lo publicado, para poder medir la calidad y frenar si hace falta.
+"""
+
+import json
+import re
+import sys
+import unicodedata
+from datetime import datetime
+from pathlib import Path
+
+import almacen
+from meli import Meli, MeliError
+
+DIR = Path(__file__).resolve().parent
+CACHE_HIST = DIR / "preguntas_historico.json"
+
+HOJA_RESPUESTAS = "respuestas_ia"
+HOJA_FUENTES = "fuentes_ia"
+HOJA_CONFIG = "config_ia"
+
+COLS_RESPUESTAS = ["fecha", "question_id", "item_id", "pregunta", "respuesta",
+                   "estado", "confianza", "fuentes", "modelo", "motivo"]
+COLS_FUENTES = ["tipo", "nombre", "url", "contenido", "cargado", "operador"]
+COLS_CONFIG = ["clave", "valor", "nota"]
+
+MODELO = "claude-opus-5"
+
+# Cuantos ejemplos del historico se le pasan al modelo.
+K_HISTORICO = 10
+
+
+# ------------------------------------------------------------------ config
+
+def config():
+    filas = almacen.leer_hoja(HOJA_CONFIG, COLS_CONFIG)
+    if not filas:
+        iniciales = [
+            {"clave": "ia_activa", "valor": "si",
+             "nota": "Poner 'no' para que deje de responder automaticamente"},
+            {"clave": "firma", "valor": "Equipo CRAFTERS",
+             "nota": "Como firma la respuesta"},
+            {"clave": "min_confianza", "valor": "media",
+             "nota": "alta | media -> por debajo de esto no publica, deja para revisar"},
+        ]
+        almacen.append_hoja(HOJA_CONFIG, COLS_CONFIG, iniciales)
+        filas = iniciales
+    return {f["clave"]: str(f.get("valor", "")).strip() for f in filas}
+
+
+def ia_activa():
+    return config().get("ia_activa", "si").lower() in ("si", "sí", "1", "true")
+
+
+# ------------------------------------------------------------------ historico
+
+def _norm(s):
+    s = unicodedata.normalize("NFD", str(s or "").lower())
+    s = "".join(c for c in s if unicodedata.category(c) != "Mn")
+    return re.sub(r"[^a-z0-9ñ ]+", " ", s)
+
+
+TOPE_OFFSET_PREGUNTAS = 1000    # ML rechaza offset > 1000 con un 400
+
+
+def bajar_historico(ml, limite=1000):
+    """
+    Trae las preguntas ya respondidas (las mas recientes primero) y las cachea.
+
+    ML corta el offset en 1000, asi que nos quedamos con las ultimas ~1000.
+    Alcanza de sobra: son las mas representativas del tono actual.
+    """
+    respondidas, offset = [], 0
+    while len(respondidas) < limite and offset < TOPE_OFFSET_PREGUNTAS:
+        r = ml.get("/questions/search", seller_id=ml.user_id, limit=50,
+                   offset=offset, sort_fields="date_created", sort_types="DESC")
+        lote = r.get("questions") or []
+        if not lote:
+            break
+        for q in lote:
+            texto_r = ((q.get("answer") or {}).get("text") or "").strip()
+            if texto_r:
+                respondidas.append({
+                    "item_id": q.get("item_id"),
+                    "pregunta": (q.get("text") or "").strip(),
+                    "respuesta": texto_r,
+                    "fecha": (q.get("date_created") or "")[:10],
+                })
+        offset += 50
+        if offset >= (r.get("total") or 0):
+            break
+
+    CACHE_HIST.write_text(json.dumps(respondidas, ensure_ascii=False),
+                          encoding="utf-8")
+    return respondidas
+
+
+def cargar_historico(ml=None, refrescar=False):
+    if CACHE_HIST.exists() and not refrescar:
+        return json.loads(CACHE_HIST.read_text(encoding="utf-8"))
+    if ml is None:
+        return []
+    return bajar_historico(ml)
+
+
+class Buscador:
+    """
+    BM25 sobre el historico de preguntas y los documentos cargados.
+
+    Se usa BM25 y no vectores a proposito: son textos cortos con vocabulario
+    muy repetido (nombres de producto, medidas, marcas), donde el match por
+    palabra funciona bien, y evita depender de otra API de embeddings.
+    """
+
+    def __init__(self, historico, documentos=None):
+        from rank_bm25 import BM25Okapi
+
+        self.docs = []
+        for h in historico:
+            self.docs.append({
+                "tipo": "historico",
+                "texto": f"{h['pregunta']} {h['respuesta']}",
+                "datos": h,
+            })
+        for d in documentos or []:
+            # Los documentos largos se parten para que el match sea util.
+            for i, trozo in enumerate(_partir(d.get("contenido", ""))):
+                self.docs.append({
+                    "tipo": "documento",
+                    "texto": trozo,
+                    "datos": {"nombre": d.get("nombre"), "url": d.get("url"),
+                              "fragmento": i, "contenido": trozo},
+                })
+
+        self.bm25 = (BM25Okapi([_norm(d["texto"]).split() for d in self.docs])
+                     if self.docs else None)
+
+    def buscar(self, consulta, k=K_HISTORICO):
+        if not self.bm25:
+            return []
+        puntajes = self.bm25.get_scores(_norm(consulta).split())
+        orden = sorted(range(len(puntajes)), key=lambda i: -puntajes[i])
+        return [self.docs[i] for i in orden[:k] if puntajes[i] > 0]
+
+
+def _partir(texto, tamano=900):
+    texto = re.sub(r"\s+", " ", str(texto or "")).strip()
+    return [texto[i:i + tamano] for i in range(0, len(texto), tamano)] or []
+
+
+# ------------------------------------------------------------------ fuentes
+
+def fuentes():
+    return almacen.leer_hoja(HOJA_FUENTES, COLS_FUENTES)
+
+
+def agregar_fuente(tipo, nombre, contenido, url="", operador=""):
+    return almacen.append_hoja(HOJA_FUENTES, COLS_FUENTES, [{
+        "tipo": tipo, "nombre": nombre, "url": url,
+        "contenido": str(contenido)[:45000],
+        "cargado": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "operador": operador}])
+
+
+def leer_pdf(archivo):
+    from pypdf import PdfReader
+    return "\n".join((p.extract_text() or "") for p in PdfReader(archivo).pages)
+
+
+def bajar_web(url, max_paginas=1):
+    """Trae el texto de una URL. Simple a proposito: una pagina por fuente."""
+    import requests
+    from bs4 import BeautifulSoup
+
+    r = requests.get(url, timeout=30, headers={
+        "User-Agent": "Mozilla/5.0 (compatible; CraftersBot/1.0)"})
+    r.raise_for_status()
+    sopa = BeautifulSoup(r.text, "html.parser")
+    for t in sopa(["script", "style", "nav", "footer", "header"]):
+        t.decompose()
+    principal = sopa.find("main") or sopa.find("article") or sopa.body or sopa
+    titulo = (sopa.title.string if sopa.title else url) or url
+    return titulo.strip(), re.sub(r"\s+", " ", principal.get_text(" ")).strip()
+
+
+# ------------------------------------------------------------------ contexto
+
+def contexto_publicacion(ml, item_id):
+    """Datos del articulo sobre el que preguntan."""
+    try:
+        it = ml.get(f"/items/{item_id}")
+    except MeliError:
+        return {}
+    try:
+        desc = (ml.get(f"/items/{item_id}/description").get("plain_text") or "")[:2500]
+    except MeliError:
+        desc = ""
+
+    atributos = {a.get("name"): a.get("value_name")
+                 for a in it.get("attributes") or []
+                 if a.get("value_name") and a.get("name")}
+    return {
+        "item_id": item_id,
+        "titulo": it.get("title"),
+        "precio": it.get("price"),
+        "stock": it.get("available_quantity"),
+        "vendidos": it.get("sold_quantity"),
+        "estado": it.get("status"),
+        "descripcion": desc,
+        "atributos": atributos,
+        "envio_gratis": (it.get("shipping") or {}).get("free_shipping"),
+    }
+
+
+def preguntas_del_item(ml, item_id, excluir=None):
+    """Q&A previas del MISMO articulo: el contexto mas directo que hay."""
+    try:
+        r = ml.get("/questions/search", item=item_id, limit=30)
+    except MeliError:
+        return []
+    salida = []
+    for q in r.get("questions") or []:
+        if excluir and str(q.get("id")) == str(excluir):
+            continue
+        resp = ((q.get("answer") or {}).get("text") or "").strip()
+        if resp:
+            salida.append({"pregunta": (q.get("text") or "").strip(),
+                           "respuesta": resp})
+    return salida[:12]
+
+
+# ------------------------------------------------------------------ redaccion
+
+ESQUEMA = {
+    "type": "object",
+    "properties": {
+        "responder": {
+            "type": "boolean",
+            "description": ("true si el contexto alcanza para responder con "
+                            "certeza; false si hay que derivar a una persona"),
+        },
+        "respuesta": {
+            "type": "string",
+            "description": "El texto a publicar. Vacio si responder es false.",
+        },
+        "confianza": {"type": "string", "enum": ["alta", "media", "baja"]},
+        "motivo": {
+            "type": "string",
+            "description": ("Por que se responde eso, o que falta para poder "
+                            "responder. Para el registro, no se publica."),
+        },
+    },
+    "required": ["responder", "respuesta", "confianza", "motivo"],
+    "additionalProperties": False,
+}
+
+INSTRUCCIONES = """\
+Sos quien responde las preguntas de los compradores en la cuenta de \
+MercadoLibre de CRAFTERS (Argentina), una empresa que vende herramientas, \
+adhesivos, selladores, candados, griferia y articulos de ferreteria.
+
+Tu respuesta se PUBLICA AUTOMATICAMENTE, sin que nadie la revise antes. \
+Escribi solamente lo que puedas sostener con el contexto que te dan.
+
+Como escribir:
+- En castellano rioplatense, breve y concreto. Dos o tres oraciones.
+- Segui el estilo de las respuestas anteriores de la cuenta que te paso: \
+suelen abrir agradeciendo la consulta y cerrar invitando a la compra.
+- Respondé lo que preguntaron. Nada de vender lo que no preguntaron.
+- Nunca inventes medidas, compatibilidades, materiales, plazos de entrega ni \
+disponibilidad. Si el dato no está en el contexto, no lo afirmes.
+
+Cuándo NO responder (poné responder=false):
+- La pregunta necesita un dato que no tenés (una compatibilidad puntual, una \
+medida que no figura, si sirve para un uso muy especifico).
+- Piden algo que no podés resolver: cambiar el precio, hacer un descuento, \
+facturacion especial, un reclamo, un envio fuera de lo normal.
+- La pregunta es sobre una compra ya hecha, una demora o un problema.
+- Cualquier caso donde una respuesta equivocada le haría perder plata o \
+confianza a la empresa.
+
+Es mejor derivar a una persona que arriesgar una respuesta incorrecta: la \
+respuesta queda publica en la publicacion.
+
+Las reglas de MercadoLibre no permiten dar datos de contacto (telefono, mail, \
+redes) ni derivar la venta fuera de la plataforma. No lo hagas nunca.\
+"""
+
+
+def redactar(pregunta, item, similares, previas, firma, cliente=None):
+    """Le pide a Claude la respuesta. Devuelve el dict del esquema."""
+    import anthropic
+
+    cliente = cliente or anthropic.Anthropic(api_key=_api_key())
+
+    partes = [f"PREGUNTA DEL COMPRADOR ({pregunta.get('nick') or 'comprador'}):",
+              pregunta["texto"], ""]
+
+    if item:
+        partes += [
+            "DATOS DE LA PUBLICACION:",
+            f"  Titulo: {item.get('titulo')}",
+            f"  Precio: ${item.get('precio')}",
+            f"  Stock disponible: {item.get('stock')}",
+            f"  Unidades vendidas: {item.get('vendidos')}",
+            f"  Envio gratis: {item.get('envio_gratis')}",
+        ]
+        if item.get("atributos"):
+            partes.append("  Ficha del producto:")
+            for k, v in list(item["atributos"].items())[:25]:
+                partes.append(f"    - {k}: {v}")
+        if item.get("descripcion"):
+            partes += ["  Descripcion publicada:", f"    {item['descripcion']}"]
+        partes.append("")
+
+    if previas:
+        partes.append("PREGUNTAS YA RESPONDIDAS EN ESTA MISMA PUBLICACION:")
+        for p in previas:
+            partes += [f"  P: {p['pregunta']}", f"  R: {p['respuesta']}"]
+        partes.append("")
+
+    hist = [d for d in similares if d["tipo"] == "historico"]
+    docs = [d for d in similares if d["tipo"] == "documento"]
+
+    if hist:
+        partes.append("RESPUESTAS ANTERIORES DE LA CUENTA EN CASOS PARECIDOS "
+                      "(seguí este tono):")
+        for d in hist:
+            partes += [f"  P: {d['datos']['pregunta']}",
+                       f"  R: {d['datos']['respuesta']}"]
+        partes.append("")
+
+    if docs:
+        partes.append("DOCUMENTACION CARGADA POR LA EMPRESA:")
+        for d in docs:
+            partes.append(f"  [{d['datos'].get('nombre')}] "
+                          f"{d['datos'].get('contenido', '')[:900]}")
+        partes.append("")
+
+    partes.append(f"Firmá como: {firma}")
+
+    resp = cliente.messages.create(
+        model=MODELO,
+        max_tokens=4096,
+        system=[{"type": "text", "text": INSTRUCCIONES,
+                 # Las instrucciones son iguales en cada pregunta: cachearlas
+                 # abarata mucho el procesamiento de una tanda.
+                 "cache_control": {"type": "ephemeral"}}],
+        thinking={"type": "adaptive"},
+        output_config={"effort": "medium",
+                       "format": {"type": "json_schema", "schema": ESQUEMA}},
+        messages=[{"role": "user", "content": "\n".join(partes)}],
+    )
+
+    # El modelo puede declinar por politica: hay que mirarlo antes del contenido.
+    if resp.stop_reason == "refusal":
+        return {"responder": False, "respuesta": "", "confianza": "baja",
+                "motivo": "El modelo declinó la solicitud por sus políticas."}
+
+    texto = next((b.text for b in resp.content if b.type == "text"), "{}")
+    salida = json.loads(texto)
+    salida["_fuentes"] = ([f"historico:{d['datos']['pregunta'][:40]}" for d in hist[:3]]
+                          + [f"doc:{d['datos'].get('nombre')}" for d in docs[:3]])
+    return salida
+
+
+def _api_key():
+    clave = (almacen._seccion("anthropic") or {}).get("api_key")
+    if not clave:
+        try:
+            import streamlit as st
+            clave = st.secrets.get("anthropic_api_key")
+        except Exception:
+            clave = None
+    if not clave and almacen.SECRETS_LOCAL.exists():
+        import tomllib
+        with open(almacen.SECRETS_LOCAL, "rb") as f:
+            clave = tomllib.load(f).get("anthropic_api_key")
+    if not clave:
+        raise MeliError(
+            "Falta la clave de Anthropic. Agregá `anthropic_api_key` en los "
+            "secrets (es la misma que usan las otras apps).")
+    return clave
+
+
+# ------------------------------------------------------------------ publicar
+
+def publicar(ml, question_id, texto):
+    """Publica la respuesta en MercadoLibre."""
+    try:
+        ml._request("POST", "/answers",
+                    json_body={"question_id": int(question_id), "text": texto})
+        return True, ""
+    except MeliError as e:
+        return False, str(e)[:250]
+
+
+def pendientes(ml):
+    r = ml.get("/questions/search", seller_id=ml.user_id,
+               status="UNANSWERED", limit=50)
+    return r.get("questions") or []
+
+
+def registrar(fila):
+    almacen.append_hoja(HOJA_RESPUESTAS, COLS_RESPUESTAS, [fila])
+
+
+def ya_procesadas():
+    return set(almacen.columna_hoja(HOJA_RESPUESTAS, COLS_RESPUESTAS,
+                                    "question_id"))
+
+
+def procesar(ml, publicar_de_verdad=False, callback=None):
+    """
+    Toma las preguntas sin responder, redacta y (si corresponde) publica.
+
+    Es idempotente: una pregunta ya registrada no se vuelve a procesar.
+    """
+    if publicar_de_verdad and not ia_activa():
+        return {"error": "La IA está desactivada en la configuración "
+                         "(config_ia → ia_activa)."}
+
+    cfg = config()
+    firma = cfg.get("firma", "Equipo CRAFTERS")
+    minima = cfg.get("min_confianza", "media").lower()
+    orden = {"alta": 3, "media": 2, "baja": 1}
+
+    preguntas = pendientes(ml)
+    hechas = ya_procesadas()
+    nuevas = [q for q in preguntas if str(q.get("id")) not in hechas]
+
+    historico = cargar_historico(ml)
+    buscador = Buscador(historico, fuentes())
+
+    resultados = []
+    for i, q in enumerate(nuevas, start=1):
+        if callback:
+            callback(i, len(nuevas), q)
+
+        texto_p = (q.get("text") or "").strip()
+        item_id = q.get("item_id")
+        item = contexto_publicacion(ml, item_id)
+        previas = preguntas_del_item(ml, item_id, excluir=q.get("id"))
+        similares = buscador.buscar(f"{item.get('titulo','')} {texto_p}")
+
+        try:
+            r = redactar({"texto": texto_p,
+                          "nick": (q.get("from") or {}).get("nickname")},
+                         item, similares, previas, firma)
+        except Exception as e:
+            r = {"responder": False, "respuesta": "", "confianza": "baja",
+                 "motivo": f"Error al redactar: {str(e)[:200]}", "_fuentes": []}
+
+        suficiente = orden.get(r.get("confianza", "baja"), 1) >= orden.get(minima, 2)
+        estado = "para_revisar"
+        if r.get("responder") and suficiente:
+            estado = "publicada" if publicar_de_verdad else "simulada"
+
+        if estado == "publicada":
+            ok, detalle = publicar(ml, q["id"], r["respuesta"])
+            if not ok:
+                estado, r["motivo"] = "error_al_publicar", detalle
+
+        fila = {
+            "fecha": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "question_id": q.get("id"), "item_id": item_id,
+            "pregunta": texto_p[:400], "respuesta": (r.get("respuesta") or "")[:900],
+            "estado": estado, "confianza": r.get("confianza", ""),
+            "fuentes": " | ".join(r.get("_fuentes") or [])[:300],
+            "modelo": MODELO, "motivo": (r.get("motivo") or "")[:400],
+        }
+        # Solo se registran las que se publicaron o quedaron para revisar: una
+        # simulacion no debe bloquear el procesamiento real posterior.
+        if estado != "simulada":
+            registrar(fila)
+        resultados.append(fila)
+
+    return {"pendientes": len(preguntas), "procesadas": len(resultados),
+            "resultados": resultados}
+
+
+def main():
+    publicar_real = "--publicar" in sys.argv
+    ml = Meli(verbose=False)
+
+    if publicar_real:
+        print("MODO PUBLICAR: las respuestas se van a publicar en "
+              "MercadoLibre.\n")
+    else:
+        print("MODO SIMULACION: redacta pero no publica nada.\n")
+
+    r = procesar(ml, publicar_de_verdad=publicar_real,
+                 callback=lambda i, t, q: print(f"  {i}/{t} pregunta {q['id']}..."))
+    if "error" in r:
+        print(f"\n{r['error']}")
+        return 1
+
+    print(f"\npendientes: {r['pendientes']} | procesadas: {r['procesadas']}\n")
+    for f in r["resultados"]:
+        print(f"  [{f['estado']}] confianza={f['confianza']}")
+        print(f"    P: {f['pregunta'][:100]}")
+        print(f"    R: {f['respuesta'][:180] or '(no responde)'}")
+        print(f"    motivo: {f['motivo'][:140]}\n")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except MeliError as e:
+        print(f"\nERROR: {e}\n")
+        sys.exit(1)

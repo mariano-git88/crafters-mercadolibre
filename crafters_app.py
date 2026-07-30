@@ -24,6 +24,7 @@ import almacen
 import competencia
 import rentabilidad as rent
 import mayoristas
+import preguntas as preg
 import stock_control
 import tutorial_crafters
 from catalogo import CACHE as CACHE_CATALOGO, bajar_catalogo
@@ -158,7 +159,7 @@ with enc_btn:
 
 seccion = st.segmented_control(
     "Sección", ["Precios", "Mayoristas", "Stock ML", "Control de stock",
-                "Rentabilidad", "Competencia"],
+                "Rentabilidad", "Competencia", "Preguntas"],
     default="Precios", label_visibility="collapsed")
 
 # En la nube el disco se borra en cada reinicio: si no hay Sheet configurada,
@@ -783,6 +784,138 @@ elif seccion == "Competencia":
                            df.to_csv(index=False).encode("utf-8"),
                            f"competencia_{datetime.now():%Y%m%d_%H%M}.csv",
                            "text/csv")
+
+elif seccion == "Preguntas":
+    st.markdown("#### Respuestas automáticas con IA")
+
+    cfg = preg.config()
+    activa = preg.ia_activa()
+    c1, c2, c3 = st.columns([1.3, 1.3, 2])
+    c1.metric("Estado", "Activa" if activa else "Apagada")
+    c2.metric("Confianza mínima", cfg.get("min_confianza", "media").capitalize())
+    c3.caption(f"Firma: **{cfg.get('firma','')}**  \nSe cambia en la hoja "
+               f"`{preg.HOJA_CONFIG}` de la planilla.")
+
+    if not activa:
+        st.warning("La IA está **apagada**. Poné `ia_activa = si` en la hoja "
+                   f"`{preg.HOJA_CONFIG}` para que vuelva a responder.", icon="⏸️")
+
+    vista_p = st.radio("Vista", ["Responder", "Historial", "Fuentes"],
+                       horizontal=True, label_visibility="collapsed")
+
+    if vista_p == "Responder":
+        st.caption(
+            "Redacta con el historial de respuestas de la cuenta, los datos de "
+            "la publicación y las fuentes cargadas. **Si el contexto no alcanza, "
+            "no responde**: deja la pregunta para que la vea una persona.")
+
+        pend = preg.pendientes(ml)
+        st.metric("Preguntas sin responder", len(pend))
+        if pend:
+            with st.expander("Ver las preguntas pendientes"):
+                for q in pend:
+                    st.markdown(f"- `{q['id']}` · {(q.get('text') or '')[:160]}")
+
+        b1, b2 = st.columns(2)
+        simular = b1.button("Redactar sin publicar", use_container_width=True,
+                            disabled=not pend)
+        aplicar = b2.button("Redactar y PUBLICAR", use_container_width=True,
+                            disabled=not pend or not activa)
+
+        if simular or aplicar:
+            barra = st.progress(0.0, text="Trabajando...")
+            r = preg.procesar(
+                ml, publicar_de_verdad=aplicar,
+                callback=lambda i, t_, q: barra.progress(
+                    i / max(t_, 1), text=f"Pregunta {i} de {t_}..."))
+            barra.empty()
+            st.session_state["preg_res"] = r
+
+        r = st.session_state.get("preg_res")
+        if r:
+            if "error" in r:
+                st.error(r["error"])
+            else:
+                res = pd.DataFrame(r["resultados"])
+                if len(res):
+                    pub = (res["estado"] == "publicada").sum()
+                    rev = (res["estado"] == "para_revisar").sum()
+                    sim = (res["estado"] == "simulada").sum()
+                    if pub:
+                        st.success(f"{pub} respuestas publicadas en MercadoLibre.")
+                    if sim:
+                        st.info(f"{sim} redactadas (no se publicaron: fue una prueba).")
+                    if rev:
+                        st.warning(f"**{rev} quedaron sin responder** porque el "
+                                   "contexto no alcanzaba. Mirá la columna "
+                                   "*motivo* y respondelas a mano.", icon="👤")
+                    for _, f in res.iterrows():
+                        with st.container(border=True):
+                            st.markdown(f"**{f['estado']}** · confianza "
+                                        f"{f['confianza']} · `{f['question_id']}`")
+                            st.markdown(f"**P:** {f['pregunta']}")
+                            st.markdown(f"**R:** {f['respuesta'] or '_(no respondió)_'}")
+                            st.caption(f"Motivo: {f['motivo']}")
+
+    elif vista_p == "Historial":
+        hist = pd.DataFrame(almacen.leer_hoja(preg.HOJA_RESPUESTAS,
+                                              preg.COLS_RESPUESTAS))
+        if not len(hist):
+            st.info("Todavía no hay respuestas registradas.")
+        else:
+            st.caption(f"{len(hist)} registros · todo lo publicado queda acá")
+            st.dataframe(hist.iloc[::-1], use_container_width=True, height=440)
+            st.download_button("Descargar el historial",
+                               hist.to_csv(index=False).encode("utf-8"),
+                               f"respuestas_ia_{datetime.now():%Y%m%d}.csv",
+                               "text/csv")
+
+    else:
+        st.caption("Documentos y sitios que la IA usa como referencia, además "
+                   "del historial de respuestas de la cuenta.")
+
+        f1, f2 = st.columns(2)
+        with f1:
+            st.markdown("##### Subir un documento")
+            doc = st.file_uploader("Ficha técnica, manual, tabla (.pdf o .txt)",
+                                   type=["pdf", "txt", "md"], key="up_doc")
+            op_doc = st.text_input("Tu nombre", key="op_doc")
+            if doc and op_doc.strip() and st.button("Cargar documento"):
+                try:
+                    texto = (preg.leer_pdf(doc) if doc.name.lower().endswith(".pdf")
+                             else doc.getvalue().decode("utf-8", "ignore"))
+                    if not texto.strip():
+                        st.error("No pude extraer texto (¿es un PDF escaneado?).")
+                    else:
+                        preg.agregar_fuente("documento", doc.name, texto,
+                                            operador=op_doc.strip())
+                        st.success(f"Cargado: {len(texto):,} caracteres."
+                                   .replace(",", "."))
+                except Exception as e:
+                    st.error(f"No pude leer el archivo: {e}")
+
+        with f2:
+            st.markdown("##### Agregar un sitio")
+            url = st.text_input("URL (ej: una ficha técnica online)")
+            op_web = st.text_input("Tu nombre", key="op_web")
+            if url and op_web.strip() and st.button("Traer la página"):
+                try:
+                    titulo, texto = preg.bajar_web(url)
+                    preg.agregar_fuente("web", titulo, texto, url=url,
+                                        operador=op_web.strip())
+                    st.success(f"Cargado «{titulo}»: {len(texto):,} caracteres."
+                               .replace(",", "."))
+                except Exception as e:
+                    st.error(f"No pude traer la página: {e}")
+
+        st.divider()
+        fs = pd.DataFrame(preg.fuentes())
+        if len(fs):
+            st.dataframe(fs.drop(columns=["contenido"], errors="ignore"),
+                         use_container_width=True)
+        else:
+            st.info("Todavía no hay fuentes cargadas. El historial de "
+                    "respuestas de la cuenta se usa igual.")
 
 elif seccion == "Rentabilidad":
     st.markdown("#### Rentabilidad por SKU")

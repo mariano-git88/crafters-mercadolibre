@@ -29,3 +29,6 @@ secrets_para_streamlit_cloud.txt
 
 # La tabla de familias sí va al repo: la necesita el motor de mayoristas
 !_assets/sku_familia_subgrupo.xlsx
+
+# Cache del historico de preguntas
+preguntas_historico.json
