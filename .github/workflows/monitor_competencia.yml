@@ -33,17 +33,8 @@ jobs:
           mkdir -p .streamlit
           printf '%s' "$SECRETS_TOML" > .streamlit/secrets.toml
       - name: Comparar contra la medición anterior
-        run: python -c "
-          from meli import Meli
-          import competencia as c
-          r = c.monitorear(Meli(verbose=False))
-          if r.get('error'):
-              print(r['error'])
-          else:
-              print(f\"vigilados: {r['vigilados']} | alertas nuevas: {len(r['alertas'])}\")
-              for a in r['alertas']:
-                  print(f\"  [{a['tipo']}] {a['producto'][:50]} — {a['detalle']}\")
-          "
+        run: python monitor_cron.py
+
       - name: Limpiar credenciales
         if: always()
         run: rm -f .streamlit/secrets.toml
