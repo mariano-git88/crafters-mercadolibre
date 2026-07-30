@@ -1,0 +1,268 @@
+#!/usr/bin/env python3
+"""
+Precio minimo viable: a que precio hay que estar para no perder plata.
+
+    python precio_minimo.py            -> margen objetivo 15%
+    python precio_minimo.py 25         -> margen objetivo 25%
+
+Es la herramienta inversa a `buybox.py`. Buy Box pregunta "hasta donde puedo
+bajar"; esta pregunta **"desde donde no puedo bajar"**, que con los costos
+reales de CRAFTERS resulto ser el problema grande: 197 SKU vendieron a perdida
+en 90 dias.
+
+**El detalle que hace toda la diferencia: el cargo fijo.** MercadoLibre cobra
+un porcentaje mas un cargo fijo por unidad, y ese cargo salta en escalones
+(ver `tramos.py`). Arriba de $33.000 el cargo fijo es **cero**. Eso hace que
+el precio minimo NO se pueda despejar con una sola cuenta: hay que resolverlo
+por tramo y quedarse con el menor precio que efectivamente cierra.
+
+Y produce un resultado que parece un error y no lo es: a veces el precio
+minimo viable esta **justo en $33.000** aunque el producto valga bastante
+menos, porque cruzar el escalon elimina un cargo fijo de $3.005 que ningun
+aumento chico logra compensar.
+
+La cuenta, con el ingreso ya sin IVA:
+
+    margen = ingreso*(1 - otros) - precio*pct - cargo_fijo(precio) - envio - costo
+
+y se busca el precio mas chico donde `margen >= objetivo * precio`.
+"""
+
+import json
+import sys
+from pathlib import Path
+
+import pandas as pd
+
+from meli import Meli, MeliError
+
+DIR = Path(__file__).resolve().parent
+
+
+def _bandas():
+    """Los tramos de cargo fijo como (desde, hasta, fijo)."""
+    from tramos import TRAMOS
+    bandas, desde = [], 0.0
+    for tope, fijo in TRAMOS:
+        bandas.append((desde, float(tope), float(fijo)))
+        desde = float(tope)
+    return bandas
+
+
+def precio_minimo(costo, pct, envio, iva=0.21, tasa_otros=0.25, objetivo=0.15):
+    """
+    El precio mas bajo que deja `objetivo` de margen sobre el precio.
+
+    Devuelve None si no hay precio que alcance: pasa cuando la comision
+    porcentual mas los otros conceptos mas el objetivo se comen todo el
+    ingreso, y ahi subir el precio no arregla nada.
+    """
+    # margen = P*[(1-otros)/(1+iva) - pct] - fijo - envio - costo
+    # y se pide margen >= objetivo*P, o sea:
+    #   P*[(1-otros)/(1+iva) - pct - objetivo] >= fijo + envio + costo
+    k = (1 - tasa_otros) / (1 + iva) - pct - objetivo
+    if k <= 0:
+        return None
+
+    candidatos = []
+    for desde, hasta, fijo in _bandas():
+        p = (fijo + envio + costo) / k
+        # La solucion solo vale si cae dentro de la banda cuyo cargo fijo se
+        # uso para calcularla.
+        if desde <= p < hasta:
+            candidatos.append(p)
+        # El borde de abajo tambien es candidato: cruzar el escalon puede
+        # hacer viable un precio que dentro de la banda anterior no cerraba.
+        if desde > 0:
+            k_borde = desde * k - (fijo + envio + costo)
+            if k_borde >= 0:
+                candidatos.append(desde)
+
+    return min(candidatos) if candidatos else None
+
+
+def analizar(costos_df, cargos_df, pubs, iva=0.21, otros_conceptos=None,
+             objetivo=0.15):
+    """
+    Por SKU: precio actual, precio minimo viable y cuanto habria que subir.
+
+    Usa el porcentaje de comision **real** de cada SKU, despejado de lo que ML
+    cobro (asi vale igual para Clasica que para Premium), y el envio promedio
+    medido de las ventas.
+    """
+    from rentabilidad import OTROS_CONCEPTOS
+    from resolver import indexar_por_sku, resolver_precio
+    from tramos import cargo_fijo
+
+    otros = dict(OTROS_CONCEPTOS)
+    if otros_conceptos:
+        otros.update(otros_conceptos)
+    tasa_otros = sum(otros.values())
+
+    pct, envio, unidades = {}, {}, {}
+    for _, f in cargos_df.iterrows():
+        p = f["precio_prom"] or 0
+        if p > 0:
+            pct[f["sku"]] = max(((f["comision_prom"] or 0) - cargo_fijo(p)) / p,
+                                0.0)
+        envio[f["sku"]] = f["envio_prom"] or 0.0
+        unidades[f["sku"]] = int(f["unidades_vendidas"] or 0)
+
+    indice = indexar_por_sku(pubs)
+
+    filas = []
+    for _, f in costos_df.iterrows():
+        sku, costo = f["sku"], float(f["costo"])
+        res = resolver_precio(sku, indice)
+        if not res.ok:
+            continue
+        pub = res.destinos[0]
+        actual = pub.get("price")
+        if not actual:
+            continue
+
+        p = pct.get(sku)
+        if p is None:
+            # Sin ventas no hay comision medida: se usa la base de Clasica.
+            from tramos import PORCENTAJE
+            p = PORCENTAJE
+        e = envio.get(sku, 0.0)
+
+        minimo = precio_minimo(costo, p, e, iva=iva, tasa_otros=tasa_otros,
+                               objetivo=objetivo)
+
+        def margen_a(precio):
+            ingreso = precio / (1 + iva)
+            return (ingreso * (1 - tasa_otros) - precio * p
+                    - cargo_fijo(precio) - e - costo)
+
+        m_hoy = margen_a(actual)
+        m_min = margen_a(minimo) if minimo else None
+
+        if minimo is None:
+            diag = "no cierra a ningún precio"
+        elif actual >= minimo:
+            diag = "ok"
+        else:
+            diag = "hay que subir"
+
+        filas.append({
+            "sku": sku,
+            "item_id": pub["id"],
+            "titulo": (pub.get("title") or "")[:60],
+            "diagnostico": diag,
+            "precio_actual": actual,
+            "precio_minimo": minimo,
+            "subir": (minimo - actual) if (minimo and minimo > actual) else 0.0,
+            "subir_pct": ((minimo - actual) / actual
+                          if (minimo and minimo > actual) else 0.0),
+            "costo": costo,
+            "envio_prom": e,
+            "comision_pct": p,
+            "margen_hoy": m_hoy,
+            "margen_hoy_pct": m_hoy / actual if actual else None,
+            "margen_al_minimo": m_min,
+            "unidades": unidades.get(sku, 0),
+            # Cruzar el escalon del cargo fijo puede ser justamente el motivo
+            # de la suba: conviene que se vea.
+            "cruza_escalon": (cargo_fijo(actual) != cargo_fijo(minimo)
+                              if minimo else False),
+            "perdida_periodo": (m_hoy * unidades.get(sku, 0)
+                                if m_hoy < 0 else 0.0),
+        })
+
+    df = pd.DataFrame(filas)
+    if not len(df):
+        return df
+    orden = {"hay que subir": 0, "no cierra a ningún precio": 1, "ok": 2}
+    df["_o"] = df["diagnostico"].map(orden)
+    return df.sort_values(["_o", "perdida_periodo"],
+                          ascending=[True, True]).drop(columns=["_o"])
+
+
+def resumen(df):
+    if not len(df):
+        return {}
+    subir = df[df["diagnostico"] == "hay que subir"]
+    return {
+        "total": len(df),
+        "ok": int((df["diagnostico"] == "ok").sum()),
+        "a_subir": len(subir),
+        "no_cierran": int((df["diagnostico"] == "no cierra a ningún precio").sum()),
+        "perdiendo_hoy": int((df["margen_hoy"] < 0).sum()),
+        "perdida_periodo": float(df["perdida_periodo"].sum()),
+        "suba_mediana": float(subir["subir_pct"].median()) if len(subir) else 0.0,
+        "cruzan_escalon": int(subir["cruza_escalon"].sum()) if len(subir) else 0,
+    }
+
+
+def planilla_de_precios(seleccion):
+    """
+    Convierte la seleccion en la planilla que consume `actualizador.simular()`.
+
+    Se reusa ese motor a proposito: ya tiene el resolver de SKU, el aviso de
+    cambios mayores al 50% y la auditoria. No hace falta otra ruta de
+    escritura.
+    """
+    return pd.DataFrame({
+        "sku": seleccion["sku"],
+        "precio": seleccion["precio_minimo"].round(2),
+    })
+
+
+def main():
+    objetivo = (float(sys.argv[1]) / 100
+                if len(sys.argv) > 1 else 0.15)
+    ml = Meli(verbose=False)
+
+    import rentabilidad as rent
+    costos, cuando = rent.costos_guardados()
+    if not len(costos):
+        print("No hay planilla de costos guardada. Subila desde la app.")
+        return 1
+    print(f"Costos: {len(costos)} SKU (actualizada {cuando})")
+
+    ordenes = rent.traer_historico(ml, 90)
+    envios = rent.traer_costos_envio(ml, ordenes, muestra_por_sku=5)
+    cargos = rent.cargos_por_sku(ordenes, envios)
+    pubs = json.loads((DIR / "catalogo.json").read_text(encoding="utf-8"))
+
+    df = analizar(costos, cargos, pubs, objetivo=objetivo)
+    r = resumen(df)
+    pes = lambda v: "—" if v is None or pd.isna(v) else f"${v:,.0f}".replace(",", ".")
+
+    print("\n" + "=" * 72)
+    print(f"PRECIO MINIMO VIABLE  (margen objetivo {objetivo:.0%})")
+    print("=" * 72)
+    print(f"  SKU analizados            {r['total']:>6}")
+    print(f"  Ya estan bien             {r['ok']:>6}")
+    print(f"  Hay que subir             {r['a_subir']:>6}")
+    print(f"  No cierran a ningun precio{r['no_cierran']:>6}")
+    print(f"  Perdiendo plata hoy       {r['perdiendo_hoy']:>6}")
+    print(f"  Plata perdida en el periodo  {pes(r['perdida_periodo']):>14}")
+    print(f"  Suba mediana necesaria       {r['suba_mediana']:>13.0%}")
+    print(f"  De esas, cruzan escalon   {r['cruzan_escalon']:>6}")
+
+    subir = df[df["diagnostico"] == "hay que subir"]
+    if len(subir):
+        print(f"\n  Los 12 que mas plata pierden:")
+        for _, f in subir.head(12).iterrows():
+            print(f"    {f['sku']:<24} {pes(f['precio_actual'])} -> "
+                  f"{pes(f['precio_minimo'])} ({f['subir_pct']:+.0%})"
+                  f"{'  [cruza escalon]' if f['cruza_escalon'] else ''}")
+            print(f"       {f['titulo']}")
+            print(f"       margen hoy {pes(f['margen_hoy'])}/u · "
+                  f"{int(f['unidades'])} u · perdio "
+                  f"{pes(abs(f['perdida_periodo']))}")
+
+    df.to_csv(DIR / "precio_minimo.csv", index=False)
+    print(f"\nGuardado en precio_minimo.csv")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except MeliError as e:
+        print(f"\nERROR: {e}\n")
+        sys.exit(1)

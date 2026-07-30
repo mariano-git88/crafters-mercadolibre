@@ -944,11 +944,11 @@ elif seccion == "Ganar la venta":
 
             i1, i2 = st.columns([1.2, 3])
             iva_bb = i1.selectbox(
-                "IVA a descontar", [0.0, 0.21, 0.105],
+                "IVA a descontar", [0.21, 0.105, 0.0],
                 format_func=lambda x: f"{x:.1%}" if x else "Sin descontar",
                 key="iva_bb",
-                help="Usalo si tus costos están sin IVA y los precios de ML "
-                     "lo incluyen.")
+                help="La planilla de costos está SIN IVA y los precios de ML "
+                     "lo incluyen, así que corresponde descontarlo.")
 
             otros_bb = controles_otros_conceptos("bb")
 
@@ -2699,10 +2699,15 @@ elif seccion == "Rentabilidad":
                                  help="Consulta el costo real de envío de una "
                                       "muestra de ventas por SKU. Tarda más.")
     with c3:
-        iva = st.selectbox("IVA a descontar del precio", [0.0, 0.21, 0.105],
+        # 21% por defecto: los costos de CRAFTERS se cargan SIN IVA y los
+        # precios de ML lo incluyen. Con "Sin descontar" el margen sale
+        # inflado en 21 puntos, que es muchisimo.
+        iva = st.selectbox("IVA a descontar del precio", [0.21, 0.105, 0.0],
                            format_func=lambda x: f"{x:.1%}" if x else "Sin descontar",
-                           help="Usalo si tus costos están sin IVA y los precios "
-                                "de ML lo incluyen.")
+                           help="La planilla de costos de CRAFTERS está SIN "
+                                "IVA y los precios de ML lo incluyen, así que "
+                                "corresponde descontarlo. Ponelo en 'Sin "
+                                "descontar' solo si cambiás a costos con IVA.")
 
     otros_rent = controles_otros_conceptos("rent")
 
