@@ -217,6 +217,65 @@ def cumplen(n):
             else f"**{n} publicaciones cumplen el criterio.**")
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def _costos_guardados_cache(sello):
+    """`sello` fuerza la relectura cuando el operador sube una planilla nueva."""
+    return rent.costos_guardados()
+
+
+def bloque_costos(clave):
+    """
+    Planilla de costos: se guarda una vez y la usan Rentabilidad y Buy Box.
+
+    Antes había que subirla en cada sección y en cada visita, porque el
+    `file_uploader` no sobrevive al rerun. Ahora se guarda en la planilla
+    (mismo motivo que los tokens: en Streamlit Cloud el disco es efímero) y
+    solo hace falta volver a subirla cuando cambian los costos.
+
+    Devuelve el DataFrame de costos, o None si todavía no hay ninguno.
+    """
+    sello = st.session_state.get("sello_costos", 0)
+    guardados, cuando = _costos_guardados_cache(sello)
+
+    if len(guardados):
+        c1, c2 = st.columns([3, 1.4])
+        c1.success(
+            f"Usando la planilla de costos guardada: **{len(guardados)} SKU**"
+            + (f", actualizada el {cuando}." if cuando else "."), icon="📄")
+        with c2:
+            st.write("")
+            reemplazar = st.toggle("Subir otra", key=f"rep_{clave}")
+    else:
+        st.info("Todavía no hay una planilla de costos guardada. Subí una y "
+                "queda disponible para Rentabilidad y para Buy Box.", icon="📄")
+        reemplazar = True
+
+    if reemplazar:
+        archivo = st.file_uploader(
+            "Planilla de costos (.xlsx o .csv) — una columna de SKU y una de costo",
+            type=["xlsx", "xls", "csv"], key=f"up_{clave}")
+        quien = st.text_input("Tu nombre (queda en el registro)",
+                              key=f"opc_{clave}")
+        if archivo and st.button("Guardar la planilla", key=f"save_{clave}",
+                                 disabled=not quien.strip()):
+            try:
+                nuevos = rent.leer_costos(archivo)
+            except Exception as e:
+                st.error(f"No pude leer la planilla: {e}")
+                return guardados if len(guardados) else None
+            ok, detalle = rent.guardar_costos(nuevos, operador=quien.strip())
+            if ok:
+                st.session_state["sello_costos"] = sello + 1
+                st.success(f"Guardados {len(nuevos)} costos. Ya los usan "
+                           "Rentabilidad y Buy Box.")
+                st.rerun()
+            else:
+                st.error(f"No pude guardar: {detalle}")
+                return nuevos      # al menos sirve para esta corrida
+
+    return guardados if len(guardados) else None
+
+
 def controles_otros_conceptos(clave):
     """
     Los tres costos de estructura que no cobra ML pero hay que cargarle igual
@@ -881,9 +940,7 @@ elif seccion == "Ganar la venta":
                 "la baja en lote, solo en las publicaciones donde el margen "
                 "aguanta.")
 
-            arch_bb = st.file_uploader(
-                "Planilla de costos (.xlsx o .csv) — la misma de Rentabilidad",
-                type=["xlsx", "xls", "csv"], key="up_bb")
+            costos_bb = bloque_costos("bb")
 
             i1, i2 = st.columns([1.2, 3])
             iva_bb = i1.selectbox(
@@ -895,13 +952,8 @@ elif seccion == "Ganar la venta":
 
             otros_bb = controles_otros_conceptos("bb")
 
-            if arch_bb and i2.button("Calcular márgenes",
-                                     use_container_width=True):
-                try:
-                    costos_bb = rent.leer_costos(arch_bb)
-                except Exception as e:
-                    st.error(f"No pude leer la planilla: {e}")
-                    st.stop()
+            if costos_bb is not None and i2.button("Calcular márgenes",
+                                                   use_container_width=True):
                 with st.spinner("Cruzando con los cargos reales..."):
                     st.session_state["buybox_costos"] = buybox.con_costos(
                         dbb, costos_bb, cargos_cacheados(ml), iva=iva_bb,
@@ -2636,8 +2688,7 @@ elif seccion == "Rentabilidad":
         "ML en las ventas históricas de ese SKU (comisión, recargo por "
         "financiación, cargo fijo y envío).")
 
-    archivo = st.file_uploader("Planilla de costos (.xlsx o .csv)",
-                               type=["xlsx", "xls", "csv"], key="up_rent")
+    costos_rent = bloque_costos("rent")
 
     c1, c2, c3 = st.columns(3)
     with c1:
@@ -2655,12 +2706,8 @@ elif seccion == "Rentabilidad":
 
     otros_rent = controles_otros_conceptos("rent")
 
-    if archivo and st.button("Calcular rentabilidad"):
-        try:
-            costos = rent.leer_costos(archivo)
-        except Exception as e:
-            st.error(f"No pude leer la planilla: {e}")
-            st.stop()
+    if costos_rent is not None and st.button("Calcular rentabilidad"):
+        costos = costos_rent
 
         with st.spinner(f"Trayendo ventas de los últimos {dias} días..."):
             ordenes = rent.traer_historico(ml, dias)

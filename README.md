@@ -387,6 +387,20 @@ publicaciones (el catálogo tiene muchos espejos), así que:
   descuido.
 - Probado sobre publicaciones pausadas y revertido al valor original.
 
+### La planilla de costos se guarda
+
+Se sube una vez y queda en la hoja **`costos`** de la Google Sheet (columnas
+`sku`, `costo`, `fecha`, `operador`). La usan **Rentabilidad y Buy Box**, y solo
+hay que volver a subirla cuando cambian los costos — se reemplaza entera, no se
+acumula.
+
+Va a la Sheet por el mismo motivo que los tokens: en Streamlit Cloud el disco es
+efímero. `rentabilidad.costos_guardados()` nunca lanza: si la hoja no existe
+devuelve vacío y la sección sigue funcionando pidiendo la planilla.
+
+Antes había que subirla en cada sección y en cada visita, porque el
+`file_uploader` de Streamlit no sobrevive al rerun.
+
 ### Otros conceptos (impuestos, logístico, general)
 
 Además de lo que cobra MercadoLibre, el margen descuenta tres costos de

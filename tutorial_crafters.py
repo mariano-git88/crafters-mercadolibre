@@ -258,9 +258,9 @@ La columna *Te quedaría* dice qué te deja por unidad vender al precio para
 ganar, **antes del costo de la mercadería**. Sirve para descartar los casos
 donde ganar el Buy Box directamente da negativo.
 
-**Bajar precios en lote.** Si subís la planilla de costos (la misma de
-Rentabilidad), la herramienta calcula el margen real al precio del Buy Box y te
-deja aplicar la baja **solo donde el margen aguanta**. Definís el criterio una
+**Bajar precios en lote.** Usa la planilla de costos guardada —la misma que
+subiste en Rentabilidad, no hay que volver a cargarla— para calcular el margen
+real al precio del Buy Box y aplicar la baja **solo donde el margen aguanta**. Definís el criterio una
 vez —margen mínimo, baja máxima, unidades mínimas— y se selecciona sola.
 
 **Cómo elegir qué se toca.** Tenés tres formas y se combinan:
@@ -320,6 +320,13 @@ Dos cosas que hace sola para que no te pises:
     st.markdown(
         """
 ### Sección Rentabilidad
+
+**La planilla de costos se sube una sola vez.** Queda guardada en la planilla
+de Google y la usan tanto Rentabilidad como Buy Box. Solo hace falta volver a
+subirla cuando cambian los costos: ahí tildás *Subir otra* y reemplaza a la
+anterior.
+
+Arriba de todo te dice cuántos SKU tiene la guardada y de cuándo es.
 
 **Otros conceptos.** Además de lo que cobra MercadoLibre, el margen descuenta
 tres costos de estructura: **impuestos 10%, logístico 10% y general 5%**. Se

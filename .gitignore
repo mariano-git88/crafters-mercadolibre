@@ -55,3 +55,6 @@ reclamos_cache.json
 buybox.csv
 buybox_cache.json
 promociones.csv
+
+# Fallback local de la planilla de costos (la verdad vive en la Sheet)
+costos.csv

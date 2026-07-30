@@ -202,6 +202,57 @@ def leer_costos(archivo):
     return out[out["sku"].ne("") & out["sku"].ne("NAN")].dropna(subset=["costo"])
 
 
+# ------------------------------------------------------- costos guardados
+
+HOJA_COSTOS = "costos"
+COLS_COSTOS = ["sku", "costo", "fecha", "operador"]
+
+
+def guardar_costos(costos_df, operador=""):
+    """
+    Deja la planilla de costos guardada para no tener que subirla cada vez.
+
+    Va a la Google Sheet (o al CSV local si no hay Sheet configurada) por el
+    mismo motivo que los tokens: en Streamlit Cloud el disco se borra en cada
+    reinicio. Se **reemplaza** entera, no se acumula: la ultima planilla que
+    sube el operador es la verdad.
+    """
+    import almacen
+
+    sello = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M")
+    filas = [{"sku": f["sku"], "costo": f["costo"],
+              "fecha": sello, "operador": operador}
+             for _, f in costos_df.iterrows()]
+    ok, detalle = almacen.reescribir_hoja(HOJA_COSTOS, COLS_COSTOS, filas)
+    return ok, (detalle or sello)
+
+
+def costos_guardados():
+    """
+    (DataFrame sku/costo, cuando se guardo). DataFrame vacio si no hay nada.
+
+    Nunca lanza: si la hoja no existe o falla la lectura, se devuelve vacio
+    para que la seccion siga funcionando pidiendo la planilla a mano.
+    """
+    import almacen
+
+    try:
+        filas = almacen.leer_hoja(HOJA_COSTOS, COLS_COSTOS)
+    except Exception:
+        return pd.DataFrame(columns=["sku", "costo"]), ""
+
+    if not filas:
+        return pd.DataFrame(columns=["sku", "costo"]), ""
+
+    from actualizador import _a_numero
+    df = pd.DataFrame(filas)
+    df["sku"] = df["sku"].astype(str).str.strip().str.upper()
+    df["costo"] = df["costo"].map(_a_numero)
+    cuando = str(df["fecha"].iloc[0]) if "fecha" in df else ""
+    df = df[df["sku"].ne("")].dropna(subset=["costo"])
+    return df[["sku", "costo"]], cuando
+
+
 # ------------------------------------------------------------------ calculo
 
 def items_de_costos(costos_df, pubs):
