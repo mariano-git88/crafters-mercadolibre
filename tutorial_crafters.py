@@ -20,20 +20,28 @@ def render() -> None:
         """
 ### ¿Qué hace esta app?
 
-Tres cosas, cada una en su sección:
+Ocho secciones, cada una para una cosa:
 
 | Sección | Para qué sirve |
 |---|---|
 | **Precios** | Cambiar precios de muchas publicaciones de una, desde una planilla |
+| **Mayoristas** | Cargar descuentos por cantidad con reglas por familia de producto |
 | **Stock ML** | Lo mismo pero con las unidades publicadas en MercadoLibre |
 | **Control de stock** | Llevar tu propia cuenta de unidades, con historial de movimientos |
 | **Rentabilidad** | Ver cuánto ganás realmente con cada producto, después de todo lo que se lleva MercadoLibre |
+| **Competencia** | Quién vende más barato cada producto y en qué posición estás |
+| **Oportunidades** | Seis análisis para encontrar dónde estás dejando plata |
+| **Preguntas** | Responder las consultas de los compradores, con ayuda de IA |
 
 **Precios** y **Stock ML** modifican la cuenta de verdad. Por eso nunca aplican
 nada sin mostrarte antes, en pantalla, exactamente qué va a pasar.
 
 **Control de stock** no toca nada en MercadoLibre: es un registro tuyo,
-aparte.
+aparte. **Rentabilidad**, **Competencia** y **Oportunidades** son solo de
+consulta: no modifican nada.
+
+**Preguntas** sí publica en MercadoLibre — las respuestas quedan visibles en
+la publicación.
 """
     )
 
@@ -213,6 +221,120 @@ inicial, o entró mercadería que no se registró en Ingresos.
 
 > Las ventas de Shopify y los pedidos especiales no se leen automáticamente.
 > Cargalos como **ajuste** en Ingresos, con cantidad negativa.
+"""
+    )
+
+
+    st.divider()
+    st.markdown(
+        """
+### Sección Mayoristas
+
+Carga **descuentos por cantidad** en muchas publicaciones de una. Funciona con
+reglas: se define un descuento por familia de producto (linternas, selladores,
+grifería…), por SKU puntual o una regla general, y la herramienta toma el
+precio publicado de cada artículo y arma los tramos sola.
+
+Las reglas se editan en la hoja `reglas_mayoristas` de la planilla, sin ayuda
+técnica. Gana la de **menor orden**, así que lo específico pisa a lo general.
+
+> Si el panel de MercadoLibre te da error al calcular precios mayoristas, la
+> carga desde acá funciona igual.
+"""
+    )
+
+    st.divider()
+    st.markdown(
+        """
+### Sección Competencia
+
+Te dice **quién vende más barato cada producto**, a cuánto, y en qué posición
+estás vos.
+
+Hay dos formas de usarla:
+
+- **Tus más vendidos** — elegís cuántos y de qué período, y busca solo los
+  artículos que más vendiste. No hace falta armar ninguna planilla.
+- **Subiendo una planilla** con los códigos de barras que quieras vigilar.
+
+Además **corre sola todos los días** y avisa cuando algo cambia: un competidor
+que baja el precio, uno nuevo que aparece, o cuando dejás de ser el más barato.
+Cada comparación queda guardada, así podés ver cómo evolucionó un precio.
+
+**Un límite importante:** la comparación es contra el catálogo de MercadoLibre.
+Si un competidor publica el producto por fuera del catálogo, no aparece.
+
+**Antes de reaccionar a una diferencia grande**, abrí la publicación del
+competidor: puede ser otra presentación (una unidad contra un pack) aunque
+compartan el catálogo.
+"""
+    )
+
+    st.divider()
+    st.markdown(
+        """
+### Sección Oportunidades
+
+Seis análisis para encontrar dónde estás dejando plata. **Ninguno modifica
+nada**: son todos de consulta.
+
+| Vista | Para qué sirve |
+|---|---|
+| **Visitas vs ventas** | Qué se ve mucho y no vende, y qué vende sin que casi nadie lo vea |
+| **Tramos de comisión** | Productos donde subir el precio unos pesos deja más plata neta |
+| **Precios espejo** | Publicaciones duplicadas del mismo producto con precios distintos |
+| **Factura de ML** | Verifica que lo que te facturan cierre con lo que deberían cobrarte |
+| **Envíos** | Productos donde el costo de envío se come el margen |
+| **Salud del catálogo** | Qué publicaciones tienen datos mal cargados |
+
+**Sobre los tramos de comisión:** MercadoLibre cobra un porcentaje **más un
+cargo fijo por unidad**, y ese cargo salta en escalones — arriba de $33.000
+desaparece. Por eso hay productos donde subir el precio un 1% deja bastante
+más plata. Empezá por los que **más ganan subiendo menos**.
+
+**Visitas vs ventas tarda unos 10 minutos**: MercadoLibre solo deja consultar
+las visitas de a una publicación por vez.
+"""
+    )
+
+    st.divider()
+    st.markdown(
+        """
+### Sección Preguntas
+
+Responde las consultas de los compradores. Para armar la respuesta usa, en
+este orden: **las respuestas que ya dio la cuenta antes**, los datos de la
+publicación, las preguntas ya contestadas en ese mismo artículo, y los
+documentos o sitios que hayas cargado.
+
+**Si no tiene con qué responder, no inventa.** Deja la pregunta sin contestar
+y explica qué le faltó. Una respuesta equivocada queda pública en la
+publicación, así que es preferible que la vea una persona.
+
+**Pestañas:**
+
+- **Responder** — procesa las preguntas pendientes. Podés redactar sin
+  publicar (para probar) o redactar y publicar.
+- **Pendientes** — todas las preguntas sin responder. Escribís la respuesta y
+  se publica desde acá. También podés pedirle **un borrador a la IA** para una
+  pregunta puntual, editarlo y publicarlo.
+- **Historial completo** — todas las preguntas de la cuenta con su respuesta,
+  marcando si la contestó la IA o una persona.
+- **Registro de la IA** — solo lo que procesó ella, con el motivo de cada
+  decisión.
+- **Fuentes** — subís PDFs (fichas técnicas, manuales) o páginas web para que
+  tenga más información con qué responder.
+
+**Si una pregunta queda sin responder**, mirá el motivo en Pendientes. Suele
+ser información que no está en ningún lado: cargando esa ficha en *Fuentes*,
+la próxima la resuelve sola.
+
+**Si una publicación está pausada**, MercadoLibre no deja responder sus
+preguntas. Hay que reactivarla primero.
+
+Arriba hay un contador de cuántas respondió la IA sola y cuántas quedaron
+para el equipo. Se apaga desde la hoja `config_ia` de la planilla, poniendo
+`ia_activa = no`.
 """
     )
 
