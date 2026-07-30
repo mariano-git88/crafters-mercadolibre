@@ -480,9 +480,22 @@ def registrar(fila):
     almacen.append_hoja(HOJA_RESPUESTAS, COLS_RESPUESTAS, [fila])
 
 
+# Estados que NO bloquean un reintento: si algo falló por configuración o por
+# un error de red, la pregunta tiene que poder procesarse de nuevo. Solo una
+# decision real del modelo (publicada / derivada) cierra el caso.
+ESTADOS_REINTENTABLES = ("error_tecnico", "error_al_publicar")
+
+
 def ya_procesadas():
-    return set(almacen.columna_hoja(HOJA_RESPUESTAS, COLS_RESPUESTAS,
-                                    "question_id"))
+    """
+    question_id que no hay que volver a procesar.
+
+    Una pregunta que quedó en error se excluye a proposito: de lo contrario un
+    fallo transitorio la dejaria sin responder para siempre.
+    """
+    filas = almacen.leer_hoja(HOJA_RESPUESTAS, COLS_RESPUESTAS)
+    return {str(f.get("question_id")) for f in filas
+            if str(f.get("estado", "")).strip() not in ESTADOS_REINTENTABLES}
 
 
 def procesar(ml, publicar_de_verdad=False, callback=None):
