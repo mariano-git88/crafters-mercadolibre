@@ -308,6 +308,16 @@ Dos cosas que hace sola para que no te pises:
         """
 ### Sección Rentabilidad
 
+**Otros conceptos.** Además de lo que cobra MercadoLibre, el margen descuenta
+tres costos de estructura: **impuestos 10%, logístico 10% y general 5%**. Se
+aplican como porcentaje del ingreso sin IVA y los podés cambiar arriba de la
+tabla.
+
+La tabla muestra las dos cosas: *Margen antes de otros* (solo costo, comisión y
+envío) y el *Margen* final. La diferencia entre las dos es grande —en una
+muestra el margen promedio pasó de 33% a 8%— así que conviene mirar el final
+antes de decidir un precio.
+
 Subís una planilla con el **costo** de cada producto:
 
 | SKU | Costo |

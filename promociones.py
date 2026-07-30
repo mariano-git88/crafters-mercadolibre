@@ -162,6 +162,12 @@ def analizar(ml, pubs=None, tope=300, cargos=None, unidades=None,
                 "sku": sku,
                 "titulo": (p.get("title") or "")[:60],
                 "campana_id": o.get("id") or "",
+                # ML lo devuelve como `ref_id` pero lo pide como `offer_id`.
+                # Sin esto el alta falla con "Offer id is required".
+                "oferta_id": o.get("ref_id") or "",
+                # Las publicaciones que comparten user_product_id se dan de
+                # alta juntas: ML propaga la promocion a toda la familia.
+                "user_product_id": p.get("user_product_id") or "",
                 "tipo": tipo,
                 "promocion": NOMBRES.get(tipo, tipo),
                 "nombre": o.get("name") or "",
@@ -246,6 +252,16 @@ def seleccionar(df, aporte_crafters_max=0.05, ml_debe_superar=True,
     sel = sel.sort_values("queda_por_unidad", ascending=False,
                           na_position="last")
     sel = sel.drop_duplicates(subset=["item_id"], keep="first")
+
+    # Y una sola por familia: **ML propaga el alta a todas las publicaciones
+    # que comparten `user_product_id`** (verificado en vivo el 30/07/2026 —
+    # un POST sobre una publicacion dio de alta tambien a su espejo, en el
+    # mismo segundo). Mandar una llamada por espejo es redundante.
+    con_familia = sel[sel["user_product_id"].astype(str) != ""]
+    sin_familia = sel[sel["user_product_id"].astype(str) == ""]
+    con_familia = con_familia.drop_duplicates(subset=["user_product_id"],
+                                              keep="first")
+    sel = pd.concat([con_familia, sin_familia])
     return sel.sort_values("unidades", ascending=False)
 
 
@@ -256,10 +272,22 @@ def aplicar(ml, seleccion, operador="", callback=None):
     **Escribe en la cuenta de verdad**: cambia el precio que ve el comprador.
     Cada alta queda registrada en la auditoria.
 
-    Sobre el cuerpo del pedido: en los tipos donde MercadoLibre ya fija el
-    precio (`SMART`, `PRICE_MATCHING`) se manda ese precio; en los que dan un
-    rango se manda el sugerido. `promotion_id` no viene en todos los tipos
-    (`PRICE_DISCOUNT` no lo trae), asi que se manda solo cuando existe.
+    Todo lo de abajo salio de una prueba controlada contra la cuenta real
+    (30/07/2026), no de la documentacion:
+
+      - **`offer_id` es obligatorio** y es el campo que el GET devuelve como
+        `ref_id`. Sin el, el POST contesta 400 "Offer id is required".
+      - `app_version=v2` tambien es obligatorio; sin el, 400.
+      - `promotion_id` no viene en todos los tipos (`PRICE_DISCOUNT` no lo
+        trae), asi que se manda solo cuando existe.
+      - En los tipos donde ML ya fija el precio (`SMART`, `PRICE_MATCHING`) se
+        manda ese precio; en los que dan un rango, el sugerido.
+      - La respuesta trae un `offer_id` **nuevo** (`OFFER-...` en vez de
+        `CANDIDATE-...`). **Ese es el que hace falta para dar de baja**, asi
+        que se guarda en el resultado y en la auditoria.
+      - **El alta se propaga a los espejos**: un POST sobre una publicacion
+        da de alta a todas las que comparten `user_product_id`, igual que
+        pasa con el stock. `seleccionar()` ya manda una sola por familia.
     """
     import almacen
 
@@ -269,12 +297,16 @@ def aplicar(ml, seleccion, operador="", callback=None):
         cuerpo = {"promotion_type": f["tipo"]}
         if f.get("campana_id"):
             cuerpo["promotion_id"] = f["campana_id"]
+        if f.get("oferta_id"):
+            cuerpo["offer_id"] = f["oferta_id"]
         if pd.notna(f["precio_promo"]):
             cuerpo["deal_price"] = round(float(f["precio_promo"]), 2)
 
+        oferta_nueva = ""
         try:
-            ml.post(f"/seller-promotions/items/{f['item_id']}",
-                    payload=cuerpo, app_version="v2")
+            r = ml.post(f"/seller-promotions/items/{f['item_id']}",
+                        payload=cuerpo, app_version="v2")
+            oferta_nueva = (r or {}).get("offer_id", "")
             resultado, detalle = "OK", ""
         except MeliError as e:
             resultado, detalle = "ERROR", str(e)[:250]
@@ -287,8 +319,11 @@ def aplicar(ml, seleccion, operador="", callback=None):
             "valor_nuevo": f["precio_promo"],
             "resultado": resultado if resultado == "OK" else f"ERROR: {detalle}",
             "operador": operador,
+            # El offer_id nuevo va en la nota porque es lo unico con lo que se
+            # puede dar de baja despues.
             "nota": f"Alta automática — pone ML {f['aporte_ml']:.1%}, "
-                    f"CRAFTERS {f['aporte_vendedor']:.1%}",
+                    f"CRAFTERS {f['aporte_vendedor']:.1%}. "
+                    f"offer_id={oferta_nueva or '—'}",
         }])
 
         filas.append({
@@ -296,6 +331,9 @@ def aplicar(ml, seleccion, operador="", callback=None):
             "sku": f["sku"],
             "titulo": f["titulo"],
             "promocion": f["promocion"],
+            "tipo": f["tipo"],
+            "campana_id": f.get("campana_id", ""),
+            "oferta_id_nueva": oferta_nueva,
             "precio_anterior": f["precio_actual"],
             "precio_promo": f["precio_promo"],
             "aporte_ml": f["aporte_ml"],
@@ -307,6 +345,47 @@ def aplicar(ml, seleccion, operador="", callback=None):
             callback(n, total, f["item_id"])
 
     return pd.DataFrame(filas)
+
+
+def dar_de_baja(ml, item_id, oferta_id, campana_id, tipo):
+    """
+    Saca una publicacion de una promocion. Devuelve (ok, detalle).
+
+    **Hacen falta `offer_id` Y `promotion_id` juntos.** Con solo `offer_id`
+    contesta 403 "User doesn't have permissions", que es un mensaje enganoso:
+    no es un problema de permisos, es que falta el otro parametro. Con solo
+    `promotion_id` contesta 404.
+
+    El `offer_id` que sirve es el que devolvio el alta (`OFFER-...`), no el
+    de la oferta candidata (`CANDIDATE-...`).
+    """
+    params = {"promotion_type": tipo, "app_version": "v2"}
+    if oferta_id:
+        params["offer_id"] = oferta_id
+    if campana_id:
+        params["promotion_id"] = campana_id
+    try:
+        ml.delete(f"/seller-promotions/items/{item_id}", **params)
+        return True, ""
+    except MeliError as e:
+        return False, str(e)[:250]
+
+
+def estado_de_oferta(ml, oferta_id):
+    """
+    Estado real de una oferta: `started`, `finished`, etc.
+
+    **Es la unica lectura confiable.** El listado
+    `/seller-promotions/items/{id}` viene con retraso: despues de un alta
+    exitosa sigue mostrando la oferta como `candidate` y el precio viejo, lo
+    que hace parecer que la escritura no funciono. Verificado el 30/07/2026.
+    """
+    try:
+        r = ml.get(f"/seller-promotions/offers/{oferta_id}", app_version="v2")
+        est = r.get("status")
+        return est.get("id") if isinstance(est, dict) else est
+    except MeliError:
+        return None
 
 
 def main():

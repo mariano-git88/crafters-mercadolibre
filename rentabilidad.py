@@ -237,7 +237,13 @@ def precios_reales(ml, item_ids, callback=None):
     return salida
 
 
-def calcular(costos_df, cargos_df, pubs, iva=0.0, precios_venta=None):
+# Costos de estructura que no vienen de MercadoLibre y hay que cargarle a cada
+# venta igual. Se aplican como porcentaje del ingreso.
+OTROS_CONCEPTOS = {"impuestos": 0.10, "logistico": 0.10, "general": 0.05}
+
+
+def calcular(costos_df, cargos_df, pubs, iva=0.0, precios_venta=None,
+             otros_conceptos=None):
     """
     Cruza costos + cargos + precio actual y devuelve la rentabilidad por SKU.
 
@@ -248,11 +254,21 @@ def calcular(costos_df, cargos_df, pubs, iva=0.0, precios_venta=None):
     `precios_venta`: dict item_id -> precio real (de `precios_reales()`). Si
     se pasa, el margen se calcula sobre lo que efectivamente paga el
     comprador en vez del precio de lista.
+
+    `otros_conceptos`: costos de estructura que no cobra MercadoLibre pero
+    igual hay que cargarle a cada venta, como porcentaje del ingreso
+    (impuestos, logistico, general). Por defecto los de `OTROS_CONCEPTOS`.
+    Se calculan sobre el **ingreso ya sin IVA**, o sea la misma base contra la
+    que se compara el costo, no sobre el precio de lista.
     """
     from resolver import indexar_por_sku, resolver_precio
 
     indice = indexar_por_sku(pubs)
     precios_venta = precios_venta or {}
+    otros = dict(OTROS_CONCEPTOS)
+    if otros_conceptos is not None:
+        otros.update(otros_conceptos)
+    tasa_otros = sum(otros.values())
 
     filas = []
     for _, fila in costos_df.iterrows():
@@ -282,11 +298,13 @@ def calcular(costos_df, cargos_df, pubs, iva=0.0, precios_venta=None):
             base = "sin_ventas"
 
         ingreso_neto = None
-        margen = None
-        margen_pct = None
+        margen = margen_pct = None
+        margen_sin_otros = otros_monto = None
         if precio_actual:
             ingreso_neto = float(precio_actual) / (1 + iva)
-            margen = ingreso_neto - comision - envio - costo
+            margen_sin_otros = ingreso_neto - comision - envio - costo
+            otros_monto = ingreso_neto * tasa_otros
+            margen = margen_sin_otros - otros_monto
             margen_pct = margen / float(precio_actual)
 
         en_promo = (precio_lista is not None and precio_actual is not None
@@ -303,6 +321,14 @@ def calcular(costos_df, cargos_df, pubs, iva=0.0, precios_venta=None):
             "comision_prom": comision,
             "envio_prom": envio,
             "cargos_totales": comision + envio,
+            "impuestos": (ingreso_neto * otros["impuestos"]
+                          if ingreso_neto else None),
+            "logistico": (ingreso_neto * otros["logistico"]
+                          if ingreso_neto else None),
+            "general": (ingreso_neto * otros["general"]
+                        if ingreso_neto else None),
+            "otros_conceptos": otros_monto,
+            "margen_sin_otros": margen_sin_otros,
             "margen": margen,
             "margen_pct": margen_pct,
             "unidades_90d": unidades,

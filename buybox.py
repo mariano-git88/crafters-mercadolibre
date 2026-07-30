@@ -243,7 +243,8 @@ def analizar(ml, pubs=None, tope=None, cargos=None, unidades=None,
 
 # ------------------------------------------------------------------ margen
 
-def con_costos(df, costos_df, cargos_df, iva=0.0, margen_minimo=0.0):
+def con_costos(df, costos_df, cargos_df, iva=0.0, margen_minimo=0.0,
+               otros_conceptos=None):
     """
     Agrega a cada fila el margen que quedaria vendiendo al precio para ganar.
 
@@ -264,8 +265,20 @@ def con_costos(df, costos_df, cargos_df, iva=0.0, margen_minimo=0.0):
        en un tramo con cargo fijo mas caro. El salto grande esta en $33.000,
        donde el cargo fijo pasa de cero a $3.005. Bajar de $34.000 a $32.000
        cuesta bastante mas que los $2.000 de diferencia.
+
+    3. Se descuentan los **otros conceptos** (impuestos, logistico, general)
+       con los mismos porcentajes que usa Rentabilidad. Tiene que ser asi:
+       esta pantalla **baja precios de verdad**, y si calculara el margen sin
+       los costos de estructura aprobaria bajas que Rentabilidad marca como
+       perdida.
     """
     from tramos import cargo_fijo
+    from rentabilidad import OTROS_CONCEPTOS
+
+    otros = dict(OTROS_CONCEPTOS)
+    if otros_conceptos is not None:
+        otros.update(otros_conceptos)
+    tasa_otros = sum(otros.values())
 
     if not len(df):
         return df
@@ -293,7 +306,9 @@ def con_costos(df, costos_df, cargos_df, iva=0.0, margen_minimo=0.0):
         if precio is None or sku not in costos or sku not in pct:
             return None
         com = cargos_a(precio, sku)
-        return precio / (1 + iva) - com - envio.get(sku, 0.0) - costos[sku]
+        ingreso = precio / (1 + iva)
+        return (ingreso - com - envio.get(sku, 0.0) - costos[sku]
+                - ingreso * tasa_otros)
 
     out = df.copy()
     out["costo"] = out["sku"].map(lambda s: costos.get(s))

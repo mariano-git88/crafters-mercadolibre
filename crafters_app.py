@@ -217,6 +217,31 @@ def cumplen(n):
             else f"**{n} publicaciones cumplen el criterio.**")
 
 
+def controles_otros_conceptos(clave):
+    """
+    Los tres costos de estructura que no cobra ML pero hay que cargarle igual
+    a cada venta. Se usan los mismos en Rentabilidad y en Buy Box a propósito:
+    si no coincidieran, Buy Box aprobaría bajas de precio que Rentabilidad
+    marca como pérdida.
+    """
+    st.caption(
+        "**Otros conceptos** — costos que no cobra MercadoLibre pero igual "
+        "hay que cargarle a cada venta. Se aplican como porcentaje del "
+        "ingreso sin IVA.")
+    o1, o2, o3 = st.columns(3)
+    return {
+        "impuestos": o1.number_input(
+            "Impuestos", 0.0, 1.0, rent.OTROS_CONCEPTOS["impuestos"], 0.01,
+            format="%.2f", key=f"imp_{clave}"),
+        "logistico": o2.number_input(
+            "Logístico", 0.0, 1.0, rent.OTROS_CONCEPTOS["logistico"], 0.01,
+            format="%.2f", key=f"log_{clave}"),
+        "general": o3.number_input(
+            "General", 0.0, 1.0, rent.OTROS_CONCEPTOS["general"], 0.01,
+            format="%.2f", key=f"gen_{clave}"),
+    }
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def cargos_cacheados(_ml, dias=90):
     """
@@ -868,6 +893,8 @@ elif seccion == "Ganar la venta":
                 help="Usalo si tus costos están sin IVA y los precios de ML "
                      "lo incluyen.")
 
+            otros_bb = controles_otros_conceptos("bb")
+
             if arch_bb and i2.button("Calcular márgenes",
                                      use_container_width=True):
                 try:
@@ -877,7 +904,8 @@ elif seccion == "Ganar la venta":
                     st.stop()
                 with st.spinner("Cruzando con los cargos reales..."):
                     st.session_state["buybox_costos"] = buybox.con_costos(
-                        dbb, costos_bb, cargos_cacheados(ml), iva=iva_bb)
+                        dbb, costos_bb, cargos_cacheados(ml), iva=iva_bb,
+                        otros_conceptos=otros_bb)
 
             dcb = st.session_state.get("buybox_costos")
             if dcb is not None and len(dcb):
@@ -2547,6 +2575,8 @@ elif seccion == "Rentabilidad":
                            help="Usalo si tus costos están sin IVA y los precios "
                                 "de ML lo incluyen.")
 
+    otros_rent = controles_otros_conceptos("rent")
+
     if archivo and st.button("Calcular rentabilidad"):
         try:
             costos = rent.leer_costos(archivo)
@@ -2577,8 +2607,9 @@ elif seccion == "Rentabilidad":
         barra.empty()
 
         cargos = rent.cargos_por_sku(ordenes, envios)
-        st.session_state["rent"] = rent.calcular(costos, cargos, pubs, iva=iva,
-                                                 precios_venta=precios_venta)
+        st.session_state["rent"] = rent.calcular(
+            costos, cargos, pubs, iva=iva, precios_venta=precios_venta,
+            otros_conceptos=otros_rent)
 
     df = st.session_state.get("rent")
     if df is not None and len(df):
@@ -2625,6 +2656,18 @@ elif seccion == "Rentabilidad":
                 "comision_prom": st.column_config.NumberColumn("Comisión", format="%.0f"),
                 "envio_prom": st.column_config.NumberColumn("Envío", format="%.0f"),
                 "cargos_totales": st.column_config.NumberColumn("Cargos", format="%.0f"),
+                "impuestos": st.column_config.NumberColumn(
+                    "Impuestos", format="%.0f"),
+                "logistico": st.column_config.NumberColumn(
+                    "Logístico", format="%.0f"),
+                "general": st.column_config.NumberColumn(
+                    "General", format="%.0f"),
+                "otros_conceptos": st.column_config.NumberColumn(
+                    "Otros conceptos", format="%.0f",
+                    help="Impuestos + logístico + general"),
+                "margen_sin_otros": st.column_config.NumberColumn(
+                    "Margen antes de otros", format="%.0f",
+                    help="Solo descontando costo, comisión y envío"),
                 "margen": st.column_config.NumberColumn("Margen $", format="%.0f"),
                 "margen_pct": st.column_config.NumberColumn("Margen %", format="percent"),
                 "unidades_90d": "Unid. vendidas",

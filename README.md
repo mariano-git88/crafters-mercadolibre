@@ -248,13 +248,33 @@ Criterio por defecto: CRAFTERS pone ≤ 5% y ML pone más que CRAFTERS. Solo ent
 ofertas `candidate`, y si una publicación califica para varias se toma la que
 deja más plata por unidad (sumarla a todas sería pisar una con otra).
 
-> **Pendiente de validación en vivo:** el cuerpo del `POST` está armado según
-> la forma que devuelve el `GET` (`promotion_id`, `promotion_type`,
-> `deal_price`), pero **todavía no se ejecutó un alta real**. La ruta sí está
-> verificada: con un `item_id` inexistente contesta `"Item with id ... not
-> found"` y no el 404 genérico de ruta inexistente. Antes de usarlo en serio
-> hay que hacer una prueba controlada con una sola publicación y revertirla,
-> como se hizo con precio y stock.
+### Alta en promoción — validado en vivo (30/07/2026)
+
+Prueba controlada sobre `MLA1863956871` (cero ventas históricas, $6.954),
+revertida. Nada de esto está en la documentación de ML; salió de la prueba:
+
+- **`offer_id` es obligatorio**, y es el campo que el `GET` devuelve como
+  **`ref_id`**. Sin él: `400 "Offer id is required"`.
+- **`app_version=v2` es obligatorio** en el POST y en el DELETE. Sin él, `400`.
+- La respuesta trae un `offer_id` **nuevo** (`OFFER-…` en vez de `CANDIDATE-…`).
+  **Ese es el único con el que se puede dar de baja**, así que hay que
+  guardarlo — queda en la auditoría.
+- **La baja necesita `offer_id` Y `promotion_id` juntos.** Con solo `offer_id`
+  contesta `403 "User doesn't have permissions, you must consume the correct
+  access group"`, que es un mensaje engañoso: no falta un permiso, falta el
+  otro parámetro. Con solo `promotion_id`, `404`.
+
+**El alta se propaga a los espejos.** Un POST sobre una publicación dio de alta
+también a la que comparte su `user_product_id`, en el mismo segundo — igual que
+pasa con el stock. Un solo DELETE dio de baja a las dos. Por eso
+`seleccionar()` manda **una sola llamada por familia**.
+
+**El listado del item miente.** Después de un alta exitosa,
+`/seller-promotions/items/{id}` sigue mostrando la oferta como `candidate` y el
+precio viejo. La lectura confiable es
+**`/seller-promotions/offers/{offer_id}`**, que devuelve `status.id` =
+`started` / `finished`. Es el mismo falso negativo que ya nos pasó con otras
+escrituras: si algo "no persistió", sospechar primero del método de lectura.
 
 ### Dos tasas de reclamo distintas — no compararlas
 
@@ -336,6 +356,27 @@ publicaciones (el catálogo tiene muchos espejos), así que:
   `resolver_stock()` devuelve una sola publicación por grupo — no es un
   descuido.
 - Probado sobre publicaciones pausadas y revertido al valor original.
+
+### Otros conceptos (impuestos, logístico, general)
+
+Además de lo que cobra MercadoLibre, el margen descuenta tres costos de
+estructura como porcentaje del **ingreso sin IVA** — la misma base contra la
+que se compara el costo, no el precio de lista:
+
+| Concepto | Por defecto |
+|---|---|
+| Impuestos | 10% |
+| Logístico | 10% |
+| General | 5% |
+
+Están en `rentabilidad.OTROS_CONCEPTOS` y se pueden cambiar desde la app.
+
+**Los usa también Buy Box**, y tiene que ser así: esa pantalla baja precios de
+verdad, y si calculara el margen sin los costos de estructura aprobaría bajas
+que Rentabilidad marca como pérdida.
+
+No es un ajuste menor. Sobre una muestra, sumar el 25% movió el margen promedio
+de 33% a 8% y los SKU a pérdida de 1 a 19.
 
 ### Rentabilidad
 
