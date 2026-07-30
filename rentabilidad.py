@@ -289,8 +289,31 @@ def precios_reales(ml, item_ids, callback=None):
 
 
 # Costos de estructura que no vienen de MercadoLibre y hay que cargarle a cada
-# venta igual. Se aplican como porcentaje del ingreso.
+# venta igual. Se aplican como porcentaje del ingreso **sin IVA**.
 OTROS_CONCEPTOS = {"impuestos": 0.10, "logistico": 0.10, "general": 0.05}
+
+# El logistico tiene tope: es 10% **o $9.000, lo que sea menor**. Mover una
+# caja no cuesta el doble porque el producto valga el doble, asi que arriba de
+# cierto precio el porcentaje deja de representar el costo real. El tope
+# empieza a jugar cuando el ingreso sin IVA pasa de $90.000.
+TOPE_LOGISTICO = 9000.0
+
+
+def otros_conceptos_monto(ingreso, otros=None, tope_logistico=TOPE_LOGISTICO):
+    """
+    Cuanto se lleva cada concepto de estructura para un ingreso dado.
+
+    Devuelve (dict por concepto, total). El unico con tope es el logistico.
+    """
+    o = dict(OTROS_CONCEPTOS)
+    if otros:
+        o.update(otros)
+    detalle = {
+        "impuestos": ingreso * o["impuestos"],
+        "logistico": min(ingreso * o["logistico"], tope_logistico),
+        "general": ingreso * o["general"],
+    }
+    return detalle, sum(detalle.values())
 
 
 def calcular(costos_df, cargos_df, pubs, iva=0.0, precios_venta=None,
@@ -319,7 +342,6 @@ def calcular(costos_df, cargos_df, pubs, iva=0.0, precios_venta=None,
     otros = dict(OTROS_CONCEPTOS)
     if otros_conceptos is not None:
         otros.update(otros_conceptos)
-    tasa_otros = sum(otros.values())
 
     filas = []
     for _, fila in costos_df.iterrows():
@@ -351,10 +373,12 @@ def calcular(costos_df, cargos_df, pubs, iva=0.0, precios_venta=None,
         ingreso_neto = None
         margen = margen_pct = None
         margen_sin_otros = otros_monto = None
+        detalle_otros = {}
         if precio_actual:
             ingreso_neto = float(precio_actual) / (1 + iva)
             margen_sin_otros = ingreso_neto - comision - envio - costo
-            otros_monto = ingreso_neto * tasa_otros
+            detalle_otros, otros_monto = otros_conceptos_monto(
+                ingreso_neto, otros)
             margen = margen_sin_otros - otros_monto
             margen_pct = margen / float(precio_actual)
 
@@ -372,12 +396,14 @@ def calcular(costos_df, cargos_df, pubs, iva=0.0, precios_venta=None,
             "comision_prom": comision,
             "envio_prom": envio,
             "cargos_totales": comision + envio,
-            "impuestos": (ingreso_neto * otros["impuestos"]
-                          if ingreso_neto else None),
-            "logistico": (ingreso_neto * otros["logistico"]
-                          if ingreso_neto else None),
-            "general": (ingreso_neto * otros["general"]
-                        if ingreso_neto else None),
+            "impuestos": detalle_otros.get("impuestos"),
+            "logistico": detalle_otros.get("logistico"),
+            "general": detalle_otros.get("general"),
+            # Se avisa cuando el logistico quedo topeado: arriba de ese precio
+            # el 10% ya no representa lo que cuesta mover la caja.
+            "logistico_topeado": bool(
+                ingreso_neto and detalle_otros.get("logistico", 0)
+                >= TOPE_LOGISTICO - 0.01),
             "otros_conceptos": otros_monto,
             "margen_sin_otros": margen_sin_otros,
             "margen": margen,

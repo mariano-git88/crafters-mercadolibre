@@ -49,36 +49,73 @@ def _bandas():
     return bandas
 
 
-def precio_minimo(costo, pct, envio, iva=0.21, tasa_otros=0.25, objetivo=0.15):
+def precio_minimo(costo, pct, envio, iva=0.21, otros=None, objetivo=0.15):
     """
     El precio mas bajo que deja `objetivo` de margen sobre el precio.
 
     Devuelve None si no hay precio que alcance: pasa cuando la comision
-    porcentual mas los otros conceptos mas el objetivo se comen todo el
-    ingreso, y ahi subir el precio no arregla nada.
+    porcentual mas los conceptos porcentuales mas el objetivo se comen todo
+    el ingreso, y ahi subir el precio no arregla nada.
+
+    **Hay dos escalones distintos que resolver, no uno.** El cargo fijo de ML
+    salta por tramos de precio, y el costo logistico es 10% **o $9.000, lo que
+    sea menor**, asi que arriba de cierto ingreso deja de ser porcentual y
+    pasa a ser un monto fijo. La ecuacion cambia de forma en cada combinacion,
+    asi que se resuelve en cada una y se toma el menor precio que de verdad
+    cierra en su propio tramo.
     """
-    # margen = P*[(1-otros)/(1+iva) - pct] - fijo - envio - costo
-    # y se pide margen >= objetivo*P, o sea:
-    #   P*[(1-otros)/(1+iva) - pct - objetivo] >= fijo + envio + costo
-    k = (1 - tasa_otros) / (1 + iva) - pct - objetivo
-    if k <= 0:
-        return None
+    from rentabilidad import OTROS_CONCEPTOS, TOPE_LOGISTICO
+
+    o = dict(OTROS_CONCEPTOS)
+    if otros:
+        o.update(otros)
+
+    # Ingreso a partir del cual el logistico queda topeado.
+    corte_log = (TOPE_LOGISTICO / o["logistico"]) if o["logistico"] else float("inf")
+
+    # Cada regimen aporta: (parte porcentual del ingreso, monto fijo extra).
+    regimenes = [
+        # logistico porcentual: vale mientras el ingreso no pase el corte
+        (o["impuestos"] + o["logistico"] + o["general"], 0.0, 0.0, corte_log),
+        # logistico topeado: vale de ahi para arriba
+        (o["impuestos"] + o["general"], TOPE_LOGISTICO, corte_log, float("inf")),
+    ]
 
     candidatos = []
-    for desde, hasta, fijo in _bandas():
-        p = (fijo + envio + costo) / k
-        # La solucion solo vale si cae dentro de la banda cuyo cargo fijo se
-        # uso para calcularla.
-        if desde <= p < hasta:
-            candidatos.append(p)
-        # El borde de abajo tambien es candidato: cruzar el escalon puede
-        # hacer viable un precio que dentro de la banda anterior no cerraba.
-        if desde > 0:
-            k_borde = desde * k - (fijo + envio + costo)
-            if k_borde >= 0:
-                candidatos.append(desde)
+    for tasa, extra, ing_desde, ing_hasta in regimenes:
+        k = (1 - tasa) / (1 + iva) - pct - objetivo
+        if k <= 0:
+            continue
+        for desde, hasta, fijo in _bandas():
+            base = fijo + envio + costo + extra
+            p = base / k
+            ingreso = p / (1 + iva)
+            # Solo vale si el precio cae en la banda de cargo fijo Y en el
+            # regimen logistico con los que se calculo.
+            if desde <= p < hasta and ing_desde <= ingreso < ing_hasta:
+                candidatos.append(p)
+            # Los bordes tambien son candidatos: cruzar un escalon puede hacer
+            # viable un precio que dentro del tramo anterior no cerraba.
+            for borde in (desde, ing_desde * (1 + iva)):
+                if borde <= 0:
+                    continue
+                ing_b = borde / (1 + iva)
+                tasa_b, extra_b = ((o["impuestos"] + o["logistico"]
+                                    + o["general"], 0.0)
+                                   if ing_b < corte_log
+                                   else (o["impuestos"] + o["general"],
+                                         TOPE_LOGISTICO))
+                margen_b = (borde * (1 - tasa_b) / (1 + iva) - borde * pct
+                            - cargo_fijo_de(borde) - envio - costo - extra_b)
+                if margen_b >= objetivo * borde:
+                    candidatos.append(borde)
 
     return min(candidatos) if candidatos else None
+
+
+def cargo_fijo_de(precio):
+    from tramos import cargo_fijo
+    return cargo_fijo(precio)
 
 
 def analizar(costos_df, cargos_df, pubs, iva=0.21, otros_conceptos=None,
@@ -90,14 +127,13 @@ def analizar(costos_df, cargos_df, pubs, iva=0.21, otros_conceptos=None,
     cobro (asi vale igual para Clasica que para Premium), y el envio promedio
     medido de las ventas.
     """
-    from rentabilidad import OTROS_CONCEPTOS
+    from rentabilidad import OTROS_CONCEPTOS, otros_conceptos_monto
     from resolver import indexar_por_sku, resolver_precio
     from tramos import cargo_fijo
 
     otros = dict(OTROS_CONCEPTOS)
     if otros_conceptos:
         otros.update(otros_conceptos)
-    tasa_otros = sum(otros.values())
 
     pct, envio, unidades = {}, {}, {}
     for _, f in cargos_df.iterrows():
@@ -128,12 +164,13 @@ def analizar(costos_df, cargos_df, pubs, iva=0.21, otros_conceptos=None,
             p = PORCENTAJE
         e = envio.get(sku, 0.0)
 
-        minimo = precio_minimo(costo, p, e, iva=iva, tasa_otros=tasa_otros,
+        minimo = precio_minimo(costo, p, e, iva=iva, otros=otros,
                                objetivo=objetivo)
 
         def margen_a(precio):
             ingreso = precio / (1 + iva)
-            return (ingreso * (1 - tasa_otros) - precio * p
+            _, otros_monto = otros_conceptos_monto(ingreso, otros)
+            return (ingreso - otros_monto - precio * p
                     - cargo_fijo(precio) - e - costo)
 
         m_hoy = margen_a(actual)

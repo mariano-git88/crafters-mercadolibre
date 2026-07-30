@@ -282,12 +282,11 @@ def con_costos(df, costos_df, cargos_df, iva=0.0, margen_minimo=0.0,
        perdida.
     """
     from tramos import cargo_fijo
-    from rentabilidad import OTROS_CONCEPTOS
+    from rentabilidad import OTROS_CONCEPTOS, otros_conceptos_monto
 
     otros = dict(OTROS_CONCEPTOS)
     if otros_conceptos is not None:
         otros.update(otros_conceptos)
-    tasa_otros = sum(otros.values())
 
     if not len(df):
         return df
@@ -316,8 +315,8 @@ def con_costos(df, costos_df, cargos_df, iva=0.0, margen_minimo=0.0,
             return None
         com = cargos_a(precio, sku)
         ingreso = precio / (1 + iva)
-        return (ingreso - com - envio.get(sku, 0.0) - costos[sku]
-                - ingreso * tasa_otros)
+        _, otros_monto = otros_conceptos_monto(ingreso, otros)
+        return ingreso - com - envio.get(sku, 0.0) - costos[sku] - otros_monto
 
     out = df.copy()
     out["costo"] = out["sku"].map(lambda s: costos.get(s))
