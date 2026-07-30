@@ -41,11 +41,15 @@ CACHE_HIST = DIR / "preguntas_historico.json"
 HOJA_RESPUESTAS = "respuestas_ia"
 HOJA_FUENTES = "fuentes_ia"
 HOJA_CONFIG = "config_ia"
+HOJA_HISTORIAL = "historial_preguntas"
 
 COLS_RESPUESTAS = ["fecha", "question_id", "item_id", "pregunta", "respuesta",
                    "estado", "confianza", "fuentes", "modelo", "motivo"]
 COLS_FUENTES = ["tipo", "nombre", "url", "contenido", "cargado", "operador"]
 COLS_CONFIG = ["clave", "valor", "nota"]
+COLS_HISTORIAL = ["question_id", "fecha_pregunta", "item_id", "publicacion",
+                  "comprador", "pregunta", "respuesta", "respondida_por",
+                  "estado_ml", "sincronizado"]
 
 MODELO = "claude-opus-5"
 
@@ -502,7 +506,149 @@ def procesar(ml, publicar_de_verdad=False, callback=None):
             "resultados": resultados}
 
 
+# ------------------------------------------------------------------ historial
+
+def _respondidas_por_ia():
+    """question_id de las preguntas que efectivamente publicó la IA."""
+    filas = almacen.leer_hoja(HOJA_RESPUESTAS, COLS_RESPUESTAS)
+    return {str(f.get("question_id")) for f in filas
+            if str(f.get("estado", "")).strip() == "publicada"}
+
+
+def sincronizar_historial(ml, callback=None):
+    """
+    Sube a la Sheet **todas** las preguntas de la cuenta con su respuesta,
+    hayan sido respondidas por la IA o por una persona.
+
+    Es idempotente por `question_id`: correrlo de nuevo solo agrega lo nuevo.
+    Las que estaban sin responder y ya se respondieron se actualizan, para que
+    el historial no quede con huecos.
+    """
+    if callback:
+        callback("Trayendo preguntas de MercadoLibre...")
+
+    crudas, offset = [], 0
+    while offset < TOPE_OFFSET_PREGUNTAS:
+        r = ml.get("/questions/search", seller_id=ml.user_id, limit=50,
+                   offset=offset, sort_fields="date_created", sort_types="DESC")
+        lote = r.get("questions") or []
+        if not lote:
+            break
+        crudas.extend(lote)
+        offset += 50
+        if offset >= (r.get("total") or 0):
+            break
+
+    por_ia = _respondidas_por_ia()
+    existentes = {f["question_id"]: f
+                  for f in almacen.leer_hoja(HOJA_HISTORIAL, COLS_HISTORIAL)}
+    ahora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # Cache de títulos: varias preguntas caen sobre la misma publicación.
+    titulos = {}
+    if callback:
+        callback(f"{len(crudas)} preguntas. Armando el historial...")
+
+    nuevas, actualizadas = [], 0
+    for q in crudas:
+        qid = str(q.get("id"))
+        item_id = q.get("item_id")
+        respuesta = ((q.get("answer") or {}).get("text") or "").strip()
+
+        if item_id not in titulos:
+            try:
+                titulos[item_id] = (ml.get(f"/items/{item_id}",
+                                           attributes="title").get("title") or "")
+            except MeliError:
+                titulos[item_id] = ""
+
+        fila = {
+            "question_id": qid,
+            "fecha_pregunta": (q.get("date_created") or "")[:19].replace("T", " "),
+            "item_id": item_id,
+            "publicacion": titulos.get(item_id, "")[:70],
+            "comprador": (q.get("from") or {}).get("nickname", ""),
+            "pregunta": (q.get("text") or "").strip()[:500],
+            "respuesta": respuesta[:900],
+            "respondida_por": ("IA" if qid in por_ia
+                               else ("persona" if respuesta else "")),
+            "estado_ml": q.get("status", ""),
+            "sincronizado": ahora,
+        }
+
+        vieja = existentes.get(qid)
+        if vieja is None:
+            nuevas.append(fila)
+        elif not str(vieja.get("respuesta", "")).strip() and respuesta:
+            # Estaba sin responder y ahora tiene respuesta: hay que actualizarla.
+            existentes[qid] = fila
+            actualizadas += 1
+
+    ok, detalle = True, ""
+    if actualizadas:
+        # Reescribimos completo: gspread no tiene update-por-clave.
+        todas = list(existentes.values()) + nuevas
+        todas.sort(key=lambda f: f.get("fecha_pregunta") or "")
+        ok, detalle = almacen.reescribir_hoja(HOJA_HISTORIAL, COLS_HISTORIAL, todas)
+    elif nuevas:
+        nuevas.sort(key=lambda f: f.get("fecha_pregunta") or "")
+        ok, detalle = almacen.append_hoja(HOJA_HISTORIAL, COLS_HISTORIAL, nuevas)
+
+    return {"revisadas": len(crudas), "nuevas": len(nuevas),
+            "actualizadas": actualizadas,
+            "total": len(existentes) + len(nuevas),
+            "ok": ok, "detalle": detalle}
+
+
+def historial():
+    return almacen.leer_hoja(HOJA_HISTORIAL, COLS_HISTORIAL)
+
+
+def metricas():
+    """
+    Contadores acumulados. `respondidas_ia` es el número que interesa: cuántas
+    preguntas contestó la IA sola desde que se activó.
+    """
+    reg = almacen.leer_hoja(HOJA_RESPUESTAS, COLS_RESPUESTAS)
+    estados = [str(f.get("estado", "")).strip() for f in reg]
+    hist = historial()
+
+    con_respuesta = [f for f in hist if str(f.get("respuesta", "")).strip()]
+    por_ia = sum(1 for f in con_respuesta
+                 if str(f.get("respondida_por", "")) == "IA")
+
+    publicadas = estados.count("publicada")
+    revisar = estados.count("para_revisar")
+    procesadas = publicadas + revisar
+
+    return {
+        "respondidas_ia": publicadas,
+        "derivadas_a_persona": revisar,
+        "con_error": estados.count("error_al_publicar"),
+        "tasa_automatica": (publicadas / procesadas) if procesadas else 0.0,
+        "historial_total": len(hist),
+        "historial_respondidas": len(con_respuesta),
+        "historial_por_ia": por_ia,
+        "historial_por_persona": len(con_respuesta) - por_ia,
+    }
+
+
 def main():
+    if "--historial" in sys.argv:
+        ml = Meli(verbose=False)
+        r = sincronizar_historial(ml, callback=lambda m: print(f"  {m}"))
+        print(f"\n  revisadas   {r['revisadas']:>6}")
+        print(f"  nuevas      {r['nuevas']:>6}")
+        print(f"  actualizadas{r['actualizadas']:>6}")
+        print(f"  total en la Sheet {r['total']:>6}")
+        if not r["ok"]:
+            print(f"\n  ERROR: {r['detalle']}")
+            return 1
+        m = metricas()
+        print(f"\n  respondidas por la IA:      {m['historial_por_ia']}")
+        print(f"  respondidas por una persona: {m['historial_por_persona']}")
+        return 0
+
     publicar_real = "--publicar" in sys.argv
     ml = Meli(verbose=False)
 

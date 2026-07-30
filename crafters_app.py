@@ -790,6 +790,18 @@ elif seccion == "Preguntas":
 
     cfg = preg.config()
     activa = preg.ia_activa()
+    met = preg.metricas()
+
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Respondidas por la IA", met["respondidas_ia"],
+              help="Preguntas que la IA contestó y publicó sola")
+    m2.metric("Derivadas a una persona", met["derivadas_a_persona"],
+              help="La IA no tenía contexto suficiente y las dejó sin responder")
+    m3.metric("Se resolvieron solas",
+              f"{met['tasa_automatica']:.0%}" if met["respondidas_ia"] +
+              met["derivadas_a_persona"] else "—",
+              help="Del total que procesó la IA, cuántas pudo cerrar sin ayuda")
+
     c1, c2, c3 = st.columns([1.3, 1.3, 2])
     c1.metric("Estado", "Activa" if activa else "Apagada")
     c2.metric("Confianza mínima", cfg.get("min_confianza", "media").capitalize())
@@ -800,7 +812,8 @@ elif seccion == "Preguntas":
         st.warning("La IA está **apagada**. Poné `ia_activa = si` en la hoja "
                    f"`{preg.HOJA_CONFIG}` para que vuelva a responder.", icon="⏸️")
 
-    vista_p = st.radio("Vista", ["Responder", "Historial", "Fuentes"],
+    vista_p = st.radio("Vista", ["Responder", "Historial completo",
+                                 "Registro de la IA", "Fuentes"],
                        horizontal=True, label_visibility="collapsed")
 
     if vista_p == "Responder":
@@ -857,7 +870,71 @@ elif seccion == "Preguntas":
                             st.markdown(f"**R:** {f['respuesta'] or '_(no respondió)_'}")
                             st.caption(f"Motivo: {f['motivo']}")
 
-    elif vista_p == "Historial":
+    elif vista_p == "Historial completo":
+        st.caption(
+            "Todas las preguntas de la cuenta con su respuesta, hayan sido "
+            "contestadas por la IA o por una persona. Vive en la hoja "
+            f"`{preg.HOJA_HISTORIAL}` de la planilla.")
+
+        if st.button("↻ Sincronizar con MercadoLibre"):
+            estado = st.empty()
+            with st.spinner("Trayendo preguntas..."):
+                r = preg.sincronizar_historial(
+                    ml, callback=lambda m: estado.caption(m))
+            estado.empty()
+            if r["ok"]:
+                st.success(f"{r['nuevas']} preguntas nuevas y "
+                           f"{r['actualizadas']} actualizadas. "
+                           f"Total en la planilla: {r['total']}.")
+            else:
+                st.error(f"No se pudo guardar: {r['detalle']}")
+            st.session_state.pop("preg_hist", None)
+
+        if "preg_hist" not in st.session_state:
+            st.session_state["preg_hist"] = pd.DataFrame(preg.historial())
+        hc = st.session_state["preg_hist"]
+
+        if not len(hc):
+            st.info("Todavía no hay historial. Apretá **Sincronizar** para "
+                    "traerlo de MercadoLibre.")
+        else:
+            h1, h2, h3 = st.columns(3)
+            h1.metric("Preguntas", met["historial_total"])
+            h2.metric("Respondidas por la IA", met["historial_por_ia"])
+            h3.metric("Respondidas por una persona", met["historial_por_persona"])
+
+            f1, f2 = st.columns([2, 2])
+            with f1:
+                quien = st.multiselect(
+                    "Quién respondió",
+                    sorted(x for x in hc["respondida_por"].unique() if x),
+                    default=sorted(x for x in hc["respondida_por"].unique() if x))
+            with f2:
+                buscar_q = st.text_input("Buscar en la pregunta o la respuesta")
+
+            vista_h = hc[hc["respondida_por"].isin(quien)] if quien else hc
+            if buscar_q:
+                m_ = (vista_h["pregunta"].str.contains(buscar_q, case=False, na=False)
+                      | vista_h["respuesta"].str.contains(buscar_q, case=False,
+                                                          na=False))
+                vista_h = vista_h[m_]
+
+            st.caption(f"{len(vista_h)} preguntas")
+            st.dataframe(vista_h.iloc[::-1], use_container_width=True, height=440,
+                         column_config={
+                             "question_id": "ID", "fecha_pregunta": "Fecha",
+                             "item_id": "Publicación", "publicacion": "Título",
+                             "comprador": "Comprador", "pregunta": "Pregunta",
+                             "respuesta": "Respuesta",
+                             "respondida_por": "Respondió",
+                             "estado_ml": "Estado", "sincronizado": "Sincronizado"})
+            st.download_button(
+                "Descargar el historial completo",
+                vista_h.to_csv(index=False).encode("utf-8"),
+                f"historial_preguntas_{datetime.now():%Y%m%d}.csv", "text/csv")
+
+    elif vista_p == "Registro de la IA":
+        st.caption("Solo lo que procesó la IA, con el motivo de cada decisión.")
         hist = pd.DataFrame(almacen.leer_hoja(preg.HOJA_RESPUESTAS,
                                               preg.COLS_RESPUESTAS))
         if not len(hist):
