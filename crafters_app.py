@@ -905,10 +905,11 @@ elif seccion == "Preguntas":
 
     elif vista_p == "Pendientes":
         st.caption(
-            "Preguntas que la IA no resolvió y siguen sin respuesta. "
-            "Respondelas desde acá: se publican en MercadoLibre y quedan "
-            "registradas. Las que alguien ya contestó desde el panel "
-            "desaparecen solas.")
+            "**Todas** las preguntas sin responder de la cuenta, las haya "
+            "tocado la IA o no. Escribí la respuesta y se publica en "
+            "MercadoLibre; también podés pedirle un borrador a la IA para esa "
+            "pregunta puntual. Las que alguien ya contestó desde el panel de "
+            "ML desaparecen solas.")
 
         if st.button("↻ Actualizar la bandeja"):
             st.session_state.pop("preg_band", None)
@@ -942,13 +943,33 @@ elif seccion == "Preguntas":
                     elif b["motivo"]:
                         st.caption(f"La IA no respondió porque: {b['motivo']}")
 
+                    # Un borrador pedido a mano pisa lo que hubiera antes.
+                    clave_borr = f"borr_{b['question_id']}"
+                    valor = st.session_state.get(clave_borr, b["borrador"])
+
                     texto = st.text_area(
-                        "Tu respuesta", value=b["borrador"], height=110,
+                        "Tu respuesta", value=valor, height=110,
                         key=f"resp_{b['question_id']}",
                         placeholder="Escribí acá la respuesta que se va a "
                                     "publicar en MercadoLibre...")
 
-                    c_a, c_b = st.columns([1, 3])
+                    c_a, c_ia, c_b = st.columns([1, 1.4, 2.6])
+                    if c_ia.button("✨ Sugerir con IA",
+                                   key=f"ia_{b['question_id']}",
+                                   help="Le pide un borrador a la IA para esta "
+                                        "pregunta. No publica nada: lo editás vos."):
+                        with st.spinner("Redactando..."):
+                            txt, aviso = preg.borrador(
+                                ml, b["question_id"], b["item_id"],
+                                b["pregunta"], b["comprador"])
+                        if txt:
+                            st.session_state[clave_borr] = txt
+                            if aviso:
+                                st.warning(aviso, icon="⚠️")
+                            st.rerun()
+                        else:
+                            st.info(aviso or "La IA no pudo redactar nada.")
+
                     if c_a.button("Publicar", key=f"pub_{b['question_id']}",
                                   disabled=not nombre.strip()
                                   or b["estado"] == "publicacion_inactiva"):
@@ -958,6 +979,7 @@ elif seccion == "Preguntas":
                             motivo_previo=b["motivo"])
                         if ok:
                             st.success("Publicada." + (f" {det}" if det else ""))
+                            st.session_state.pop(clave_borr, None)
                             st.session_state.pop("preg_band", None)
                             st.cache_data.clear()
                             st.rerun()

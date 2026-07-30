@@ -535,6 +535,39 @@ def bandeja(ml):
     return salida
 
 
+def borrador(ml, question_id, item_id, texto_pregunta, nick=""):
+    """
+    Redacta un borrador para UNA pregunta puntual, a pedido del operador.
+
+    No publica ni registra nada: devuelve el texto para que la persona lo
+    edite y decida. Sirve para pedirle ayuda a la IA en una pregunta que ella
+    no habia podido resolver sola, o simplemente para arrancar de algo escrito.
+    """
+    cfg = config()
+    try:
+        item = contexto_publicacion(ml, item_id)
+        previas = preguntas_del_item(ml, item_id, excluir=question_id)
+        buscador = Buscador(cargar_historico(ml), fuentes())
+        similares = buscador.buscar(f"{item.get('titulo','')} {texto_pregunta}")
+    except Exception as e:
+        return "", f"No pude armar el contexto: {str(e)[:200]}"
+
+    try:
+        r = redactar({"texto": texto_pregunta, "nick": nick}, item, similares,
+                     previas, cfg.get("firma", "Equipo CRAFTERS"))
+    except Exception as e:
+        return "", f"No pude redactar: {str(e)[:200]}"
+
+    if not r.get("respuesta"):
+        return "", (f"La IA sigue sin poder responderla: {r.get('motivo','')}"
+                    [:300])
+    aviso = ""
+    if r.get("confianza") == "baja" or not r.get("responder"):
+        aviso = (f"Ojo, la IA tiene poca certeza: {r.get('motivo','')[:200]}. "
+                 "Revisá bien antes de publicar.")
+    return r["respuesta"], aviso
+
+
 def responder_a_mano(ml, question_id, texto, operador, item_id="",
                      pregunta="", motivo_previo=""):
     """
