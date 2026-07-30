@@ -223,3 +223,114 @@ if __name__ == "__main__":
     except MeliError as e:
         print(f"\nERROR: {e}\n")
         sys.exit(1)
+
+
+# ------------------------------------------------------------------ monitoreo
+
+HOJA_MONITOR = "monitor_competencia"
+HOJA_ALERTAS = "alertas_competencia"
+COLS_MONITOR = ["ean", "producto", "mejor_precio", "mejor_vendedor",
+                "nuestro_precio", "posicion", "competidores", "medido"]
+COLS_ALERTAS = ["fecha", "ean", "producto", "tipo", "detalle",
+                "antes", "ahora"]
+
+# Un cambio de precio menor a esto es ruido de redondeo, no una jugada.
+CAMBIO_MINIMO = 0.02
+
+
+def eans_vigilados():
+    """Los EAN que se monitorean: los que ya están en la hoja del monitor."""
+    import almacen
+    return [f["ean"] for f in almacen.leer_hoja(HOJA_MONITOR, COLS_MONITOR)
+            if f.get("ean")]
+
+
+def monitorear(ml, eans=None, callback=None):
+    """
+    Compara la foto de hoy contra la anterior y **solo reporta lo que cambió**.
+
+    Sin esto, un informe completo cada día se mira dos veces y se abandona.
+    Lo que importa es enterarse de que un competidor bajó el precio, apareció
+    uno nuevo, o pasamos de ganar a perder.
+    """
+    import almacen
+    from datetime import datetime
+
+    previo = {f["ean"]: f for f in almacen.leer_hoja(HOJA_MONITOR, COLS_MONITOR)}
+    eans = eans or list(previo) or []
+    if not eans:
+        return {"alertas": [], "error": "No hay EAN cargados para monitorear."}
+
+    hoy = analizar(ml, eans, callback=callback)
+    ahora = datetime.now().strftime("%Y-%m-%d %H:%M")
+    alertas, filas = [], []
+
+    def _f(v):
+        try:
+            return float(str(v).replace(",", "."))
+        except (TypeError, ValueError):
+            return None
+
+    for _, r in hoy.iterrows():
+        if r["estado"] != "ok":
+            continue
+        ean = str(r["ean"])
+        ant = previo.get(ean)
+        filas.append({
+            "ean": ean, "producto": r["producto"],
+            "mejor_precio": r["mejor_precio"],
+            "mejor_vendedor": r["mejor_vendedor"],
+            "nuestro_precio": r["nuestro_precio"] or "",
+            "posicion": r["posicion"] or "", "competidores": r["competidores"],
+            "medido": ahora,
+        })
+        if not ant:
+            continue
+
+        p_ant, p_hoy = _f(ant.get("mejor_precio")), _f(r["mejor_precio"])
+        if p_ant and p_hoy and abs(p_hoy - p_ant) / p_ant >= CAMBIO_MINIMO:
+            alertas.append({
+                "fecha": ahora, "ean": ean, "producto": r["producto"],
+                "tipo": "bajo_el_precio" if p_hoy < p_ant else "subio_el_precio",
+                "detalle": (f"El más barato ({r['mejor_vendedor']}) "
+                            f"{'bajó' if p_hoy < p_ant else 'subió'} "
+                            f"{abs(p_hoy - p_ant) / p_ant:.0%}"),
+                "antes": p_ant, "ahora": p_hoy})
+
+        if str(ant.get("mejor_vendedor")) == "NOSOTROS" and \
+                r["mejor_vendedor"] != "NOSOTROS":
+            alertas.append({
+                "fecha": ahora, "ean": ean, "producto": r["producto"],
+                "tipo": "perdimos_el_primer_puesto",
+                "detalle": f"Nos pasó {r['mejor_vendedor']}",
+                "antes": ant.get("mejor_precio"), "ahora": r["mejor_precio"]})
+        elif str(ant.get("mejor_vendedor")) != "NOSOTROS" and \
+                r["mejor_vendedor"] == "NOSOTROS":
+            alertas.append({
+                "fecha": ahora, "ean": ean, "producto": r["producto"],
+                "tipo": "ganamos_el_primer_puesto",
+                "detalle": "Pasamos a ser los más baratos",
+                "antes": ant.get("mejor_precio"), "ahora": r["mejor_precio"]})
+
+        c_ant, c_hoy = _f(ant.get("competidores")), _f(r["competidores"])
+        if c_ant and c_hoy and c_hoy > c_ant:
+            alertas.append({
+                "fecha": ahora, "ean": ean, "producto": r["producto"],
+                "tipo": "competidores_nuevos",
+                "detalle": f"Entraron {int(c_hoy - c_ant)} vendedores nuevos",
+                "antes": int(c_ant), "ahora": int(c_hoy)})
+
+    almacen.reescribir_hoja(HOJA_MONITOR, COLS_MONITOR, filas)
+    if alertas:
+        almacen.append_hoja(HOJA_ALERTAS, COLS_ALERTAS, alertas)
+    return {"alertas": alertas, "vigilados": len(filas), "error": ""}
+
+
+def cargar_vigilados(eans):
+    """Deja los EAN a vigilar (la primera medición se hace al monitorear)."""
+    import almacen
+    return almacen.reescribir_hoja(
+        HOJA_MONITOR, COLS_MONITOR,
+        [{"ean": e, "producto": "", "mejor_precio": "", "mejor_vendedor": "",
+          "nuestro_precio": "", "posicion": "", "competidores": "",
+          "medido": ""} for e in dict.fromkeys(eans)])
