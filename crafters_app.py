@@ -788,9 +788,23 @@ elif seccion == "Competencia":
 elif seccion == "Preguntas":
     st.markdown("#### Respuestas automáticas con IA")
 
-    cfg = preg.config()
-    activa = preg.ia_activa()
-    met = preg.metricas()
+    # La Sheet se lee una vez por minuto, no en cada interacción: leerla en
+    # cada render es lento y hace pegarle al límite de la API de Google.
+    @st.cache_data(ttl=60, show_spinner=False)
+    def _met(con_historial):
+        return preg.metricas(incluir_historial=con_historial)
+
+    try:
+        cfg = preg.config()
+        activa = preg.ia_activa()
+    except Exception as e:
+        st.error(f"No pude leer la configuración de la planilla: {e}")
+        st.stop()
+
+    met = _met(False)
+    if met.get("error"):
+        st.warning(f"Los contadores no se pudieron actualizar: {met['error']}",
+                   icon="📊")
 
     m1, m2, m3 = st.columns(3)
     m1.metric("Respondidas por la IA", met["respondidas_ia"],
@@ -858,6 +872,13 @@ elif seccion == "Preguntas":
                         st.success(f"{pub} respuestas publicadas en MercadoLibre.")
                     if sim:
                         st.info(f"{sim} redactadas (no se publicaron: fue una prueba).")
+                    inact = (res["estado"] == "publicacion_inactiva").sum()
+                    if inact:
+                        st.info(
+                            f"**{inact} no se pudieron responder porque la "
+                            "publicación está pausada.** MercadoLibre no lo "
+                            "permite. Si la reactivás, se responden en la "
+                            "próxima corrida.", icon="⏸️")
                     err = (res["estado"] == "error_tecnico").sum()
                     if err:
                         motivo = res[res["estado"] == "error_tecnico"].iloc[0]["motivo"]
@@ -899,17 +920,23 @@ elif seccion == "Preguntas":
             st.session_state.pop("preg_hist", None)
 
         if "preg_hist" not in st.session_state:
-            st.session_state["preg_hist"] = pd.DataFrame(preg.historial())
+            try:
+                st.session_state["preg_hist"] = pd.DataFrame(preg.historial())
+            except Exception as e:
+                st.error(f"No pude leer el historial de la planilla: {e}")
+                st.session_state["preg_hist"] = pd.DataFrame()
         hc = st.session_state["preg_hist"]
 
         if not len(hc):
             st.info("Todavía no hay historial. Apretá **Sincronizar** para "
                     "traerlo de MercadoLibre.")
         else:
+            meth = _met(True)
             h1, h2, h3 = st.columns(3)
-            h1.metric("Preguntas", met["historial_total"])
-            h2.metric("Respondidas por la IA", met["historial_por_ia"])
-            h3.metric("Respondidas por una persona", met["historial_por_persona"])
+            h1.metric("Preguntas", meth["historial_total"])
+            h2.metric("Respondidas por la IA", meth["historial_por_ia"])
+            h3.metric("Respondidas por una persona",
+                      meth["historial_por_persona"])
 
             f1, f2 = st.columns([2, 2])
             with f1:
@@ -943,8 +970,12 @@ elif seccion == "Preguntas":
 
     elif vista_p == "Registro de la IA":
         st.caption("Solo lo que procesó la IA, con el motivo de cada decisión.")
-        hist = pd.DataFrame(almacen.leer_hoja(preg.HOJA_RESPUESTAS,
-                                              preg.COLS_RESPUESTAS))
+        try:
+            hist = pd.DataFrame(almacen.leer_hoja(preg.HOJA_RESPUESTAS,
+                                                  preg.COLS_RESPUESTAS))
+        except Exception as e:
+            st.error(f"No pude leer el registro de la planilla: {e}")
+            hist = pd.DataFrame()
         if not len(hist):
             st.info("Todavía no hay respuestas registradas.")
         else:
@@ -994,7 +1025,11 @@ elif seccion == "Preguntas":
                     st.error(f"No pude traer la página: {e}")
 
         st.divider()
-        fs = pd.DataFrame(preg.fuentes())
+        try:
+            fs = pd.DataFrame(preg.fuentes())
+        except Exception as e:
+            st.error(f"No pude leer las fuentes: {e}")
+            fs = pd.DataFrame()
         if len(fs):
             st.dataframe(fs.drop(columns=["contenido"], errors="ignore"),
                          use_container_width=True)

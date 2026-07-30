@@ -491,7 +491,8 @@ def registrar(fila):
 # Estados que NO bloquean un reintento: si algo falló por configuración o por
 # un error de red, la pregunta tiene que poder procesarse de nuevo. Solo una
 # decision real del modelo (publicada / derivada) cierra el caso.
-ESTADOS_REINTENTABLES = ("error_tecnico", "error_al_publicar")
+ESTADOS_REINTENTABLES = ("error_tecnico", "error_al_publicar",
+                         "publicacion_inactiva")
 
 
 def ya_procesadas():
@@ -543,6 +544,28 @@ def procesar(ml, publicar_de_verdad=False, callback=None):
             # Que no se caiga toda la tanda por una publicacion problematica.
             item, previas, similares = {}, [], []
             print(f"[preguntas] aviso: sin contexto para {item_id}: {e}")
+
+        # ML rechaza responder preguntas de publicaciones que no estan activas
+        # ("Item must be active"). Se detecta antes de llamar al modelo, que
+        # cuesta plata y no serviria de nada.
+        if publicar_de_verdad and item and item.get("estado") != "active":
+            fila = {
+                "fecha": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "question_id": q.get("id"), "item_id": item_id,
+                "pregunta": texto_p[:400], "respuesta": "",
+                "estado": "publicacion_inactiva", "confianza": "",
+                "fuentes": "", "modelo": "",
+                "motivo": (f"La publicación está '{item.get('estado')}': "
+                           "MercadoLibre no permite responder preguntas de "
+                           "publicaciones que no están activas. Reactivala o "
+                           "respondé desde el panel."),
+            }
+            try:
+                registrar(fila)
+            except Exception:
+                pass
+            resultados.append(fila)
+            continue
 
         fallo = None
         try:
@@ -689,33 +712,58 @@ def historial():
     return almacen.leer_hoja(HOJA_HISTORIAL, COLS_HISTORIAL)
 
 
-def metricas():
+VACIAS = {"respondidas_ia": 0, "derivadas_a_persona": 0, "con_error": 0,
+          "tasa_automatica": 0.0, "historial_total": 0,
+          "historial_respondidas": 0, "historial_por_ia": 0,
+          "historial_por_persona": 0, "error": ""}
+
+
+def metricas(incluir_historial=False):
     """
-    Contadores acumulados. `respondidas_ia` es el número que interesa: cuántas
-    preguntas contestó la IA sola desde que se activó.
+    Contadores acumulados. `respondidas_ia` es el numero que interesa: cuantas
+    preguntas contesto la IA sola desde que se activo.
+
+    Por defecto **no** lee el historial completo: son ~1.000 filas y esto se
+    llama en cada render de la seccion, lo que ademas de lento hace pegarle al
+    limite de lecturas de la API de Sheets. Las metricas del historial se piden
+    aparte, solo en la vista que las muestra.
+
+    Nunca lanza: si la Sheet no responde devuelve ceros con el motivo en
+    `error`, para que la app avise en vez de caerse.
     """
-    reg = almacen.leer_hoja(HOJA_RESPUESTAS, COLS_RESPUESTAS)
+    m = dict(VACIAS)
+    try:
+        reg = almacen.leer_hoja(HOJA_RESPUESTAS, COLS_RESPUESTAS)
+    except Exception as e:
+        m["error"] = f"No pude leer el registro de la IA: {str(e)[:200]}"
+        return m
+
     estados = [str(f.get("estado", "")).strip() for f in reg]
-    hist = historial()
-
-    con_respuesta = [f for f in hist if str(f.get("respuesta", "")).strip()]
-    por_ia = sum(1 for f in con_respuesta
-                 if str(f.get("respondida_por", "")) == "IA")
-
     publicadas = estados.count("publicada")
     revisar = estados.count("para_revisar")
     procesadas = publicadas + revisar
 
-    return {
+    m.update({
         "respondidas_ia": publicadas,
         "derivadas_a_persona": revisar,
-        "con_error": estados.count("error_al_publicar"),
+        "con_error": estados.count("error_al_publicar") + estados.count("error_tecnico"),
         "tasa_automatica": (publicadas / procesadas) if procesadas else 0.0,
-        "historial_total": len(hist),
-        "historial_respondidas": len(con_respuesta),
-        "historial_por_ia": por_ia,
-        "historial_por_persona": len(con_respuesta) - por_ia,
-    }
+    })
+
+    if incluir_historial:
+        try:
+            hist = historial()
+            con_resp = [f for f in hist if str(f.get("respuesta", "")).strip()]
+            por_ia = sum(1 for f in con_resp
+                         if str(f.get("respondida_por", "")) == "IA")
+            m.update({"historial_total": len(hist),
+                      "historial_respondidas": len(con_resp),
+                      "historial_por_ia": por_ia,
+                      "historial_por_persona": len(con_resp) - por_ia})
+        except Exception as e:
+            m["error"] = f"No pude leer el historial: {str(e)[:200]}"
+
+    return m
 
 
 def main():
