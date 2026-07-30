@@ -747,6 +747,9 @@ elif seccion == "Competencia":
                     i / t_, text=f"Consultando {i} de {t_}..."))
             barra.empty()
             st.session_state["comp_detalle"] = detalle
+            ok_h, det_h = competencia.guardar_comparacion(
+                st.session_state["comp"], origen="mas_vendidos")
+            st.session_state["comp_guardado"] = (ok_h, det_h)
         else:
             st.warning("Ninguno de tus más vendidos tiene código de barras "
                        "cargado. Sin EAN no se pueden buscar en el catálogo.")
@@ -774,6 +777,16 @@ elif seccion == "Competencia":
                 callback=lambda i, t, e: barra.progress(
                     i / t, text=f"Consultando {i} de {t} ({e})..."))
             barra.empty()
+            ok_h, det_h = competencia.guardar_comparacion(
+                st.session_state["comp"], origen="planilla")
+            st.session_state["comp_guardado"] = (ok_h, det_h)
+
+    guardado = st.session_state.get("comp_guardado")
+    if guardado:
+        ok_h, det_h = guardado
+        (st.caption if ok_h else st.warning)(
+            f"📋 {det_h}" if ok_h
+            else f"La comparación no se guardó en la planilla: {det_h}")
 
     df = st.session_state.get("comp")
     if df is not None and len(df):
@@ -822,6 +835,46 @@ elif seccion == "Competencia":
                            df.to_csv(index=False).encode("utf-8"),
                            f"competencia_{datetime.now():%Y%m%d_%H%M}.csv",
                            "text/csv")
+
+    st.divider()
+    with st.expander("📋 Historial de comparaciones"):
+        st.caption(
+            "Cada comparación queda guardada en la hoja "
+            f"`{competencia.HOJA_HISTORIAL}`. Sirve para ver cómo evolucionó "
+            "el precio de un competidor o el tuyo a lo largo del tiempo.")
+        if st.button("Cargar el historial"):
+            try:
+                st.session_state["comp_hist"] = competencia.historial()
+            except Exception as e:
+                st.error(f"No pude leer el historial: {e}")
+
+        hcomp = st.session_state.get("comp_hist")
+        if hcomp is not None and len(hcomp):
+            c1, c2 = st.columns(2)
+            c1.metric("Mediciones guardadas", len(hcomp))
+            c2.metric("Productos distintos", hcomp["ean"].nunique())
+
+            ean_sel = st.selectbox(
+                "Ver la evolución de un producto",
+                ["(todos)"] + sorted(hcomp["ean"].unique()),
+                format_func=lambda e: e if e == "(todos)" else
+                f"{e} · {hcomp[hcomp.ean == e].iloc[-1]['producto'][:45]}")
+            v = hcomp if ean_sel == "(todos)" else hcomp[hcomp.ean == ean_sel]
+
+            if ean_sel != "(todos)" and len(v) > 1:
+                serie = v.copy()
+                for c in ("mejor_precio", "nuestro_precio"):
+                    serie[c] = pd.to_numeric(serie[c], errors="coerce")
+                st.line_chart(serie.set_index("fecha")[
+                    ["mejor_precio", "nuestro_precio"]])
+
+            st.dataframe(v.iloc[::-1], use_container_width=True, height=300)
+            st.download_button("Descargar el historial",
+                               v.to_csv(index=False).encode("utf-8"),
+                               f"historial_competencia_{datetime.now():%Y%m%d}.csv",
+                               "text/csv", key="dl_hcomp")
+        elif hcomp is not None:
+            st.info("Todavía no hay comparaciones guardadas.")
 
 elif seccion == "Oportunidades":
     st.markdown("#### Dónde hay plata sobre la mesa")

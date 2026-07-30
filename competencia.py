@@ -321,6 +321,7 @@ def monitorear(ml, eans=None, callback=None):
                 "antes": int(c_ant), "ahora": int(c_hoy)})
 
     almacen.reescribir_hoja(HOJA_MONITOR, COLS_MONITOR, filas)
+    guardar_comparacion(hoy, origen="monitor")
     if alertas:
         almacen.append_hoja(HOJA_ALERTAS, COLS_ALERTAS, alertas)
     return {"alertas": alertas, "vigilados": len(filas), "error": ""}
@@ -407,3 +408,65 @@ def eans_mas_vendidos(ml, n=50, dias=30, callback=None):
         detalle += (f" Quedaron afuera {sin_ean} que vendieron pero no tienen "
                     "código de barras cargado.")
     return eans, detalle, pd.DataFrame(filas)
+
+
+# ------------------------------------------------------------------ historial
+
+HOJA_HISTORIAL = "historial_competencia"
+COLS_HISTORIAL = ["fecha", "origen", "ean", "producto", "mejor_precio",
+                  "mejor_vendedor", "reputacion", "nuestro_precio",
+                  "diferencia", "posicion", "competidores", "estado"]
+
+
+def guardar_comparacion(df, origen="manual"):
+    """
+    Deja una foto de la comparacion en la planilla. Append-only: cada corrida
+    suma filas en vez de pisar la anterior, asi se puede ver como evoluciono
+    el precio de un competidor en el tiempo.
+
+    `origen` distingue lo que se corrio a mano de lo que corrio el monitor
+    diario, para poder filtrar despues.
+
+    No lanza: si la Sheet falla, la comparacion ya sirve igual en pantalla.
+    """
+    import almacen
+    from datetime import datetime
+
+    if df is None or not len(df):
+        return False, "No hay nada para guardar."
+
+    ahora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    filas = []
+    for _, r in df.iterrows():
+        if r.get("estado") != "ok":
+            continue          # las que no se pudieron medir no son historial
+        filas.append({
+            "fecha": ahora, "origen": origen, "ean": str(r["ean"]),
+            "producto": r["producto"],
+            "mejor_precio": r["mejor_precio"],
+            "mejor_vendedor": r["mejor_vendedor"],
+            "reputacion": r.get("reputacion", ""),
+            "nuestro_precio": r["nuestro_precio"] if pd.notna(
+                r["nuestro_precio"]) else "",
+            "diferencia": (round(float(r["diferencia"]), 4)
+                           if pd.notna(r["diferencia"]) else ""),
+            "posicion": (int(r["posicion"]) if pd.notna(r["posicion"]) else ""),
+            "competidores": r["competidores"], "estado": r["estado"],
+        })
+
+    if not filas:
+        return False, "Ninguna comparación tuvo datos utilizables."
+    try:
+        ok, det = almacen.append_hoja(HOJA_HISTORIAL, COLS_HISTORIAL, filas)
+        return ok, det or f"{len(filas)} comparaciones guardadas."
+    except Exception as e:
+        return False, f"No pude guardar en la planilla: {str(e)[:200]}"
+
+
+def historial(ean=None):
+    """Historial de comparaciones, opcionalmente filtrado por EAN."""
+    import almacen
+    filas = almacen.leer_hoja(HOJA_HISTORIAL, COLS_HISTORIAL)
+    if ean:
+        filas = [f for f in filas if str(f.get("ean")) == str(ean)]
+    return pd.DataFrame(filas)
