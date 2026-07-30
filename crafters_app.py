@@ -25,6 +25,7 @@ import competencia
 import conciliacion
 import conversion
 import envios
+import salud
 import espejos
 import rentabilidad as rent
 import mayoristas
@@ -883,10 +884,64 @@ elif seccion == "Oportunidades":
     st.markdown("#### Dónde hay plata sobre la mesa")
     op = st.radio("Vista", ["Visitas vs ventas", "Tramos de comisión",
                             "Precios espejo", "Factura de ML",
-                            "Envíos"],
+                            "Envíos", "Salud del catálogo"],
                   horizontal=True, label_visibility="collapsed")
 
-    if op == "Envíos":
+    if op == "Salud del catálogo":
+        st.caption(
+            "Qué hay que arreglar en los datos para que el resto de las "
+            "herramientas funcione bien. Ordenado por lo que cada publicación "
+            "vendió: arreglar la ficha de algo que vende 3.000 unidades vale "
+            "más que la de algo que nunca vendió.")
+
+        if st.button("Revisar el catálogo"):
+            st.session_state["salud"] = salud.analizar(pubs)
+
+        dfs = st.session_state.get("salud")
+        if dfs is not None and len(dfs):
+            res = salud.resumen(dfs)
+            st.metric("Publicaciones con algo para arreglar", len(dfs))
+
+            cols = st.columns(len(res) or 1)
+            for c, (k, n) in zip(cols, sorted(res.items(), key=lambda x: -x[1])):
+                c.metric(k.capitalize(), n)
+
+            with st.expander("Qué rompe cada problema"):
+                st.markdown(
+                    "- **Sin SKU**: la publicación es invisible para las "
+                    "herramientas de precio, stock, rentabilidad y espejos.\n"
+                    "- **SKU contradictorio**: se resuelve por `SELLER_SKU`, "
+                    "pero la discrepancia suele indicar carga descuidada y "
+                    "puede apuntar al producto equivocado.\n"
+                    "- **Sin código de barras**: no se puede comparar contra "
+                    "la competencia.\n"
+                    "- **Pausada con stock**: no vende y tiene mercadería "
+                    "inmovilizada.\n"
+                    "- **Activa sin stock**: ocupa lugar y no puede vender.")
+
+            filtro_s = st.multiselect("Filtrar por problema", sorted(res),
+                                      default=sorted(res))
+            vs = dfs[dfs["problemas"].apply(
+                lambda x: any(f in x for f in filtro_s))] if filtro_s else dfs
+
+            st.dataframe(
+                vs, use_container_width=True, height=420,
+                column_config={
+                    "item_id": "Publicación", "sku": "SKU", "titulo": "Título",
+                    "estado": "Estado", "stock": "Stock",
+                    "vendidas": "Vendidas",
+                    "precio": st.column_config.NumberColumn(
+                        "Precio", format="%.0f"),
+                    "problemas": "Qué arreglar", "cuantos": None,
+                    "prioridad": None})
+            st.download_button("Descargar la lista",
+                               vs.to_csv(index=False).encode("utf-8"),
+                               f"salud_catalogo_{datetime.now():%Y%m%d}.csv",
+                               "text/csv")
+        elif dfs is not None:
+            st.success("El catálogo no tiene problemas de datos. 👌")
+
+    elif op == "Envíos":
         st.caption(
             "En qué productos se va la plata de envío. El caso típico es el "
             "producto voluminoso con precio bajo: paga el mismo envío que uno "
