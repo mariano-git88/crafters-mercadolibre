@@ -22,6 +22,7 @@ import streamlit as st
 import actualizador as act
 import almacen
 import competencia
+import conciliacion
 import conversion
 import espejos
 import rentabilidad as rent
@@ -880,10 +881,73 @@ elif seccion == "Competencia":
 elif seccion == "Oportunidades":
     st.markdown("#### Dónde hay plata sobre la mesa")
     op = st.radio("Vista", ["Visitas vs ventas", "Tramos de comisión",
-                            "Precios espejo"],
+                            "Precios espejo", "Factura de ML"],
                   horizontal=True, label_visibility="collapsed")
 
-    if op == "Precios espejo":
+    if op == "Factura de ML":
+        st.caption(
+            "MercadoLibre te factura entre $22M y $35M por mes. Cada orden "
+            "trae la comisión que ML se cobró por esa venta. Esto compara las "
+            "dos cosas, período por período.")
+        st.info(
+            "**No es una auditoría contable.** La factura incluye conceptos "
+            "que no salen de las órdenes (envíos, publicidad, cargos por "
+            "publicación), así que es normal que sea mayor. Lo que importa es "
+            "si esa proporción **se mantiene estable**: un salto repentino es "
+            "lo que amerita revisar.", icon="🧾")
+
+        n_per = st.selectbox("Períodos a comparar", [3, 4, 6], index=0)
+        if st.button("Conciliar"):
+            estado = st.empty()
+            with st.spinner("Trayendo facturación y órdenes..."):
+                st.session_state["concil"] = conciliacion.conciliar(
+                    ml, n_per, callback=lambda m: estado.caption(str(m)))
+            estado.empty()
+
+        dfk = st.session_state.get("concil")
+        if dfk is not None and len(dfk):
+            ult = dfk.iloc[0]
+            n1, n2, n3 = st.columns(3)
+            n1.metric("Último período facturado", pesos(ult["facturado_ml"]))
+            n2.metric("Son comisiones de venta",
+                      pesos(ult["comisiones_calculadas"]))
+            n3.metric("Otros conceptos", pesos(ult["otros_conceptos"]),
+                      f"{ult['proporcion_otros']:.0%} del total")
+
+            if "alerta" in dfk and dfk["alerta"].any():
+                st.warning(
+                    "Hay períodos que se desvían más de 10 puntos del "
+                    "promedio. Vale revisar qué cambió: publicidad nueva, "
+                    "cargos por publicación o ajustes.", icon="⚠️")
+            else:
+                st.success(
+                    "La proporción se mantiene estable entre períodos: no hay "
+                    "señales de un cobro fuera de lo normal.")
+
+            st.dataframe(
+                dfk, use_container_width=True,
+                column_config={
+                    "periodo": "Período",
+                    "facturado_ml": st.column_config.NumberColumn(
+                        "ML facturó", format="%.0f"),
+                    "comisiones_calculadas": st.column_config.NumberColumn(
+                        "Comisiones de venta", format="%.0f"),
+                    "otros_conceptos": st.column_config.NumberColumn(
+                        "Otros conceptos", format="%.0f"),
+                    "proporcion_otros": st.column_config.NumberColumn(
+                        "% otros", format="%.1f%%"),
+                    "desvio_vs_promedio": st.column_config.NumberColumn(
+                        "Desvío", format="%.1f%%"),
+                    "impago": st.column_config.NumberColumn(
+                        "Impago", format="%.0f"),
+                    "ordenes": "Órdenes", "unidades": "Unidades",
+                    "alerta": "Revisar"})
+            st.download_button("Descargar la conciliación",
+                               dfk.to_csv(index=False).encode("utf-8"),
+                               f"conciliacion_{datetime.now():%Y%m%d}.csv",
+                               "text/csv")
+
+    elif op == "Precios espejo":
         st.caption(
             "Casi la mitad del catálogo son publicaciones duplicadas del mismo "
             "producto. Cuando dos tienen precios distintos, **competís contra "
