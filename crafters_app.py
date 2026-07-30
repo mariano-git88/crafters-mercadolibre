@@ -24,6 +24,7 @@ import almacen
 import competencia
 import conciliacion
 import conversion
+import envios
 import espejos
 import rentabilidad as rent
 import mayoristas
@@ -881,10 +882,87 @@ elif seccion == "Competencia":
 elif seccion == "Oportunidades":
     st.markdown("#### Dónde hay plata sobre la mesa")
     op = st.radio("Vista", ["Visitas vs ventas", "Tramos de comisión",
-                            "Precios espejo", "Factura de ML"],
+                            "Precios espejo", "Factura de ML",
+                            "Envíos"],
                   horizontal=True, label_visibility="collapsed")
 
-    if op == "Factura de ML":
+    if op == "Envíos":
+        st.caption(
+            "En qué productos se va la plata de envío. El caso típico es el "
+            "producto voluminoso con precio bajo: paga el mismo envío que uno "
+            "caro, pero sobre un precio mucho menor.")
+        st.caption(
+            "El costo es el que paga CRAFTERS (`senders[].cost`), no el "
+            "comprador. Se muestrean unas ventas por SKU, así que la columna "
+            "**cobertura** dice qué proporción tiene dato real.")
+
+        e1, e2 = st.columns([1.2, 3])
+        dias_e = e1.selectbox("Período", [30, 60, 90], index=2,
+                              format_func=lambda d: f"{d} días", key="d_env")
+        if e2.button("Analizar envíos", use_container_width=True):
+            estado = st.empty()
+            with st.spinner("Trayendo costos de envío..."):
+                st.session_state["envios"] = envios.analizar(
+                    ml, dias_e, callback=lambda m: estado.caption(str(m)))
+            estado.empty()
+
+        dfv = st.session_state.get("envios")
+        if dfv is not None and len(dfv):
+            pierde = int((dfv["diagnostico"] == "pierde_plata").sum())
+            critico = int((dfv["diagnostico"] == "envio_critico").sum())
+            v1, v2, v3 = st.columns(3)
+            v1.metric("SKU medidos", len(dfv))
+            v2.metric("Envío crítico (+35%)", critico)
+            v3.metric("Pierden plata", pierde)
+
+            if pierde:
+                peor = dfv[dfv["diagnostico"] == "pierde_plata"].iloc[0]
+                st.error(
+                    f"**{pierde} productos pierden plata solo con el envío y "
+                    f"la comisión**, antes de contar el costo de la "
+                    f"mercadería. El peor: `{peor['sku']}` se vende a "
+                    f"{pesos(peor['precio_prom'])} y el envío cuesta "
+                    f"{pesos(peor['envio_prom'])}.", icon="🚚")
+
+            solo_probl = st.checkbox("Ver solo los problemáticos", value=True)
+            vv = (dfv[dfv["diagnostico"] != "normal"] if solo_probl else dfv)
+
+            st.dataframe(
+                vv, use_container_width=True, height=420,
+                column_config={
+                    "sku": "SKU",
+                    "precio_prom": st.column_config.NumberColumn(
+                        "Precio", format="%.0f"),
+                    "envio_prom": st.column_config.NumberColumn(
+                        "Envío", format="%.0f"),
+                    "envio_sobre_precio": st.column_config.NumberColumn(
+                        "Envío / precio", format="%.0f%%"),
+                    "comision_prom": st.column_config.NumberColumn(
+                        "Comisión", format="%.0f"),
+                    "queda_antes_del_costo": st.column_config.NumberColumn(
+                        "Queda", format="%.0f",
+                        help="Antes de restar el costo de la mercadería"),
+                    "margen_bruto": st.column_config.NumberColumn(
+                        "Margen bruto", format="%.0f%%"),
+                    "unidades_vendidas": "Unidades",
+                    "cobertura_envio": st.column_config.NumberColumn(
+                        "Cobertura", format="%.0f%%"),
+                    "plata_en_envio": st.column_config.NumberColumn(
+                        "Plata en envío", format="%.0f"),
+                    "diagnostico": "Diagnóstico",
+                    "ordenes": None, "comision_sobre_precio": None,
+                    "cargos_totales": None, "items_sin_comision": None})
+            st.download_button("Descargar el análisis",
+                               vv.to_csv(index=False).encode("utf-8"),
+                               f"envios_{datetime.now():%Y%m%d}.csv", "text/csv")
+
+            st.info(
+                "Qué hacer con los que pierden: subir el precio, dejar de "
+                "ofrecer envío gratis, venderlos solo por cantidad, o "
+                "discontinuarlos. Ojo con los de **pocas unidades**: puede ser "
+                "un envío puntual al interior y no un patrón.", icon="💡")
+
+    elif op == "Factura de ML":
         st.caption(
             "MercadoLibre te factura entre $22M y $35M por mes. Cada orden "
             "trae la comisión que ML se cobró por esa venta. Esto compara las "
