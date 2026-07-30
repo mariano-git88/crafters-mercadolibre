@@ -461,13 +461,21 @@ def _api_key():
 # ------------------------------------------------------------------ publicar
 
 def publicar(ml, question_id, texto):
-    """Publica la respuesta en MercadoLibre."""
+    """
+    Publica la respuesta en MercadoLibre.
+
+    Captura `Exception` y no `MeliError` a proposito: Streamlit cachea el
+    objeto `ml` con `st.cache_resource`, asi que tras una recarga del script
+    la clase MeliError del objeto cacheado puede no ser la misma clase que
+    importa este modulo — y un `except MeliError` no la atrapa. Un fallo al
+    publicar tiene que quedar registrado, nunca tumbar la app.
+    """
     try:
         ml._request("POST", "/answers",
                     json_body={"question_id": int(question_id), "text": texto})
         return True, ""
-    except MeliError as e:
-        return False, str(e)[:250]
+    except Exception as e:
+        return False, f"{type(e).__name__}: {str(e)[:250]}"
 
 
 def pendientes(ml):
@@ -527,9 +535,14 @@ def procesar(ml, publicar_de_verdad=False, callback=None):
 
         texto_p = (q.get("text") or "").strip()
         item_id = q.get("item_id")
-        item = contexto_publicacion(ml, item_id)
-        previas = preguntas_del_item(ml, item_id, excluir=q.get("id"))
-        similares = buscador.buscar(f"{item.get('titulo','')} {texto_p}")
+        try:
+            item = contexto_publicacion(ml, item_id)
+            previas = preguntas_del_item(ml, item_id, excluir=q.get("id"))
+            similares = buscador.buscar(f"{item.get('titulo','')} {texto_p}")
+        except Exception as e:
+            # Que no se caiga toda la tanda por una publicacion problematica.
+            item, previas, similares = {}, [], []
+            print(f"[preguntas] aviso: sin contexto para {item_id}: {e}")
 
         fallo = None
         try:
@@ -568,7 +581,10 @@ def procesar(ml, publicar_de_verdad=False, callback=None):
         # Solo se registran las que se publicaron o quedaron para revisar: una
         # simulacion no debe bloquear el procesamiento real posterior.
         if estado != "simulada":
-            registrar(fila)
+            try:
+                registrar(fila)
+            except Exception as e:
+                print(f"[preguntas] aviso: no pude registrar {q.get('id')}: {e}")
         resultados.append(fila)
 
     return {"pendientes": len(preguntas), "procesadas": len(resultados),
