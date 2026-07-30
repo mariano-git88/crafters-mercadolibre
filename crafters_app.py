@@ -33,6 +33,7 @@ import espejos
 import reclamos as rec
 import rentabilidad as rent
 import mayoristas
+import precio_minimo
 import preguntas as preg
 import promociones
 import reporte
@@ -187,7 +188,8 @@ with enc_btn:
 seccion = st.segmented_control(
     "Sección", ["Reporte semanal", "Preguntas", "Alertas", "Ganar la venta",
                 "Precios", "Mayoristas", "Stock ML", "Control de stock",
-                "Rentabilidad", "Competencia", "Oportunidades"],
+                "Rentabilidad", "Precios mínimos", "Competencia",
+                "Oportunidades"],
     default="Reporte semanal", label_visibility="collapsed")
 
 # En la nube el disco se borra en cada reinicio: si no hay Sheet configurada,
@@ -1677,6 +1679,173 @@ elif seccion == "Control de stock":
                         st.error(f"No se pudo cargar: {det}")
             except Exception as e:
                 st.error(f"No pude leer la planilla: {e}")
+
+elif seccion == "Precios mínimos":
+    st.markdown("#### Precio mínimo viable")
+    st.caption(
+        "Es la herramienta inversa al Buy Box: en vez de *hasta dónde puedo "
+        "bajar*, **desde dónde no puedo bajar**. Calcula, por SKU, el precio "
+        "más chico que llega al margen objetivo contemplando costo, comisión "
+        "real, envío medido y los otros conceptos.")
+
+    costos_pm = bloque_costos("pm")
+    otros_pm = controles_otros_conceptos("pm")
+
+    z1, z2, z3 = st.columns(3)
+    iva_pm = z1.selectbox(
+        "IVA a descontar", [0.21, 0.105, 0.0],
+        format_func=lambda x: f"{x:.1%}" if x else "Sin descontar", key="iva_pm")
+    objetivo_pm = z2.slider("Margen objetivo", 0.0, 0.40, 0.15, 0.01,
+                            format="%.0f%%", key="obj_pm")
+    z3.write("")
+    if costos_pm is not None and z3.button("Calcular precios mínimos",
+                                           use_container_width=True):
+        with st.spinner("Despejando el precio mínimo de cada SKU..."):
+            st.session_state["pmin"] = precio_minimo.analizar(
+                costos_pm, cargos_cacheados(ml), pubs, iva=iva_pm,
+                otros_conceptos=otros_pm, objetivo=objetivo_pm)
+
+    dpm = st.session_state.get("pmin")
+    if dpm is not None and len(dpm):
+        rp = precio_minimo.resumen(dpm)
+        y1, y2, y3, y4 = st.columns(4)
+        y1.metric("Ya están bien", rp["ok"])
+        y2.metric("Hay que subir", rp["a_subir"])
+        y3.metric("Perdiendo hoy", rp["perdiendo_hoy"])
+        y4.metric("Suba mediana", f"{rp['suba_mediana']:.0%}")
+        st.metric("Plata perdida en el período",
+                  pesos(abs(rp["perdida_periodo"])))
+
+        if rp["cruzan_escalon"]:
+            st.info(
+                f"**{rp['cruzan_escalon']} de las subas cruzan un escalón de "
+                "cargo fijo.** Arriba de $33.000 el cargo fijo de ML es cero, "
+                "así que a veces el precio mínimo cae justo ahí aunque el "
+                "producto valga menos: cruzar el escalón elimina $3.005 que "
+                "ningún aumento chico compensa.", icon="🪜")
+
+        st.markdown("###### Criterio para subir")
+        x1, x2 = st.columns(2)
+        suba_max = x1.slider(
+            "Suba máxima aceptada", 0.01,
+            float(precio_minimo.TECHO_DE_SUBA), 0.30, 0.01,
+            format="%.0f%%", key="sub_pm",
+            help=f"Tope duro del sistema: {precio_minimo.TECHO_DE_SUBA:.0%}.")
+        unid_pm = x2.number_input("Unidades mínimas en el período",
+                                  min_value=0, value=5, step=1, key="un_pm")
+        w1, w2 = st.columns([2.4, 1.6])
+        marcas_pm = w1.multiselect(
+            "Marcas (vacío = todas)",
+            sorted(m for m in dpm["marca"].dropna().unique() if m),
+            key="mk_pm")
+        with w2:
+            st.write("")
+            solo_perd = st.checkbox(
+                "Solo las que hoy pierden plata", value=True, key="sp_pm",
+                help="Las que ganan pero no llegan al objetivo son menos "
+                     "urgentes y meten ruido en un lote grande.")
+
+        sel_pm = precio_minimo.seleccionar(
+            dpm, suba_maxima=suba_max, unidades_minimas=unid_pm,
+            marcas=marcas_pm or None, solo_perdida=solo_perd)
+        st.markdown(cumplen(len(sel_pm)))
+
+        if len(sel_pm):
+            st.caption("**Tildá filas para elegir a mano.** Si no seleccionás "
+                       "ninguna van todas las que cumplen.")
+            ev_pm = st.dataframe(
+                sel_pm[["sku", "marca", "titulo", "precio_actual",
+                        "precio_minimo", "subir_pct", "margen_hoy",
+                        "margen_al_minimo", "unidades", "cruza_escalon"]],
+                use_container_width=True, height=340, hide_index=True,
+                key="tabla_pm", on_select="rerun", selection_mode="multi-row",
+                column_config={
+                    "sku": "SKU", "marca": "Marca", "titulo": "Título",
+                    "precio_actual": st.column_config.NumberColumn(
+                        "Precio hoy", format="%.0f"),
+                    "precio_minimo": st.column_config.NumberColumn(
+                        "Precio mínimo", format="%.0f"),
+                    "subir_pct": st.column_config.NumberColumn(
+                        "Subir", format="percent"),
+                    "margen_hoy": st.column_config.NumberColumn(
+                        "Margen hoy", format="%.0f"),
+                    "margen_al_minimo": st.column_config.NumberColumn(
+                        "Margen al mínimo", format="%.0f"),
+                    "unidades": "Unidades",
+                    "cruza_escalon": st.column_config.CheckboxColumn(
+                        "Cruza escalón")})
+
+            elegidas_pm = list(getattr(ev_pm.selection, "rows", []) or [])
+            aplicar_pm = sel_pm.iloc[elegidas_pm] if elegidas_pm else sel_pm
+            if elegidas_pm:
+                st.info(f"Vas a aplicar solo las **{len(aplicar_pm)}** que "
+                        "tildaste.", icon="👉")
+
+            st.divider()
+            st.warning(
+                "**Subir precios cambia lo que ve el comprador y puede hacerte "
+                "perder ventas.** El cálculo dice qué precio necesitás para el "
+                "margen objetivo, no si el mercado lo va a pagar. Mirá antes "
+                "la sección *Competencia* o el Buy Box de estos productos.",
+                icon="⚠️")
+
+            if st.button("Simular el cambio de precios", key="sim_pm"):
+                planilla = precio_minimo.planilla_de_precios(aplicar_pm)
+                st.session_state["pmin_sim"] = act.simular(
+                    planilla, pubs, "precio", col_clave="sku",
+                    col_valor="precio")
+
+            sim_pm = st.session_state.get("pmin_sim")
+            if sim_pm is not None and len(sim_pm):
+                # Se pasa por el motor de Precios a propósito: trae el
+                # resolver de SKU, el aviso de cambios grandes y la auditoría.
+                revisar = int((sim_pm["accion"] == "revisar").sum())
+                listas = int((sim_pm["accion"] == "actualizar").sum())
+                v1, v2 = st.columns(2)
+                v1.metric("Listas para aplicar", listas)
+                v2.metric("Marcadas para revisar", revisar)
+                if revisar:
+                    st.error(
+                        f"**{revisar} superan el "
+                        f"{act.UMBRAL_ALERTA_PRECIO:.0%} de variación** y no "
+                        "se aplican salvo que lo pidas aparte. Con la "
+                        "estructura completa el modelo pide subas muy "
+                        "grandes: conviene mirarlas una por una.", icon="🛑")
+
+                st.dataframe(sim_pm, use_container_width=True, height=300,
+                             hide_index=True)
+
+                op_pm = st.text_input("Tu nombre (queda en el registro)",
+                                      key="op_pm")
+                inc_rev = st.checkbox(
+                    "Incluir también las marcadas para revisar", key="rev_pm")
+                conf_pm = st.checkbox(
+                    "Confirmo que quiero cambiar estos precios en "
+                    "MercadoLibre", key="conf_pm")
+                if st.button("Aplicar en MercadoLibre", key="go_pm",
+                             disabled=not (conf_pm and op_pm.strip())):
+                    barra = st.progress(0.0, text="Aplicando...")
+                    res_pm = act.aplicar(
+                        ml, sim_pm, "precio", operador=op_pm.strip(),
+                        incluir_revisar=inc_rev,
+                        callback=lambda i, t, f: barra.progress(
+                            i / t, text=f"Aplicando {i} de {t}..."))
+                    barra.empty()
+                    ok = int((res_pm["resultado"] == "OK").sum())
+                    if ok == len(res_pm):
+                        st.success(f"{ok} precios actualizados.")
+                    else:
+                        st.error(f"{ok} aplicados, {len(res_pm) - ok} "
+                                 "con error.")
+                    st.dataframe(res_pm, use_container_width=True,
+                                 hide_index=True)
+                    st.session_state.pop("pmin", None)
+                    st.session_state.pop("pmin_sim", None)
+
+            st.download_button(
+                "Descargar el análisis completo",
+                dpm.to_csv(index=False).encode("utf-8"),
+                f"precio_minimo_{datetime.now():%Y%m%d}.csv", "text/csv")
 
 elif seccion == "Competencia":
     st.markdown("#### Mejor precio de la competencia por EAN")

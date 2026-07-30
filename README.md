@@ -355,6 +355,7 @@ Once secciones:
 | **Stock ML** | Cambio masivo de stock desde planilla | **sí** |
 | **Control de stock** | Registro propio de unidades, con historial | no (registro propio) |
 | **Rentabilidad** | Margen por SKU con cargos reales | no |
+| **Precios mínimos** | Precio mínimo viable por SKU y suba en lote | **sí** (cambia precios) |
 | **Competencia** | Mejor precio por EAN | no |
 | **Oportunidades** | Siete análisis de plata sobre la mesa | no |
 
@@ -400,6 +401,30 @@ devuelve vacío y la sección sigue funcionando pidiendo la planilla.
 
 Antes había que subirla en cada sección y en cada visita, porque el
 `file_uploader` de Streamlit no sobrevive al rerun.
+
+### Precio mínimo viable — dos escalones cruzados
+
+`precio_minimo.py` despeja el precio más chico que llega a un margen objetivo.
+No se puede resolver con una sola cuenta porque hay **dos escalones**:
+
+- el **cargo fijo de ML**, que salta por tramos de precio y arriba de $33.000
+  es cero;
+- el **logístico topeado**, que es porcentual hasta $90.000 de ingreso y de ahí
+  para arriba es un monto fijo de $9.000.
+
+La ecuación cambia de forma en cada combinación, así que se resuelve en cada
+régimen y se toma el menor precio que **de verdad cierra en su propio tramo**
+(incluidos los bordes, que a veces son la solución). Verificado con casos de
+prueba: el precio devuelto siempre cumple el objetivo y siempre es el mínimo
+que lo cumple.
+
+Efecto que parece un bug y no lo es: a veces el precio mínimo cae **justo en
+$33.000** aunque el producto valga menos, porque cruzar el escalón elimina
+$3.005 que ningún aumento chico compensa.
+
+La escritura **no tiene ruta propia**: `planilla_de_precios()` arma la planilla
+que consume `actualizador.simular()`, para reusar el resolver de SKU, el aviso
+de variaciones mayores al 50% y la auditoría.
 
 ### Otros conceptos (impuestos, logístico, general)
 

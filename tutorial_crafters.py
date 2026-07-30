@@ -33,6 +33,7 @@ Once secciones, cada una para una cosa:
 | **Stock ML** | Lo mismo pero con las unidades publicadas en MercadoLibre |
 | **Control de stock** | Llevar tu propia cuenta de unidades, con historial de movimientos |
 | **Rentabilidad** | Ver cuánto ganás realmente con cada producto, después de todo lo que se lleva MercadoLibre |
+| **Precios mínimos** | A qué precio tenés que estar para no perder plata, y subirlos en lote |
 | **Competencia** | Quién vende más barato cada producto y en qué posición estás |
 | **Oportunidades** | Siete análisis para encontrar dónde estás dejando plata |
 
@@ -413,6 +414,40 @@ técnica. Gana la de **menor orden**, así que lo específico pisa a lo general.
 
 > Si el panel de MercadoLibre te da error al calcular precios mayoristas, la
 > carga desde acá funciona igual.
+"""
+    )
+
+    st.divider()
+    st.markdown(
+        """
+### Sección Precios mínimos
+
+Es la herramienta inversa al Buy Box. Buy Box pregunta *hasta dónde puedo
+bajar*; ésta, **desde dónde no puedo bajar**: calcula por SKU el precio más
+chico que llega al margen objetivo contemplando costo, comisión real, envío
+medido y los otros conceptos.
+
+**El escalón juega a favor acá.** Arriba de $33.000 el cargo fijo de
+MercadoLibre es cero, así que a veces el precio mínimo cae **justo en $33.000**
+aunque el producto valga bastante menos. No es un error: cruzar el escalón
+elimina $3.005 de cargo fijo que ningún aumento chico logra compensar. La
+columna *Cruza escalón* te marca esos casos.
+
+**Cómo usarla sin romper nada.** El modelo con la estructura completa pide
+subas grandes en muchos productos, así que conviene ir por tramos:
+
+1. Poné una **suba máxima** baja (20-30%) y mirá cuántos entran.
+2. Tildá filas para elegir a mano, o filtrá por marca.
+3. **Simulá** antes de aplicar. La simulación pasa por el mismo motor que la
+   sección Precios, así que respeta la regla de las publicaciones espejo y
+   marca como *revisar* todo lo que supere el 50% de variación.
+4. Aplicá. Todo queda en la auditoría con el precio anterior.
+
+> **Una advertencia que la herramienta no puede darte sola.** El cálculo dice
+> qué precio necesitás para tu margen objetivo, **no si el mercado lo va a
+> pagar**. Antes de subir, mirá la sección *Competencia* o el Buy Box de esos
+> productos: subir el precio de algo donde ya estás perdiendo la página de
+> catálogo puede dejarte sin ventas en vez de con más margen.
 """
     )
 

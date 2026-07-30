@@ -183,9 +183,11 @@ def analizar(costos_df, cargos_df, pubs, iva=0.21, otros_conceptos=None,
         else:
             diag = "hay que subir"
 
+        from buybox import marca as marca_de
         filas.append({
             "sku": sku,
             "item_id": pub["id"],
+            "marca": marca_de(pub),
             "titulo": (pub.get("title") or "")[:60],
             "diagnostico": diag,
             "precio_actual": actual,
@@ -231,6 +233,40 @@ def resumen(df):
         "suba_mediana": float(subir["subir_pct"].median()) if len(subir) else 0.0,
         "cruzan_escalon": int(subir["cruza_escalon"].sum()) if len(subir) else 0,
     }
+
+
+# Tope duro de suba, aunque el criterio pida mas. Con la estructura completa
+# el modelo pide subas enormes en muchos SKU; esto obliga a que las mas
+# violentas pasen por una decision explicita y no por un lote de 800.
+TECHO_DE_SUBA = 1.00
+
+
+def seleccionar(df, suba_maxima=0.30, unidades_minimas=1, marcas=None,
+                items=None, solo_perdida=True):
+    """
+    Las publicaciones a las que subirles el precio.
+
+    `solo_perdida` deja afuera las que hoy ganan plata pero no llegan al
+    objetivo: son las menos urgentes y las que mas ruido meten en un lote.
+    """
+    if not len(df):
+        return df
+
+    sel = df[
+        (df["diagnostico"] == "hay que subir")
+        & (df["subir_pct"] > 0)
+        & (df["subir_pct"] <= min(suba_maxima, TECHO_DE_SUBA))
+        & (df["unidades"] >= unidades_minimas)
+    ].copy()
+
+    if solo_perdida:
+        sel = sel[sel["margen_hoy"] < 0]
+    if marcas:
+        sel = sel[sel["marca"].isin(marcas)]
+    if items is not None:
+        sel = sel[sel["item_id"].isin(list(items))]
+
+    return sel.sort_values("perdida_periodo")
 
 
 def planilla_de_precios(seleccion):
