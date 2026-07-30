@@ -25,6 +25,7 @@ Once secciones, cada una para una cosa:
 | Sección | Para qué sirve |
 |---|---|
 | **Reporte semanal** | Cómo vino la semana y qué hay que resolver. Es la pantalla del lunes |
+| **Preguntas** | Responder las consultas de los compradores, con ayuda de IA |
 | **Alertas** | Lo que necesita atención: stock por agotarse y reclamos por producto |
 | **Ganar la venta** | Buy Box del catálogo y promociones que ML te ofrece |
 | **Precios** | Cambiar precios de muchas publicaciones de una, desde una planilla |
@@ -34,7 +35,6 @@ Once secciones, cada una para una cosa:
 | **Rentabilidad** | Ver cuánto ganás realmente con cada producto, después de todo lo que se lleva MercadoLibre |
 | **Competencia** | Quién vende más barato cada producto y en qué posición estás |
 | **Oportunidades** | Siete análisis para encontrar dónde estás dejando plata |
-| **Preguntas** | Responder las consultas de los compradores, con ayuda de IA |
 
 **Precios** y **Stock ML** modifican la cuenta de verdad. Por eso nunca aplican
 nada sin mostrarte antes, en pantalla, exactamente qué va a pasar.
@@ -439,11 +439,11 @@ publicación, así que es preferible que la vea una persona.
 
 **Pestañas:**
 
-- **Responder** — procesa las preguntas pendientes. Podés redactar sin
-  publicar (para probar) o redactar y publicar.
-- **Pendientes** — todas las preguntas sin responder. Escribís la respuesta y
-  se publica desde acá. También podés pedirle **un borrador a la IA** para una
-  pregunta puntual, editarlo y publicarlo.
+- **Dashboard** — el estado general y el procesamiento de las preguntas
+  pendientes. Podés redactar sin publicar (para probar) o redactar y publicar.
+- **Gestión manual** — todas las preguntas sin responder. Escribís la respuesta
+  y se publica desde acá. También podés pedirle **un borrador a la IA** para
+  una pregunta puntual, editarlo y publicarlo.
 - **Historial completo** — todas las preguntas de la cuenta con su respuesta,
   marcando si la contestó la IA o una persona.
 - **Registro de la IA** — solo lo que procesó ella, con el motivo de cada
@@ -451,7 +451,7 @@ publicación, así que es preferible que la vea una persona.
 - **Fuentes** — subís PDFs (fichas técnicas, manuales) o páginas web para que
   tenga más información con qué responder.
 
-**Si una pregunta queda sin responder**, mirá el motivo en Pendientes. Suele
+**Si una pregunta queda sin responder**, mirá el motivo en *Gestión manual*. Suele
 ser información que no está en ningún lado: cargando esa ficha en *Fuentes*,
 la próxima la resuelve sola.
 

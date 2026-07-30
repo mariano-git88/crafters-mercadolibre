@@ -75,6 +75,21 @@ st.markdown("""
     [data-testid="stMain"] [data-testid="stMetricLabel"] {
         font-size: 0.75rem !important;
     }
+
+    /* Preguntas va destacada en naranja, como el boton de Tutorial. Es la
+       segunda opcion del selector de seccion: si se reordena la lista de
+       arriba, hay que mover el nth-of-type junto con ella. */
+    [data-testid="stMain"] [data-testid="stButtonGroup"] button:nth-of-type(2),
+    [data-testid="stMain"] [data-testid="stButtonGroup"] button:nth-of-type(2):hover,
+    [data-testid="stMain"] [data-testid="stButtonGroup"] button:nth-of-type(2):focus,
+    [data-testid="stMain"] [data-testid="stButtonGroup"] > div > button:nth-of-type(2) {
+        background-color: #C8552F !important;
+        color: #FFFFFF !important;
+        border-color: #C8552F !important;
+    }
+    [data-testid="stMain"] [data-testid="stButtonGroup"] button:nth-of-type(2) * {
+        color: #FFFFFF !important;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -170,9 +185,9 @@ with enc_btn:
         st.rerun()
 
 seccion = st.segmented_control(
-    "Sección", ["Reporte semanal", "Alertas", "Ganar la venta", "Precios",
-                "Mayoristas", "Stock ML", "Control de stock", "Rentabilidad",
-                "Competencia", "Oportunidades", "Preguntas"],
+    "Sección", ["Reporte semanal", "Preguntas", "Alertas", "Ganar la venta",
+                "Precios", "Mayoristas", "Stock ML", "Control de stock",
+                "Rentabilidad", "Competencia", "Oportunidades"],
     default="Reporte semanal", label_visibility="collapsed")
 
 # En la nube el disco se borra en cada reinicio: si no hay Sheet configurada,
@@ -1954,9 +1969,9 @@ elif seccion == "Preguntas":
     m1.metric("Respondidas por la IA", met["respondidas_ia"],
               help="Preguntas que la IA contestó y publicó sola")
     m2.metric("Resueltas a mano", met.get("resueltas_a_mano", 0),
-              help="Las que respondió una persona desde la pestaña Pendientes")
+              help="Las que respondió una persona desde Gestión manual")
     m3.metric("Esperando respuesta", met["derivadas_a_persona"],
-              help="Siguen abiertas: miralas en la pestaña Pendientes")
+              help="Siguen abiertas: miralas en Gestión manual")
     m4.metric("Se resolvieron solas",
               f"{met['tasa_automatica']:.0%}" if met["respondidas_ia"] +
               met["derivadas_a_persona"] else "—",
@@ -1972,11 +1987,12 @@ elif seccion == "Preguntas":
         st.warning("La IA está **apagada**. Poné `ia_activa = si` en la hoja "
                    f"`{preg.HOJA_CONFIG}` para que vuelva a responder.", icon="⏸️")
 
-    vista_p = st.radio("Vista", ["Responder", "Pendientes", "Historial completo",
-                                 "Registro de la IA", "Fuentes"],
+    vista_p = st.radio("Vista", ["Dashboard", "Gestión manual",
+                                 "Historial completo", "Registro de la IA",
+                                 "Fuentes"],
                        horizontal=True, label_visibility="collapsed")
 
-    if vista_p == "Responder":
+    if vista_p == "Dashboard":
         st.caption(
             "Redacta con el historial de respuestas de la cuenta, los datos de "
             "la publicación y las fuentes cargadas. **Si el contexto no alcanza, "
@@ -2036,8 +2052,9 @@ elif seccion == "Preguntas":
                     if rev:
                         st.warning(
                             f"**{rev} quedaron sin responder** porque el "
-                            "contexto no alcanzaba. Están en la pestaña "
-                            "**Pendientes**: ahí las respondés y se publican.",
+                            "contexto no alcanzaba. Están en "
+                            "**Gestión manual**: ahí las respondés y se "
+                            "publican.",
                             icon="👤")
                     for _, f in res.iterrows():
                         with st.container(border=True):
@@ -2047,7 +2064,7 @@ elif seccion == "Preguntas":
                             st.markdown(f"**R:** {f['respuesta'] or '_(no respondió)_'}")
                             st.caption(f"Motivo: {f['motivo']}")
 
-    elif vista_p == "Pendientes":
+    elif vista_p == "Gestión manual":
         st.caption(
             "**Todas** las preguntas sin responder de la cuenta, las haya "
             "tocado la IA o no. Escribí la respuesta y se publica en "

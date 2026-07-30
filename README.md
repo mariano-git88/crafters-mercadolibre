@@ -255,6 +255,7 @@ Once secciones:
 | Sección | Qué hace | ¿Escribe en ML? |
 |---|---|---|
 | **Reporte semanal** | La pantalla del lunes: cómo vino la semana contra la anterior y qué hay que resolver | no |
+| **Preguntas** | Respuestas a compradores con IA. Destacada en naranja en el selector | **sí** (publica respuestas) |
 | **Alertas** | Stock por agotarse y reclamos por producto | no |
 | **Ganar la venta** | Buy Box del catálogo y promociones disponibles | no |
 | **Precios** | Cambio masivo de precios desde planilla | **sí** |
@@ -264,7 +265,10 @@ Once secciones:
 | **Rentabilidad** | Margen por SKU con cargos reales | no |
 | **Competencia** | Mejor precio por EAN | no |
 | **Oportunidades** | Siete análisis de plata sobre la mesa | no |
-| **Preguntas** | Respuestas a compradores con IA | **sí** (publica respuestas) |
+
+El resaltado naranja de **Preguntas** se hace por CSS con `nth-of-type(2)` sobre
+`[data-testid="stButtonGroup"]`: **si se reordena la lista de secciones, hay que
+mover el selector junto con ella.**
 
 Precios y stock siguen siempre el mismo flujo, sin atajos:
 subir planilla → **simular** → revisar → confirmar → aplicar.
