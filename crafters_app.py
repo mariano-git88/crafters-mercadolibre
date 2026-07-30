@@ -23,6 +23,7 @@ import actualizador as act
 import almacen
 import competencia
 import conversion
+import espejos
 import rentabilidad as rent
 import mayoristas
 import preguntas as preg
@@ -878,10 +879,69 @@ elif seccion == "Competencia":
 
 elif seccion == "Oportunidades":
     st.markdown("#### Dónde hay plata sobre la mesa")
-    op = st.radio("Vista", ["Visitas vs ventas", "Tramos de comisión"],
+    op = st.radio("Vista", ["Visitas vs ventas", "Tramos de comisión",
+                            "Precios espejo"],
                   horizontal=True, label_visibility="collapsed")
 
-    if op == "Tramos de comisión":
+    if op == "Precios espejo":
+        st.caption(
+            "Casi la mitad del catálogo son publicaciones duplicadas del mismo "
+            "producto. Cuando dos tienen precios distintos, **competís contra "
+            "vos mismo**: el que compara compra la más barata y la otra no "
+            "vende nunca.")
+        st.caption(
+            "Las Premium se comparan solo contra Premium: es esperable que "
+            "valgan más, porque pagan ~12 puntos más de comisión. El precio "
+            "sugerido es el de la publicación **que más vendió** del grupo.")
+
+        if st.button("Buscar precios desincronizados"):
+            with st.spinner("Comparando..."):
+                st.session_state["espejos"] = espejos.analizar(pubs)
+
+        dfe = st.session_state.get("espejos")
+        if dfe is not None and len(dfe):
+            caras = int((dfe["diferencia"] > 0).sum())
+            e1, e2, e3 = st.columns(3)
+            e1.metric("Publicaciones a emparejar", len(dfe))
+            e2.metric("SKU afectados", dfe["sku"].nunique())
+            e3.metric("Más caras que su gemela", caras)
+
+            if caras:
+                st.warning(
+                    f"**{caras} publicaciones están más caras que otra igual "
+                    "tuya.** Salvo que haya un motivo, esas no venden: el "
+                    "comprador elige la barata.", icon="🔀")
+
+            st.dataframe(
+                dfe, use_container_width=True, height=420,
+                column_config={
+                    "sku": "SKU", "tipo": "Tipo", "item_id": "Publicación",
+                    "titulo": "Título",
+                    "precio_actual": st.column_config.NumberColumn(
+                        "Precio hoy", format="%.0f"),
+                    "precio_sugerido": st.column_config.NumberColumn(
+                        "Sugerido", format="%.0f"),
+                    "diferencia": st.column_config.NumberColumn(
+                        "Diferencia", format="%.1f%%"),
+                    "vendidas": "Vendidas",
+                    "vendidas_referencia": "Vendidas (referencia)",
+                    "publicaciones_del_grupo": "En el grupo",
+                    "spread_del_grupo": st.column_config.NumberColumn(
+                        "Spread", format="%.1f%%"),
+                    "riesgo": "Qué pasa"})
+
+            st.download_button(
+                "Descargar para la sección Precios",
+                dfe[["item_id", "precio_sugerido"]].rename(
+                    columns={"item_id": "MLA", "precio_sugerido": "Precio"}
+                ).to_csv(index=False).encode("utf-8"),
+                f"espejos_{datetime.now():%Y%m%d}.csv", "text/csv",
+                help="Sale por MLA y no por SKU: acá cada publicación lleva su "
+                     "propio precio, no todas el mismo")
+        elif dfe is not None:
+            st.success("No hay publicaciones espejo con precios distintos. 👌")
+
+    elif op == "Tramos de comisión":
         st.caption(
             "MercadoLibre cobra un porcentaje **más un cargo fijo por unidad**, "
             "y ese cargo salta en escalones. Hay precios donde **subir unos "
