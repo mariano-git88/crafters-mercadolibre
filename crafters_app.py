@@ -858,6 +858,14 @@ elif seccion == "Preguntas":
                         st.success(f"{pub} respuestas publicadas en MercadoLibre.")
                     if sim:
                         st.info(f"{sim} redactadas (no se publicaron: fue una prueba).")
+                    err = (res["estado"] == "error_tecnico").sum()
+                    if err:
+                        motivo = res[res["estado"] == "error_tecnico"].iloc[0]["motivo"]
+                        st.error(
+                            f"**{err} fallaron por un problema técnico**, no "
+                            "porque faltara contexto. Hay que corregir esto "
+                            f"antes de volver a intentar:\n\n> {motivo}",
+                            icon="🔧")
                     if rev:
                         st.warning(f"**{rev} quedaron sin responder** porque el "
                                    "contexto no alcanzaba. Mirá la columna "

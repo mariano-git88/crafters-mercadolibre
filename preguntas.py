@@ -391,23 +391,71 @@ def redactar(pregunta, item, similares, previas, firma, cliente=None):
     return salida
 
 
+# Nombres bajo los que puede estar la clave, para no depender de uno solo.
+NOMBRES_CLAVE = ["anthropic_api_key", "ANTHROPIC_API_KEY", "anthropic_key",
+                 "claude_api_key"]
+
+
 def _api_key():
-    clave = (almacen._seccion("anthropic") or {}).get("api_key")
-    if not clave:
+    """
+    Busca la clave de Anthropic en todas las formas razonables: top-level en
+    secrets, dentro de una seccion [anthropic], en variable de entorno, o en
+    el secrets.toml local.
+
+    Si no la encuentra, el error dice que claves SI hay configuradas (solo los
+    nombres, nunca los valores) para poder ver de un vistazo si hay un typo.
+    """
+    import os
+
+    def _limpiar(v):
+        v = str(v or "").strip().strip('"').strip("'")
+        return v if v.startswith("sk-") else ""
+
+    # 1. Seccion [anthropic] con api_key adentro
+    seccion = almacen._seccion("anthropic") or {}
+    for n in ["api_key"] + NOMBRES_CLAVE:
+        if _limpiar(seccion.get(n)):
+            return _limpiar(seccion[n])
+
+    # 2. Top-level en los secrets de Streamlit
+    disponibles = []
+    try:
+        import streamlit as st
         try:
-            import streamlit as st
-            clave = st.secrets.get("anthropic_api_key")
+            disponibles = sorted(st.secrets.keys())
         except Exception:
-            clave = None
-    if not clave and almacen.SECRETS_LOCAL.exists():
+            disponibles = []
+        for n in NOMBRES_CLAVE:
+            try:
+                if _limpiar(st.secrets.get(n)):
+                    return _limpiar(st.secrets.get(n))
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    # 3. Variable de entorno (util para GitHub Actions)
+    for n in NOMBRES_CLAVE:
+        if _limpiar(os.environ.get(n)):
+            return _limpiar(os.environ[n])
+
+    # 4. secrets.toml local
+    if almacen.SECRETS_LOCAL.exists():
         import tomllib
         with open(almacen.SECRETS_LOCAL, "rb") as f:
-            clave = tomllib.load(f).get("anthropic_api_key")
-    if not clave:
-        raise MeliError(
-            "Falta la clave de Anthropic. Agregá `anthropic_api_key` en los "
-            "secrets (es la misma que usan las otras apps).")
-    return clave
+            local = tomllib.load(f)
+        if not disponibles:
+            disponibles = sorted(local.keys())
+        for n in NOMBRES_CLAVE:
+            if _limpiar(local.get(n)):
+                return _limpiar(local[n])
+
+    pista = (f" Claves que sí veo en los secrets: {', '.join(disponibles)}."
+             if disponibles else "")
+    raise MeliError(
+        "No encuentro la clave de Anthropic. Tiene que estar en los secrets "
+        "como `anthropic_api_key = \"sk-ant-...\"`, sin corchetes ni sección, "
+        "y el valor tiene que empezar con `sk-`." + pista)
 
 
 # ------------------------------------------------------------------ publicar
@@ -470,18 +518,26 @@ def procesar(ml, publicar_de_verdad=False, callback=None):
         previas = preguntas_del_item(ml, item_id, excluir=q.get("id"))
         similares = buscador.buscar(f"{item.get('titulo','')} {texto_p}")
 
+        fallo = None
         try:
             r = redactar({"texto": texto_p,
                           "nick": (q.get("from") or {}).get("nickname")},
                          item, similares, previas, firma)
         except Exception as e:
-            r = {"responder": False, "respuesta": "", "confianza": "baja",
-                 "motivo": f"Error al redactar: {str(e)[:200]}", "_fuentes": []}
+            # Un fallo tecnico NO es lo mismo que "el contexto no alcanzaba":
+            # confundirlos hace que un problema de configuracion parezca una
+            # decision del modelo.
+            fallo = str(e)[:300]
+            r = {"responder": False, "respuesta": "", "confianza": "",
+                 "motivo": fallo, "_fuentes": []}
 
         suficiente = orden.get(r.get("confianza", "baja"), 1) >= orden.get(minima, 2)
-        estado = "para_revisar"
-        if r.get("responder") and suficiente:
+        if fallo:
+            estado = "error_tecnico"
+        elif r.get("responder") and suficiente:
             estado = "publicada" if publicar_de_verdad else "simulada"
+        else:
+            estado = "para_revisar"
 
         if estado == "publicada":
             ok, detalle = publicar(ml, q["id"], r["respuesta"])
