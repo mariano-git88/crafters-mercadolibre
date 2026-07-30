@@ -50,3 +50,8 @@ alertas_stock.csv
 reclamos.csv
 candidatos_full.csv
 reclamos_cache.json
+
+# Buy Box y promociones
+buybox.csv
+buybox_cache.json
+promociones.csv

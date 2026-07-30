@@ -20,12 +20,13 @@ def render() -> None:
         """
 ### ¿Qué hace esta app?
 
-Diez secciones, cada una para una cosa:
+Once secciones, cada una para una cosa:
 
 | Sección | Para qué sirve |
 |---|---|
 | **Reporte semanal** | Cómo vino la semana y qué hay que resolver. Es la pantalla del lunes |
 | **Alertas** | Lo que necesita atención: stock por agotarse y reclamos por producto |
+| **Ganar la venta** | Buy Box del catálogo y promociones que ML te ofrece |
 | **Precios** | Cambiar precios de muchas publicaciones de una, desde una planilla |
 | **Mayoristas** | Cargar descuentos por cantidad con reglas por familia de producto |
 | **Stock ML** | Lo mismo pero con las unidades publicadas en MercadoLibre |
@@ -39,8 +40,8 @@ Diez secciones, cada una para una cosa:
 nada sin mostrarte antes, en pantalla, exactamente qué va a pasar.
 
 **Control de stock** no toca nada en MercadoLibre: es un registro tuyo,
-aparte. **Reporte semanal**, **Alertas**, **Rentabilidad**, **Competencia** y
-**Oportunidades** son solo de consulta: no modifican nada.
+aparte. **Reporte semanal**, **Alertas**, **Ganar la venta**, **Rentabilidad**,
+**Competencia** y **Oportunidades** son solo de consulta: no modifican nada.
 
 **Preguntas** sí publica en MercadoLibre — las respuestas quedan visibles en
 la publicación.
@@ -221,6 +222,54 @@ sobre 3 ventas da 33% y no significa nada.
 > Algunos reclamos no se pueden asociar a un producto. Son los que apuntan a un
 > pago en vez de a un pedido o a un envío: MercadoLibre no expone ese camino.
 > Aparecen contados aparte como *sin producto identificado*.
+"""
+    )
+
+    st.divider()
+    st.markdown(
+        """
+### Sección Ganar la venta
+
+Dos vistas, las dos de consulta.
+
+**Buy Box.** Casi la mitad de tus publicaciones activas compiten en una
+**página de catálogo**: ahí todos los vendedores comparten la misma publicación
+y MercadoLibre muestra a uno solo. El que gana se lleva casi todas las ventas y
+el resto queda escondido detrás de *otras opciones de compra*. No es una
+diferencia de posición: es vender o no vender.
+
+Lo que más confunde de esta pantalla es que **el precio para ganar casi nunca
+es el precio del que gana hoy**, y suele ser bastante más bajo. No es un error.
+MercadoLibre pondera el precio junto con los beneficios de la publicación —
+Full, envío gratis y cuotas. Si el ganador los tiene y vos no, para empatarle
+tenés que compensar con precio.
+
+> **La diferencia entre lo que cobra el ganador y lo que tendrías que cobrar
+> vos es, en pesos, lo que te cuesta no tener esas palancas.** Está en la
+> columna *Costo de no tener palancas*.
+
+De ahí salen dos diagnósticos que piden cosas opuestas:
+
+- **Perdés por precio** — el ganador está más barato. Se arregla con precio.
+- **Perdés estando más barato** — ya cobrás menos y perdés igual. Bajar más es
+  tirar plata: lo que falta son las palancas.
+
+La columna *Te quedaría* dice qué te deja por unidad vender al precio para
+ganar, **antes del costo de la mercadería**. Sirve para descartar los casos
+donde ganar el Buy Box directamente da negativo.
+
+**Promociones.** MercadoLibre le ofrece a cada publicación un menú de campañas
+(relámpago, temporada, descuentos sugeridos). Cada una queda como *candidata*
+hasta que la tomás.
+
+Lo primero que hay que mirar es la columna **Pone ML**: en algunos tipos
+MercadoLibre pone parte del descuento de su bolsillo, así que al comprador le
+baja el precio más de lo que te cuesta a vos. La campaña **¡Gánale a la
+competencia!** es la respuesta directa a las publicaciones donde perdés el Buy
+Box por precio: en vez de bajarlo vos solo, ML cofinancia la baja.
+
+> Esta sección te dice **cuáles conviene tomar**, pero no las activa. Las
+> promociones se toman desde el panel de MercadoLibre.
 """
     )
 

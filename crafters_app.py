@@ -22,6 +22,7 @@ import streamlit as st
 import actualizador as act
 import alertas_stock
 import almacen
+import buybox
 import competencia
 import conciliacion
 import conversion
@@ -33,6 +34,7 @@ import reclamos as rec
 import rentabilidad as rent
 import mayoristas
 import preguntas as preg
+import promociones
 import reporte
 import stock_control
 import tramos
@@ -168,9 +170,9 @@ with enc_btn:
         st.rerun()
 
 seccion = st.segmented_control(
-    "Sección", ["Reporte semanal", "Alertas", "Precios", "Mayoristas",
-                "Stock ML", "Control de stock", "Rentabilidad", "Competencia",
-                "Oportunidades", "Preguntas"],
+    "Sección", ["Reporte semanal", "Alertas", "Ganar la venta", "Precios",
+                "Mayoristas", "Stock ML", "Control de stock", "Rentabilidad",
+                "Competencia", "Oportunidades", "Preguntas"],
     default="Reporte semanal", label_visibility="collapsed")
 
 # En la nube el disco se borra en cada reinicio: si no hay Sheet configurada,
@@ -192,6 +194,19 @@ def pesos(v):
         return f"${float(v):,.0f}".replace(",", ".")
     except (TypeError, ValueError):
         return "—"
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def cargos_cacheados(_ml, dias=90):
+    """
+    Cargos reales por SKU (comisión y envío medidos de las ventas).
+
+    Lo usan Buy Box y Promociones para saber qué queda por unidad a un precio
+    más bajo. Se cachea una hora porque trae el histórico y muestrea envíos.
+    """
+    ordenes = rent.traer_historico(_ml, dias)
+    envios = rent.traer_costos_envio(_ml, ordenes, muestra_por_sku=5)
+    return rent.cargos_por_sku(ordenes, envios)
 
 
 def bloque_carga(operacion):
@@ -683,6 +698,238 @@ elif seccion == "Alertas":
                                    vr.to_csv(index=False).encode("utf-8"),
                                    f"reclamos_{datetime.now():%Y%m%d}.csv",
                                    "text/csv")
+
+elif seccion == "Ganar la venta":
+    st.markdown("#### Ganar la venta")
+    gv = st.radio("Vista", ["Buy Box", "Promociones"],
+                  horizontal=True, label_visibility="collapsed")
+
+    if gv == "Buy Box":
+        st.caption(
+            "**1.009 de tus publicaciones activas compiten en una página de "
+            "catálogo.** En esas páginas todos los vendedores comparten la "
+            "misma publicación y MercadoLibre muestra a uno solo: el que gana "
+            "se lleva casi todas las ventas y el resto queda escondido detrás "
+            "de *otras opciones de compra*. No es una diferencia de posición, "
+            "es vender o no vender.")
+
+        with st.expander("Por qué el precio para ganar no es el del ganador"):
+            st.markdown(
+                "El **precio para ganar** casi nunca coincide con lo que "
+                "cobra el que gana hoy, y suele ser bastante más bajo. No es "
+                "un error.\n\n"
+                "MercadoLibre pondera el precio junto con los beneficios de "
+                "la publicación: Full, envío gratis y cuotas. Si el ganador "
+                "los tiene y vos no, para empatarle tenés que compensar con "
+                "precio. **La diferencia entre lo que cobra el ganador y lo "
+                "que tendrías que cobrar vos es, en pesos, lo que te cuesta "
+                "no tener esas palancas.**\n\n"
+                "De ahí salen dos diagnósticos que piden cosas opuestas:\n\n"
+                "- **Perdés por precio**: el ganador está más barato. Se "
+                "arregla con precio.\n"
+                "- **Perdés estando más barato**: ya cobrás menos y perdés "
+                "igual. Bajar más es tirar plata — lo que falta son las "
+                "palancas. Acá es donde Full deja de ser una idea y se vuelve "
+                "una cuenta concreta.")
+
+        b1, b2 = st.columns([1.4, 3])
+        tope_bb = b1.selectbox(
+            "Alcance", [150, 400, 0],
+            format_func=lambda t: (f"Las {t} que más venden" if t
+                                   else "Todas (~5 min)"),
+            key="tope_bb")
+        b2.write("")
+        if b2.button("Revisar el Buy Box", use_container_width=True):
+            estado = st.empty()
+            with st.spinner("Consultando el Buy Box publicación por publicación..."):
+                cargos_bb = cargos_cacheados(ml)
+                unidades_bb = dict(zip(cargos_bb["sku"],
+                                       cargos_bb["unidades_vendidas"]))
+                st.session_state["buybox"] = buybox.analizar(
+                    ml, pubs=pubs, tope=tope_bb or None, cargos=cargos_bb,
+                    unidades=unidades_bb,
+                    callback=lambda m: estado.caption(str(m)))
+            estado.empty()
+
+        dbb = st.session_state.get("buybox")
+        if dbb is not None and len(dbb):
+            rb = buybox.resumen(dbb)
+            g1, g2, g3, g4 = st.columns(4)
+            g1.metric("Publicaciones", rb["publicaciones"])
+            g2.metric("Ganando", rb["ganando"])
+            g3.metric("Compartiendo", rb["compartiendo"])
+            g4.metric("Perdiendo", rb["perdiendo"])
+
+            if rb["mas_barato_y_perdiendo"]:
+                extra = (f" La penalización mediana por no tener las palancas "
+                         f"es {pesos(rb['penalizacion_mediana'])}."
+                         if rb["penalizacion_mediana"] else "")
+                st.error(
+                    f"**En {rb['mas_barato_y_perdiendo']} publicaciones ya "
+                    f"estás más barato que el ganador y perdés igual.** Ahí "
+                    f"bajar el precio no sirve: lo que falta son Full, envío "
+                    f"gratis o cuotas.{extra}", icon="🎯")
+
+            if rb["baja_chica"]:
+                st.success(
+                    f"**{rb['baja_chica']} publicaciones se ganan bajando "
+                    f"menos del {buybox.BAJA_CHICA:.0%}.** Es lo más barato "
+                    f"que podés hacer hoy.", icon="✅")
+
+            st.caption(
+                f"Las publicaciones que están perdiendo venden "
+                f"**{rb['unidades_perdiendo']:,}** unidades en el período "
+                "medido.".replace(",", "."))
+
+            estados_bb = sorted(dbb["diagnostico"].unique())
+            por_defecto_bb = [e for e in estados_bb
+                              if e not in ("ganando", "no compite", "sin dato")]
+            filtro_bb = st.multiselect("Filtrar por diagnóstico", estados_bb,
+                                       default=por_defecto_bb or estados_bb)
+            vbb = dbb[dbb["diagnostico"].isin(filtro_bb)] if filtro_bb else dbb
+
+            st.dataframe(
+                vbb, use_container_width=True, height=440, hide_index=True,
+                column_config={
+                    "item_id": "Publicación", "sku": "SKU", "titulo": "Título",
+                    "diagnostico": "Diagnóstico",
+                    "precio_actual": st.column_config.NumberColumn(
+                        "Tu precio", format="%.0f"),
+                    "precio_para_ganar": st.column_config.NumberColumn(
+                        "Para ganar", format="%.0f"),
+                    "precio_ganador": st.column_config.NumberColumn(
+                        "Precio del ganador", format="%.0f"),
+                    "bajar": st.column_config.NumberColumn(
+                        "Hay que bajar", format="%.0f"),
+                    "bajar_pct": st.column_config.NumberColumn(
+                        "Bajar %", format="percent"),
+                    "penalizacion_palancas": st.column_config.NumberColumn(
+                        "Costo de no tener palancas", format="%.0f",
+                        help="Lo que el ganador puede cobrar de más que vos "
+                             "gracias a Full, envío gratis o cuotas"),
+                    "queda_al_precio_para_ganar": st.column_config.NumberColumn(
+                        "Te quedaría", format="%.0f",
+                        help="Por unidad, antes del costo de la mercadería"),
+                    "palancas_sin_usar": "Te falta",
+                    "palancas_activas": "Ya usás",
+                    "competidores_primeros": "Rivales 1°",
+                    "share_de_visitas": "Share visitas",
+                    "unidades": "Unidades (período)",
+                    "vendidas_historico": "Vendidas (histórico)",
+                    "producto_catalogo": None})
+            st.download_button("Descargar el análisis",
+                               vbb.to_csv(index=False).encode("utf-8"),
+                               f"buybox_{datetime.now():%Y%m%d}.csv",
+                               "text/csv")
+            st.caption(
+                f"Los precios de los competidores se cachean "
+                f"{buybox.VIGENCIA_HORAS} horas. Para forzar la relectura, "
+                "volvé a apretar el botón después de ese plazo.")
+
+    else:
+        st.caption(
+            "MercadoLibre le ofrece a cada publicación un menú de campañas. "
+            "Cada oferta queda como **candidata** hasta que la tomás.")
+        st.info(
+            "**Lo primero que hay que mirar es el aporte de ML.** En algunos "
+            "tipos MercadoLibre pone parte del descuento de su bolsillo: al "
+            "comprador le baja el precio más de lo que te cuesta a vos. La "
+            "campaña **¡Gánale a la competencia!** es la respuesta directa a "
+            "las publicaciones donde perdés el Buy Box por precio — en vez de "
+            "bajarlo vos solo, ML cofinancia la baja.", icon="💡")
+
+        p1, p2 = st.columns([1.4, 3])
+        tope_pr = p1.selectbox(
+            "Alcance", [120, 300, 600],
+            format_func=lambda t: f"Las {t} que más venden", key="tope_pr")
+        p2.write("")
+        if p2.button("Buscar promociones", use_container_width=True):
+            estado = st.empty()
+            with st.spinner("Consultando promociones publicación por publicación..."):
+                cargos_pr = cargos_cacheados(ml)
+                unidades_pr = dict(zip(cargos_pr["sku"],
+                                       cargos_pr["unidades_vendidas"]))
+                st.session_state["promos"] = promociones.analizar(
+                    ml, pubs=pubs, tope=tope_pr, cargos=cargos_pr,
+                    unidades=unidades_pr,
+                    callback=lambda m: estado.caption(str(m)))
+            estado.empty()
+
+        guardado_pr = st.session_state.get("promos")
+        if guardado_pr is not None:
+            dpr, camp = guardado_pr
+
+            if len(camp):
+                st.markdown("##### Campañas abiertas en la cuenta")
+                st.dataframe(
+                    camp, use_container_width=True, hide_index=True,
+                    column_config={
+                        "id": None, "tipo": None,
+                        "nombre_tipo": "Tipo", "nombre": "Campaña",
+                        "estado": "Estado", "desde": "Desde", "hasta": "Hasta",
+                        "cierra_inscripcion": "Cierra inscripción"})
+
+            if len(dpr):
+                rp = promociones.resumen(dpr)
+                q1, q2, q3, q4 = st.columns(4)
+                q1.metric("Publicaciones con ofertas", rp["publicaciones"])
+                q2.metric("Con aporte de ML", rp["con_aporte_ml"])
+                q3.metric("Disponibles sin tomar", rp["disponibles"])
+                q4.metric("Ya participás", rp["participando"])
+
+                if rp["negativas"]:
+                    st.warning(
+                        f"**{rp['negativas']} ofertas dan negativo** ya antes "
+                        "del costo de la mercadería: el precio de promoción no "
+                        "cubre ni la comisión y el envío.", icon="⚠️")
+
+                st.markdown("##### Por tipo de promoción")
+                st.dataframe(
+                    pd.DataFrame(rp["por_tipo"].most_common(),
+                                 columns=["Promoción", "Ofertas"]),
+                    use_container_width=True, hide_index=True, height=220)
+
+                estados_pr = sorted(dpr["diagnostico"].unique())
+                filtro_pr = st.multiselect(
+                    "Filtrar por diagnóstico", estados_pr,
+                    default=[e for e in estados_pr if e != "ya participás"]
+                    or estados_pr)
+                vpr = dpr[dpr["diagnostico"].isin(filtro_pr)] if filtro_pr else dpr
+
+                st.dataframe(
+                    vpr, use_container_width=True, height=420, hide_index=True,
+                    column_config={
+                        "item_id": "Publicación", "sku": "SKU",
+                        "titulo": "Título", "campana_id": None, "tipo": None,
+                        "promocion": "Promoción", "nombre": "Campaña",
+                        "estado": None, "diagnostico": "Diagnóstico",
+                        "precio_actual": st.column_config.NumberColumn(
+                            "Tu precio", format="%.0f"),
+                        "precio_promo": st.column_config.NumberColumn(
+                            "Precio con promo", format="%.0f"),
+                        "descuento": st.column_config.NumberColumn(
+                            "Descuento", format="percent"),
+                        "aporte_ml": st.column_config.NumberColumn(
+                            "Pone ML", format="percent"),
+                        "aporte_vendedor": st.column_config.NumberColumn(
+                            "Ponés vos", format="percent"),
+                        "queda_por_unidad": st.column_config.NumberColumn(
+                            "Te queda", format="%.0f",
+                            help="Por unidad, antes del costo de la mercadería"),
+                        "unidades": "Unidades (período)",
+                        "vendidas_historico": "Vendidas (histórico)",
+                        "desde": "Desde", "hasta": "Hasta"})
+                st.download_button("Descargar las promociones",
+                                   vpr.to_csv(index=False).encode("utf-8"),
+                                   f"promociones_{datetime.now():%Y%m%d}.csv",
+                                   "text/csv")
+                st.caption(
+                    "Las promociones se toman desde el panel de MercadoLibre. "
+                    "Esta sección te dice cuáles conviene tomar y cuáles no; "
+                    "no las activa por vos.")
+            else:
+                st.info("Ninguna publicación del alcance elegido tiene "
+                        "ofertas disponibles.")
 
 elif seccion == "Precios":
     bloque_carga("precio")

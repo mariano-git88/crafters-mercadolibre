@@ -132,11 +132,14 @@ for item in ml.items_detalle(ids, atributos=["id", "title", "price",
 | `alertas_stock.py` | Días de cobertura por SKU y plata semanal en riesgo |
 | `reclamos.py` | Reclamos por producto y tasa sobre unidades vendidas |
 | `full.py` | Candidatos a Full por plata de envío que queman |
+| `buybox.py` | Buy Box del catálogo: quién gana cada página y a qué precio |
+| `promociones.py` | Campañas que ML ofrece por publicación, con su aporte |
 | `credentials.txt` | App ID + Secret + Redirect URI (**no se sube a git**) |
 | `tokens.json` | Tokens vivos (**no se sube a git**) |
 
 Cada uno corre también suelto desde la Terminal: `python reporte.py`,
-`python alertas_stock.py 60`, `python reclamos.py 90`, `python full.py`.
+`python alertas_stock.py 60`, `python reclamos.py 90`, `python full.py`,
+`python buybox.py 150`, `python promociones.py 300`.
 
 ---
 
@@ -160,6 +163,11 @@ Cuenta: `CRAFTERSARG` — user_id `422682314` — site MLA — reputación 5_gre
 | Preguntas | `/questions/search?seller_id={uid}` | `status=UNANSWERED` |
 | Reclamos | `/post-purchase/v1/claims/search` | **exige al menos un filtro** y solo ordena con `sort=date_desc` |
 | Motivo de reclamo | `/post-purchase/v1/claims/reasons/{id}` | traduce `PNR3210` a texto |
+| Buy Box | `/items/{id}/price_to_win?version=v2` | precio para ganar, ganador actual y palancas sin usar |
+| Producto de catálogo | `/products/{id}` y `/products/{id}/items` | todos los que venden ese producto |
+| Promos de la cuenta | `/seller-promotions/users/{uid}?app_version=v2` | campañas abiertas |
+| Promos por publicación | `/seller-promotions/items/{id}?app_version=v2` | ofertas `candidate` y en curso |
+| Reputación | `/users/{uid}` → `seller_reputation` | métricas de 60 días de ML |
 
 **Trampa de formatos de fecha:** conviven dos formatos y no son intercambiables.
 `/orders/search` quiere ISO completo (`2026-07-01T00:00:00.000-00:00`); los de
@@ -187,6 +195,37 @@ verificaron contra la cuenta:
 puede ser distinto del pedido (`PNR3210` → `PNR9502`). Es el mismo motivo
 renumerado, no un error.
 
+### Buy Box — cómo leer `price_to_win`
+
+`price_to_win` **casi nunca coincide con el precio del ganador**, y suele ser
+bastante más bajo. No es un error de la API: ML pondera precio y beneficios
+juntos (Full, envío gratis, cuotas). Si el ganador los tiene y vos no, para
+empatarle tenés que compensar con precio.
+
+**La diferencia `winner.price - price_to_win` es, en pesos, lo que cuesta no
+tener esas palancas.** Sobre las 150 publicaciones de catálogo que más venden,
+la mediana de esa penalización es **$2.074**.
+
+Hay casos donde `current_price` ya es **menor** que `winner.price` y el estado
+sigue siendo `competing`. Ahí bajar el precio no sirve: lo que falta son los
+beneficios. `buybox.py` los marca aparte como *perdés estando más barato*.
+
+`version=v2` cambia la forma de `boosts`: en v1 es un dict de booleanos, en v2
+una lista de `{id, status, description}` donde `status` es `boosted` (la usás) u
+`opportunity` (está disponible y no la usás). Se usa v2 por el texto legible.
+
+### Dos tasas de reclamo distintas — no compararlas
+
+`reclamos.py` da **2,80%** y la reputación de ML dice **0,19%**. Las dos están
+bien: miden cosas distintas.
+
+- La de `reclamos.py` cuenta **todos** los tipos (`cancel_purchase`,
+  `mediations`, `returns`) sobre las unidades vendidas del período. Sirve para
+  comparar productos entre sí.
+- La de ML (`seller_reputation.metrics.claims.rate`) cuenta solo los reclamos
+  en sentido estricto sobre las ventas de 60 días, y es la que afecta la
+  reputación. La cuenta está en 5_green / platinum.
+
 Lo que **no** anda (no bloquea nada):
 
 - `/sites/MLA/search?seller_id=` y `?nickname=` → **403**. ML cerró la búsqueda
@@ -195,6 +234,10 @@ Lo que **no** anda (no bloquea nada):
   de documentos cambió. Los montos por período igual salen de `monthly/periods`.
 - `/orders/{id}/discounts` da 404 cuando esa orden no tuvo descuentos: es
   respuesta normal, no una falla.
+- `/items/{id}/health`, `/quality/v1/items/{id}` y `/items/{id}/moderations`
+  → 404. No hay score de calidad de publicación por API.
+- `/sites/MLA/search?q=` → **403** también para búsqueda por texto: el buscador
+  público está cerrado del todo, no solo el filtro por vendedor.
 - **No hay endpoint de recomendación de Full.** Se probaron siete rutas
   plausibles (`/users/{uid}/stock/fulfillment`,
   `/users/{uid}/items/fulfillment_recommendations`, `/fbm/recommendations`,
@@ -207,12 +250,13 @@ Lo que **no** anda (no bloquea nada):
 streamlit run crafters_app.py
 ```
 
-Diez secciones:
+Once secciones:
 
 | Sección | Qué hace | ¿Escribe en ML? |
 |---|---|---|
 | **Reporte semanal** | La pantalla del lunes: cómo vino la semana contra la anterior y qué hay que resolver | no |
 | **Alertas** | Stock por agotarse y reclamos por producto | no |
+| **Ganar la venta** | Buy Box del catálogo y promociones disponibles | no |
 | **Precios** | Cambio masivo de precios desde planilla | **sí** |
 | **Mayoristas** | Precios por cantidad según reglas | **sí** |
 | **Stock ML** | Cambio masivo de stock desde planilla | **sí** |
