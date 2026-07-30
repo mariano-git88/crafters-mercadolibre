@@ -36,3 +36,5 @@ preguntas_historico.json
 # Cache de visitas por publicacion
 visitas.json
 conversion.csv
+
+tramos.csv

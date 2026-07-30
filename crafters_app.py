@@ -22,10 +22,12 @@ import streamlit as st
 import actualizador as act
 import almacen
 import competencia
+import conversion
 import rentabilidad as rent
 import mayoristas
 import preguntas as preg
 import stock_control
+import tramos
 import tutorial_crafters
 from catalogo import CACHE as CACHE_CATALOGO, bajar_catalogo
 from meli import Meli, MeliError
@@ -159,7 +161,8 @@ with enc_btn:
 
 seccion = st.segmented_control(
     "Sección", ["Precios", "Mayoristas", "Stock ML", "Control de stock",
-                "Rentabilidad", "Competencia", "Preguntas"],
+                "Rentabilidad", "Competencia", "Oportunidades",
+                "Preguntas"],
     default="Precios", label_visibility="collapsed")
 
 # En la nube el disco se borra en cada reinicio: si no hay Sheet configurada,
@@ -784,6 +787,143 @@ elif seccion == "Competencia":
                            df.to_csv(index=False).encode("utf-8"),
                            f"competencia_{datetime.now():%Y%m%d_%H%M}.csv",
                            "text/csv")
+
+elif seccion == "Oportunidades":
+    st.markdown("#### Dónde hay plata sobre la mesa")
+    op = st.radio("Vista", ["Visitas vs ventas", "Tramos de comisión"],
+                  horizontal=True, label_visibility="collapsed")
+
+    if op == "Tramos de comisión":
+        st.caption(
+            "MercadoLibre cobra un porcentaje **más un cargo fijo por unidad**, "
+            "y ese cargo salta en escalones. Hay precios donde **subir unos "
+            "pesos deja más plata neta**, porque cruzar el escalón baja o "
+            "elimina el cargo fijo.")
+
+        with st.expander("Los escalones de tu cuenta"):
+            st.markdown(
+                "| Precio | Cargo fijo por unidad |\n|---|---|\n"
+                "| menos de $16.000 | $1.250 |\n"
+                "| $16.000 a $23.999 | $2.505 |\n"
+                "| $24.000 a $32.999 | $3.005 |\n"
+                "| **$33.000 o más** | **$0** |\n\n"
+                "Medidos contra la API por búsqueda binaria. El salto de "
+                "$33.000 es el más fuerte: ahí el cargo fijo desaparece.")
+
+        if st.button("Analizar el catálogo"):
+            with st.spinner("Calculando..."):
+                st.session_state["tramos"] = tramos.analizar(pubs)
+
+        dft = st.session_state.get("tramos")
+        if dft is not None and len(dft):
+            t1, t2, t3 = st.columns(3)
+            t1.metric("Publicaciones a reprecificar", len(dft))
+            t2.metric("Mejor caso por unidad",
+                      pesos(dft["gana_por_unidad"].max()))
+            cruzan = int((dft["cargo_fijo_nuevo"] == 0).sum())
+            t3.metric("Cruzan a cargo fijo cero", cruzan)
+
+            solo_grandes = st.checkbox(
+                "Ver solo las que ganan más de $1.000 por unidad", value=True)
+            v = dft[dft["gana_por_unidad"] > 1000] if solo_grandes else dft
+
+            st.dataframe(
+                v, use_container_width=True, height=420,
+                column_config={
+                    "sku": "SKU", "titulo": "Título",
+                    "precio_actual": st.column_config.NumberColumn(
+                        "Precio hoy", format="%.0f"),
+                    "precio_sugerido": st.column_config.NumberColumn(
+                        "Precio sugerido", format="%.0f"),
+                    "sube_precio": st.column_config.NumberColumn(
+                        "Sube", format="%.1f%%"),
+                    "gana_por_unidad": st.column_config.NumberColumn(
+                        "Ganás por unidad", format="%.0f"),
+                    "neto_actual": st.column_config.NumberColumn(
+                        "Neto hoy", format="%.0f"),
+                    "neto_sugerido": st.column_config.NumberColumn(
+                        "Neto nuevo", format="%.0f"),
+                    "cargo_fijo_actual": st.column_config.NumberColumn(
+                        "Fijo hoy", format="%.0f"),
+                    "cargo_fijo_nuevo": st.column_config.NumberColumn(
+                        "Fijo nuevo", format="%.0f"),
+                    "vendidos": "Vendidas", "impacto": None, "item_id": None})
+
+            st.download_button(
+                "Descargar para usar en la sección Precios",
+                v[["sku", "precio_sugerido"]].rename(
+                    columns={"precio_sugerido": "Precio"}
+                ).to_csv(index=False).encode("utf-8"),
+                f"precios_sugeridos_{datetime.now():%Y%m%d}.csv", "text/csv",
+                help="Sale con las columnas SKU y Precio, listo para subir en "
+                     "la sección Precios")
+
+            st.info(
+                "Antes de aplicar: subir un precio puede bajar la conversión. "
+                "Conviene empezar por las que **más ganan por unidad y menos "
+                "suben** — las que ya están cerca del escalón.", icon="💡")
+
+    else:
+        st.caption(
+            "Cruza cuántas veces vieron cada publicación contra cuánto vendió. "
+            "Detecta lo que se ve y no vende (precio, fotos o descripción) y "
+            "lo que vende sin exposición (candidatas a empujar).")
+        st.warning(
+            "MercadoLibre solo deja consultar las visitas **de a una "
+            "publicación por vez**, así que este análisis hace ~2.275 llamadas "
+            "y tarda unos 10 minutos. Queda cacheado por rango de fechas.",
+            icon="⏳")
+
+        c1, c2 = st.columns([1.2, 3])
+        dias_c = c1.selectbox("Período", [15, 30, 60], index=1,
+                              format_func=lambda d: f"{d} días")
+        if c2.button("Analizar visitas y ventas"):
+            estado = st.empty()
+            with st.spinner("Esto tarda varios minutos..."):
+                st.session_state["conv"] = conversion.analizar(
+                    ml, dias_c, callback=lambda m: estado.caption(str(m)))
+            estado.empty()
+
+        dfc = st.session_state.get("conv")
+        if dfc is not None and len(dfc):
+            conv_med = dfc.attrs.get("conversion_mediana", 0)
+            k1, k2, k3 = st.columns(3)
+            k1.metric("Visitas del período", f"{int(dfc['visitas'].sum()):,}"
+                      .replace(",", "."))
+            k2.metric("Conversión mediana", f"{conv_med:.2%}")
+            k3.metric("Se ven y no venden",
+                      int((dfc["diagnostico"] == "no_vende").sum()))
+
+            perdidas = int(dfc[dfc["diagnostico"] == "no_vende"]["visitas"].sum())
+            if perdidas:
+                st.warning(f"**{perdidas:,} visitas se fueron sin comprar** en "
+                           "publicaciones que no vendieron ni una unidad."
+                           .replace(",", "."), icon="📉")
+
+            diag = st.multiselect(
+                "Ver", sorted(dfc["diagnostico"].unique()),
+                default=[d for d in ["no_vende", "convierte_poco", "escalar",
+                                     "falta_exposicion"]
+                         if d in dfc["diagnostico"].unique()])
+            vc = dfc[dfc["diagnostico"].isin(diag)] if diag else dfc
+
+            st.dataframe(
+                vc, use_container_width=True, height=420,
+                column_config={
+                    "sku": "SKU", "titulo": "Título",
+                    "precio": st.column_config.NumberColumn("Precio", format="%.0f"),
+                    "visitas": "Visitas", "unidades": "Vendidas",
+                    "conversion": st.column_config.NumberColumn(
+                        "Conversión", format="%.2f%%"),
+                    "importe": st.column_config.NumberColumn(
+                        "Facturado", format="%.0f"),
+                    "diagnostico": "Diagnóstico",
+                    "recomendacion": "Qué hacer",
+                    "item_id": None, "medida": None, "stock": "Stock"})
+            st.download_button("Descargar el análisis",
+                               vc.to_csv(index=False).encode("utf-8"),
+                               f"conversion_{datetime.now():%Y%m%d}.csv",
+                               "text/csv")
 
 elif seccion == "Preguntas":
     st.markdown("#### Respuestas automáticas con IA")
