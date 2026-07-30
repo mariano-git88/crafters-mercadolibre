@@ -334,3 +334,76 @@ def cargar_vigilados(eans):
         [{"ean": e, "producto": "", "mejor_precio": "", "mejor_vendedor": "",
           "nuestro_precio": "", "posicion": "", "competidores": "",
           "medido": ""} for e in dict.fromkeys(eans)])
+
+
+# ------------------------------------------------------- top de mas vendidos
+
+def eans_mas_vendidos(ml, n=50, dias=30, callback=None):
+    """
+    EAN de los N articulos que MAS VENDIERON en el periodo.
+
+    Se usan las ventas reales del periodo y no el `sold_quantity` historico:
+    lo que importa es contra quien competis hoy, no lo que vendia hace dos
+    años. Solo entran los que tienen EAN cargado — sin EAN no hay forma de
+    encontrarlos en el catalogo de ML.
+
+    Devuelve (eans, detalle) donde `detalle` explica cuantos quedaron afuera
+    y por que, para que no parezca que el top esta incompleto por un error.
+    """
+    import json
+    from collections import defaultdict
+    from datetime import datetime, timedelta
+
+    from ventas import traer_ordenes
+
+    if callback:
+        callback("Trayendo las ventas del período...")
+    hasta = datetime.now()
+    ordenes = traer_ordenes(ml, hasta - timedelta(days=dias), hasta)
+
+    # Unidades por publicacion, sin contar canceladas.
+    unidades = defaultdict(int)
+    for o in ordenes:
+        if o.get("status") == "cancelled":
+            continue
+        for it in o.get("order_items") or []:
+            iid = it["item"].get("id")
+            if iid:
+                unidades[iid] += it.get("quantity") or 0
+
+    pubs = {p["id"]: p for p in json.loads(
+        (DIR / "catalogo.json").read_text(encoding="utf-8"))}
+
+    def gtin(p):
+        for a in p.get("attributes") or []:
+            if a.get("id") == "GTIN":
+                return a.get("value_name")
+        return None
+
+    ordenados = sorted(unidades.items(), key=lambda x: -x[1])
+    eans, vistos, sin_ean, filas = [], set(), 0, []
+
+    for iid, u in ordenados:
+        if len(eans) >= n:
+            break
+        p = pubs.get(iid)
+        if not p:
+            continue
+        limpios = limpiar_eans(gtin(p))
+        if not limpios:
+            sin_ean += 1
+            continue
+        e = limpios[0]
+        if e in vistos:          # varias publicaciones del mismo producto
+            continue
+        vistos.add(e)
+        eans.append(e)
+        filas.append({"ean": e, "item_id": iid, "unidades": u,
+                      "titulo": (p.get("title") or "")[:60]})
+
+    detalle = (f"{len(eans)} productos con EAN entre los más vendidos de los "
+               f"últimos {dias} días.")
+    if sin_ean:
+        detalle += (f" Quedaron afuera {sin_ean} que vendieron pero no tienen "
+                    "código de barras cargado.")
+    return eans, detalle, pd.DataFrame(filas)

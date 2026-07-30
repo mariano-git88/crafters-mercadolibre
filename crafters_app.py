@@ -721,6 +721,41 @@ elif seccion == "Competencia":
             "publicación del competidor: puede tratarse de otra presentación "
             "(unidad contra pack) aunque comparta el catálogo.")
 
+    st.markdown("##### Tus más vendidos")
+    st.caption(
+        "Toma los artículos que más vendiste en el período, busca su código de "
+        "barras y compara contra el catálogo. No hace falta mantener ninguna "
+        "planilla: sale de tus ventas reales.")
+
+    t1, t2, t3 = st.columns([1.1, 1.1, 2])
+    cuantos = t1.selectbox("Cuántos", [20, 50, 100], index=1)
+    dias_top = t2.selectbox("Período", [30, 60, 90], index=0,
+                            format_func=lambda d: f"{d} días")
+    if t3.button(f"Comparar mis {cuantos} más vendidos",
+                 use_container_width=True):
+        estado = st.empty()
+        with st.spinner("Buscando tus más vendidos..."):
+            eans_top, detalle, df_top = competencia.eans_mas_vendidos(
+                ml, n=cuantos, dias=dias_top,
+                callback=lambda m: estado.caption(str(m)))
+        estado.caption(detalle)
+        if eans_top:
+            barra = st.progress(0.0, text="Consultando la competencia...")
+            st.session_state["comp"] = competencia.analizar(
+                ml, eans_top,
+                callback=lambda i, t_, e: barra.progress(
+                    i / t_, text=f"Consultando {i} de {t_}..."))
+            barra.empty()
+            st.session_state["comp_detalle"] = detalle
+        else:
+            st.warning("Ninguno de tus más vendidos tiene código de barras "
+                       "cargado. Sin EAN no se pueden buscar en el catálogo.")
+
+    if st.session_state.get("comp_detalle"):
+        st.caption(st.session_state["comp_detalle"])
+
+    st.divider()
+    st.markdown("##### O subí una planilla")
     arch_ean = st.file_uploader("Planilla con EAN (.xlsx o .csv)",
                                type=["xlsx", "xls", "csv"], key="up_ean")
     if arch_ean:
