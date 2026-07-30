@@ -263,10 +263,23 @@ Rentabilidad), la herramienta calcula el margen real al precio del Buy Box y te
 deja aplicar la baja **solo donde el margen aguanta**. Definís el criterio una
 vez —margen mínimo, baja máxima, unidades mínimas— y se selecciona sola.
 
+**Cómo elegir qué se toca.** Tenés tres formas y se combinan:
+
+- **Por criterio** — rentabilidad mínima, baja máxima y unidades mínimas.
+- **Por marca** — elegís una o varias y se aplica solo a esas.
+- **A mano** — tildás filas en la tabla. Si tildás alguna, se aplica **solo a
+  esas**; si no tildás ninguna, van todas las que cumplen.
+
+**Vender a pérdida a propósito.** La rentabilidad mínima **puede ir en
+negativo**. Poniéndola en −5% entran las publicaciones donde ganar el Buy Box
+deja hasta 5% de pérdida. Puede tener sentido para entrar a una página de
+catálogo o para liquidar, y la pantalla te avisa cuántas quedan a pérdida antes
+de aplicar.
+
 > Esto **cambia precios de verdad**. Hay tres candados que no se pueden abrir
-> desde la pantalla: nunca se baja más del 35%, el margen nuevo tiene que ser
-> positivo y llegar al mínimo que pediste, y **las publicaciones sin costo
-> cargado se saltean** — sin costo no se sabe si se gana o se pierde.
+> desde la pantalla: nunca se baja más del 35%, el margen nunca puede quedar
+> por debajo de −50%, y **las publicaciones sin costo cargado se saltean** —
+> sin costo no se sabe si se gana o se pierde.
 
 **El escalón del cargo fijo.** MercadoLibre cobra un porcentaje más un cargo
 fijo por unidad, y ese cargo salta en escalones. El más grande está en

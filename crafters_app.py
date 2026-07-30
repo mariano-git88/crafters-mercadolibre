@@ -929,9 +929,13 @@ elif seccion == "Ganar la venta":
 
                 st.markdown("###### Criterio para bajar")
                 k1, k2, k3 = st.columns(3)
-                margen_min = k1.slider("Margen mínimo al precio nuevo",
-                                       0.0, 0.50, 0.10, 0.01,
-                                       format="%.0f%%", key="mg_bb")
+                margen_min = k1.slider(
+                    "Rentabilidad mínima aceptada",
+                    float(buybox.PISO_DE_MARGEN), 0.50, 0.10, 0.01,
+                    format="%.0f%%", key="mg_bb",
+                    help="En negativo aceptás vender a pérdida para ganar la "
+                         f"página de catálogo. Piso duro del sistema: "
+                         f"{buybox.PISO_DE_MARGEN:.0%}.")
                 baja_max = k2.slider(
                     "Baja máxima aceptada", 0.01,
                     float(buybox.TECHO_DE_BAJA), 0.15, 0.01,
@@ -941,28 +945,51 @@ elif seccion == "Ganar la venta":
                 unid_min = k3.number_input("Unidades mínimas en el período",
                                            min_value=0, value=5, step=1,
                                            key="un_bb")
-                cruzar = st.checkbox(
-                    "Permitir las que cruzan escalón de cargo fijo",
-                    value=False, key="cr_bb")
+
+                j1, j2 = st.columns([2.4, 1.6])
+                marcas_bb = j1.multiselect(
+                    "Marcas (vacío = todas)",
+                    sorted(m for m in dcb["marca"].dropna().unique() if m),
+                    key="mk_bb")
+                with j2:
+                    st.write("")
+                    cruzar = st.checkbox(
+                        "Permitir las que cruzan escalón", value=False,
+                        key="cr_bb",
+                        help="Bajar de tramo puede sumar un cargo fijo que no "
+                             "estaba. El margen ya lo contempla.")
+
+                if margen_min < 0:
+                    st.warning(
+                        f"Estás aceptando vender **a pérdida de hasta "
+                        f"{abs(margen_min):.0%}** con tal de ganar el Buy Box. "
+                        "Puede tener sentido para entrar a una página de "
+                        "catálogo o para liquidar, pero conviene mirarlo "
+                        "publicación por publicación abajo.", icon="📉")
 
                 sel_bb = buybox.seleccionar(
                     dcb, margen_minimo=margen_min, baja_maxima=baja_max,
                     unidades_minimas=unid_min,
-                    permitir_cruzar_escalon=cruzar)
+                    permitir_cruzar_escalon=cruzar,
+                    marcas=marcas_bb or None)
 
-                st.session_state["buybox_sel"] = sel_bb
                 st.markdown(cumplen(len(sel_bb)))
 
                 if len(sel_bb):
-                    st.dataframe(
-                        sel_bb[["item_id", "sku", "titulo", "precio_actual",
-                                "precio_para_ganar", "bajar_pct", "margen_hoy",
-                                "margen_al_ganar", "margen_al_ganar_pct",
-                                "unidades"]],
-                        use_container_width=True, height=320, hide_index=True,
+                    st.caption(
+                        "**Tildá filas para elegir a mano.** Si no seleccionás "
+                        "ninguna se aplican todas las que cumplen el criterio.")
+                    vista_sel = sel_bb[
+                        ["item_id", "sku", "marca", "titulo", "precio_actual",
+                         "precio_para_ganar", "bajar_pct", "margen_hoy",
+                         "margen_al_ganar", "margen_al_ganar_pct", "unidades"]]
+                    evento = st.dataframe(
+                        vista_sel, use_container_width=True, height=320,
+                        hide_index=True, key="tabla_bb",
+                        on_select="rerun", selection_mode="multi-row",
                         column_config={
                             "item_id": "Publicación", "sku": "SKU",
-                            "titulo": "Título",
+                            "marca": "Marca", "titulo": "Título",
                             "precio_actual": st.column_config.NumberColumn(
                                 "Precio hoy", format="%.0f"),
                             "precio_para_ganar": st.column_config.NumberColumn(
@@ -977,6 +1004,18 @@ elif seccion == "Ganar la venta":
                                 "Margen %", format="percent"),
                             "unidades": "Unidades"})
 
+                    elegidas = list(getattr(evento.selection, "rows", []) or [])
+                    a_aplicar = sel_bb.iloc[elegidas] if elegidas else sel_bb
+                    if elegidas:
+                        st.info(f"Vas a aplicar solo las **{len(a_aplicar)}** "
+                                "que tildaste.", icon="👉")
+
+                    con_perdida = int((a_aplicar["margen_al_ganar"] < 0).sum())
+                    if con_perdida:
+                        st.error(
+                            f"**{con_perdida} de las {len(a_aplicar)} quedan a "
+                            f"pérdida** al precio nuevo.", icon="📉")
+
                     st.divider()
                     st.error(
                         "**Esto cambia los precios en MercadoLibre de verdad.** "
@@ -987,13 +1026,13 @@ elif seccion == "Ganar la venta":
                                           key="op_bb")
                     conf_bb = st.checkbox(
                         f"Confirmo que quiero bajar el precio de "
-                        f"{len(sel_bb)} publicaciones", key="conf_bb")
+                        f"{len(a_aplicar)} publicaciones", key="conf_bb")
                     if st.button("Aplicar las bajas en MercadoLibre",
                                  key="go_bb",
                                  disabled=not (conf_bb and op_bb.strip())):
                         barra = st.progress(0.0, text="Aplicando...")
                         res_bb = buybox.aplicar(
-                            ml, sel_bb, operador=op_bb.strip(),
+                            ml, a_aplicar, operador=op_bb.strip(),
                             callback=lambda i, t, iid: barra.progress(
                                 i / t, text=f"Aplicando {i} de {t}: {iid}"))
                         barra.empty()

@@ -108,6 +108,14 @@ def traer_price_to_win(ml, item_ids, refrescar=False, callback=None):
     return {i: cache.get(i, {}) for i in item_ids}
 
 
+def marca(pub):
+    """La marca cargada como atributo BRAND. Las 1.009 de catálogo la tienen."""
+    for a in pub.get("attributes") or []:
+        if a.get("id") == "BRAND" and a.get("value_name"):
+            return str(a["value_name"]).strip()
+    return ""
+
+
 def palancas(entrada):
     """(las que ya usa, las que tiene disponibles sin usar)."""
     usadas, libres = [], []
@@ -210,6 +218,7 @@ def analizar(ml, pubs=None, tope=None, cargos=None, unidades=None,
         filas.append({
             "item_id": p["id"],
             "sku": sku,
+            "marca": marca(p),
             "titulo": (p.get("title") or "")[:60],
             "diagnostico": diag,
             "precio_actual": actual,
@@ -399,28 +408,47 @@ def resumen(df):
 # caso donde un dato raro de la API pide una baja absurda.
 TECHO_DE_BAJA = 0.35
 
+# Piso duro del margen. Se puede pedir vender a perdida a proposito (para
+# entrar a una pagina de catalogo, para liquidar), pero no mas alla de esto:
+# un margen peor casi siempre es un dato malo, no una decision.
+PISO_DE_MARGEN = -0.50
+
+# Diagnosticos donde hay Buy Box para ganar. El resto no se toca.
+PERDIENDO = ("perdés estando más barato", "alcanza con bajar poco",
+             "perdés por precio", "habría que bajar mucho")
+
 
 def seleccionar(df, margen_minimo=0.10, baja_maxima=0.15, unidades_minimas=1,
-                permitir_cruzar_escalon=False):
+                permitir_cruzar_escalon=False, marcas=None, items=None):
     """
-    Aplica el criterio y devuelve **solo** las publicaciones donde bajar al
-    precio para ganar sigue dejando plata.
+    Aplica el criterio y devuelve las publicaciones a las que bajarles el
+    precio.
 
-    El criterio es el que define el operador, pero hay tres candados que no se
-    pueden abrir desde afuera:
+    `margen_minimo` **puede ser negativo**: es el piso de rentabilidad que se
+    esta dispuesto a aceptar. Con `-0.05` entran las publicaciones donde ganar
+    el Buy Box deja hasta 5% de perdida, algo que puede tener sentido para
+    entrar a una pagina de catalogo o para liquidar.
+
+    `marcas` filtra por marca (lista). `items` restringe a una lista de
+    `item_id`, para cuando el operador elige a mano en la tabla.
+
+    Tres candados que no se pueden abrir desde afuera:
 
       - nunca se baja mas de `TECHO_DE_BAJA`, pase lo que pase;
-      - el margen al precio nuevo tiene que ser positivo **y** llegar al
-        minimo pedido;
+      - el margen nunca puede quedar debajo de `PISO_DE_MARGEN`;
       - se saltean las que no tienen costo cargado. Sin costo no se sabe si
         se gana o se pierde, y adivinar eso con plata real no corresponde.
     """
     if not len(df) or "veredicto" not in df:
         return df.iloc[0:0] if len(df) else df
 
+    piso = max(margen_minimo, PISO_DE_MARGEN)
+
     sel = df[
-        (df["veredicto"] == "podés ganar y seguir ganando plata")
-        & (df["margen_al_ganar_pct"] >= margen_minimo)
+        df["diagnostico"].isin(PERDIENDO)
+        & df["costo"].notna()
+        & df["margen_al_ganar_pct"].notna()
+        & (df["margen_al_ganar_pct"] >= piso)
         & (df["bajar_pct"] > 0)
         & (df["bajar_pct"] <= min(baja_maxima, TECHO_DE_BAJA))
         & (df["unidades"] >= unidades_minimas)
@@ -431,6 +459,11 @@ def seleccionar(df, margen_minimo=0.10, baja_maxima=0.15, unidades_minimas=1,
         # lo contempla, pero por defecto ni se ofrecen: es plata que se
         # regala por cruzar un escalon.
         sel = sel[~sel["cruza_escalon"]]
+
+    if marcas:
+        sel = sel[sel["marca"].isin(marcas)]
+    if items is not None:
+        sel = sel[sel["item_id"].isin(list(items))]
 
     return sel.sort_values("unidades", ascending=False)
 

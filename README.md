@@ -227,11 +227,20 @@ Candados que no se pueden abrir desde la pantalla:
 
 - `TECHO_DE_BAJA = 0.35`: nunca se baja más de eso, aunque el criterio lo
   permita. Misma idea que `UMBRAL_ALERTA_PRECIO` en `actualizador.py`.
-- El margen al precio nuevo tiene que ser **positivo** y llegar al mínimo
-  pedido.
+- `PISO_DE_MARGEN = -0.50`: el margen nunca puede quedar por debajo. Un margen
+  peor casi siempre es un dato malo, no una decisión.
 - Las publicaciones **sin costo cargado se saltean**. Sin costo no se sabe si
   se gana o se pierde.
 - Por defecto se excluyen las que **cruzan un escalón de cargo fijo**.
+
+`margen_minimo` **puede ser negativo**: es el piso de rentabilidad aceptado, no
+un mínimo de ganancia. Con `-0.05` entran las publicaciones donde ganar el Buy
+Box deja hasta 5% de pérdida, algo que puede tener sentido para entrar a una
+página de catálogo o para liquidar. El valor se clampea contra `PISO_DE_MARGEN`.
+
+La selección se puede acotar además **por marca** (atributo `BRAND`, presente en
+las 1.009 publicaciones de catálogo) y **por lista de `item_id`**, que es lo que
+usa la tabla cuando el operador tilda filas a mano.
 
 La comisión al precio nuevo **no** se estima con una regla de tres: el
 porcentaje real de cada SKU se despeja de lo que ML cobró
