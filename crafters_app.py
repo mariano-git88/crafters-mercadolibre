@@ -288,18 +288,23 @@ def controles_otros_conceptos(clave):
     st.caption(
         "**Otros conceptos** — costos que no cobra MercadoLibre pero igual "
         "hay que cargarle a cada venta. Se aplican como porcentaje del "
-        "ingreso sin IVA.")
+        f"**ingreso sin IVA**. El logístico es el porcentaje **o "
+        f"{pesos(rent.TOPE_LOGISTICO)}, lo que sea menor**.")
+    # En puntos porcentuales enteros: mostrar "0.10" se lee como 0,1%.
     o1, o2, o3 = st.columns(3)
     return {
         "impuestos": o1.number_input(
-            "Impuestos", 0.0, 1.0, rent.OTROS_CONCEPTOS["impuestos"], 0.01,
-            format="%.2f", key=f"imp_{clave}"),
+            "Impuestos %", 0, 100,
+            int(rent.OTROS_CONCEPTOS["impuestos"] * 100), 1,
+            key=f"imp_{clave}") / 100,
         "logistico": o2.number_input(
-            "Logístico", 0.0, 1.0, rent.OTROS_CONCEPTOS["logistico"], 0.01,
-            format="%.2f", key=f"log_{clave}"),
+            "Logístico %", 0, 100,
+            int(rent.OTROS_CONCEPTOS["logistico"] * 100), 1,
+            key=f"log_{clave}") / 100,
         "general": o3.number_input(
-            "General", 0.0, 1.0, rent.OTROS_CONCEPTOS["general"], 0.01,
-            format="%.2f", key=f"gen_{clave}"),
+            "General %", 0, 100,
+            int(rent.OTROS_CONCEPTOS["general"] * 100), 1,
+            key=f"gen_{clave}") / 100,
     }
 
 
@@ -983,19 +988,24 @@ elif seccion == "Ganar la venta":
 
                 st.markdown("###### Criterio para bajar")
                 k1, k2, k3 = st.columns(3)
+                # Los sliders van en PUNTOS PORCENTUALES enteros y se dividen
+                # por 100 abajo. Con floats 0..1 y format printf, Streamlit
+                # muestra "0%" en todo el recorrido: el printf no escala a
+                # porcentaje, igual que en column_config.
                 margen_min = k1.slider(
                     "Rentabilidad mínima aceptada",
-                    float(buybox.PISO_DE_MARGEN), 0.50, 0.10, 0.01,
-                    format="%.0f%%", key="mg_bb",
+                    int(buybox.PISO_DE_MARGEN * 100), 50, 10, 1,
+                    format="%d%%", key="mg_bb",
                     help="En negativo aceptás vender a pérdida para ganar la "
                          f"página de catálogo. Piso duro del sistema: "
-                         f"{buybox.PISO_DE_MARGEN:.0%}.")
+                         f"{buybox.PISO_DE_MARGEN:.0%}.") / 100
                 baja_max = k2.slider(
-                    "Baja máxima aceptada", 0.01,
-                    float(buybox.TECHO_DE_BAJA), 0.15, 0.01,
-                    format="%.0f%%", key="bj_bb",
+                    "Baja máxima aceptada", 1,
+                    int(buybox.TECHO_DE_BAJA * 100), 15, 1,
+                    format="%d%%", key="bj_bb",
                     help=f"Tope duro del sistema: {buybox.TECHO_DE_BAJA:.0%}. "
-                         "No se puede bajar más aunque el criterio lo permita.")
+                         "No se puede bajar más aunque el criterio lo permita."
+                    ) / 100
                 unid_min = k3.number_input("Unidades mínimas en el período",
                                            min_value=0, value=5, step=1,
                                            key="un_bb")
@@ -1214,12 +1224,13 @@ elif seccion == "Ganar la venta":
                     "después de que la revises.")
 
                 r1, r2, r3 = st.columns(3)
+                # En puntos porcentuales enteros: ver la nota en Buy Box.
                 ap_max = r1.slider("CRAFTERS pone como máximo",
-                                   0.0, 0.30, 0.05, 0.01, format="%.0f%%",
-                                   key="ap_max")
+                                   0, 30, 5, 1, format="%d%%",
+                                   key="ap_max") / 100
                 ml_min = r2.slider("MercadoLibre pone al menos",
-                                   0.0, 0.30, 0.0, 0.01, format="%.0f%%",
-                                   key="ml_min")
+                                   0, 30, 0, 1, format="%d%%",
+                                   key="ml_min") / 100
                 un_min_pr = r3.number_input("Unidades mínimas en el período",
                                             min_value=0, value=1, step=1,
                                             key="un_pr")
@@ -1695,8 +1706,12 @@ elif seccion == "Precios mínimos":
     iva_pm = z1.selectbox(
         "IVA a descontar", [0.21, 0.105, 0.0],
         format_func=lambda x: f"{x:.1%}" if x else "Sin descontar", key="iva_pm")
-    objetivo_pm = z2.slider("Margen objetivo", 0.0, 0.40, 0.15, 0.01,
-                            format="%.0f%%", key="obj_pm")
+    # En puntos porcentuales enteros: ver la nota en Buy Box.
+    objetivo_pm = z2.slider(
+        "Margen objetivo", 0, 40, 15, 1, format="%d%%", key="obj_pm",
+        help="Alimenta el cálculo: si lo cambiás hay que volver a apretar "
+             "«Calcular precios mínimos». El resto de los filtros sí se "
+             "aplican al instante.") / 100
     z3.write("")
     if costos_pm is not None and z3.button("Calcular precios mínimos",
                                            use_container_width=True):
@@ -1727,10 +1742,11 @@ elif seccion == "Precios mínimos":
         st.markdown("###### Criterio para subir")
         x1, x2 = st.columns(2)
         suba_max = x1.slider(
-            "Suba máxima aceptada", 0.01,
-            float(precio_minimo.TECHO_DE_SUBA), 0.30, 0.01,
-            format="%.0f%%", key="sub_pm",
-            help=f"Tope duro del sistema: {precio_minimo.TECHO_DE_SUBA:.0%}.")
+            "Suba máxima aceptada", 1,
+            int(precio_minimo.TECHO_DE_SUBA * 100), 30, 1,
+            format="%d%%", key="sub_pm",
+            help=f"Tope duro del sistema: "
+                 f"{precio_minimo.TECHO_DE_SUBA:.0%}.") / 100
         unid_pm = x2.number_input("Unidades mínimas en el período",
                                   min_value=0, value=5, step=1, key="un_pm")
         w1, w2 = st.columns([2.4, 1.6])
