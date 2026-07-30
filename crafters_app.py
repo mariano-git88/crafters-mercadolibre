@@ -806,12 +806,14 @@ elif seccion == "Preguntas":
         st.warning(f"Los contadores no se pudieron actualizar: {met['error']}",
                    icon="📊")
 
-    m1, m2, m3 = st.columns(3)
+    m1, m2, m3, m4 = st.columns(4)
     m1.metric("Respondidas por la IA", met["respondidas_ia"],
               help="Preguntas que la IA contestó y publicó sola")
-    m2.metric("Derivadas a una persona", met["derivadas_a_persona"],
-              help="La IA no tenía contexto suficiente y las dejó sin responder")
-    m3.metric("Se resolvieron solas",
+    m2.metric("Resueltas a mano", met.get("resueltas_a_mano", 0),
+              help="Las que respondió una persona desde la pestaña Pendientes")
+    m3.metric("Esperando respuesta", met["derivadas_a_persona"],
+              help="Siguen abiertas: miralas en la pestaña Pendientes")
+    m4.metric("Se resolvieron solas",
               f"{met['tasa_automatica']:.0%}" if met["respondidas_ia"] +
               met["derivadas_a_persona"] else "—",
               help="Del total que procesó la IA, cuántas pudo cerrar sin ayuda")
@@ -826,7 +828,7 @@ elif seccion == "Preguntas":
         st.warning("La IA está **apagada**. Poné `ia_activa = si` en la hoja "
                    f"`{preg.HOJA_CONFIG}` para que vuelva a responder.", icon="⏸️")
 
-    vista_p = st.radio("Vista", ["Responder", "Historial completo",
+    vista_p = st.radio("Vista", ["Responder", "Pendientes", "Historial completo",
                                  "Registro de la IA", "Fuentes"],
                        horizontal=True, label_visibility="collapsed")
 
@@ -888,9 +890,11 @@ elif seccion == "Preguntas":
                             f"antes de volver a intentar:\n\n> {motivo}",
                             icon="🔧")
                     if rev:
-                        st.warning(f"**{rev} quedaron sin responder** porque el "
-                                   "contexto no alcanzaba. Mirá la columna "
-                                   "*motivo* y respondelas a mano.", icon="👤")
+                        st.warning(
+                            f"**{rev} quedaron sin responder** porque el "
+                            "contexto no alcanzaba. Están en la pestaña "
+                            "**Pendientes**: ahí las respondés y se publican.",
+                            icon="👤")
                     for _, f in res.iterrows():
                         with st.container(border=True):
                             st.markdown(f"**{f['estado']}** · confianza "
@@ -898,6 +902,71 @@ elif seccion == "Preguntas":
                             st.markdown(f"**P:** {f['pregunta']}")
                             st.markdown(f"**R:** {f['respuesta'] or '_(no respondió)_'}")
                             st.caption(f"Motivo: {f['motivo']}")
+
+    elif vista_p == "Pendientes":
+        st.caption(
+            "Preguntas que la IA no resolvió y siguen sin respuesta. "
+            "Respondelas desde acá: se publican en MercadoLibre y quedan "
+            "registradas. Las que alguien ya contestó desde el panel "
+            "desaparecen solas.")
+
+        if st.button("↻ Actualizar la bandeja"):
+            st.session_state.pop("preg_band", None)
+
+        if "preg_band" not in st.session_state:
+            try:
+                with st.spinner("Buscando pendientes..."):
+                    st.session_state["preg_band"] = preg.bandeja(ml)
+            except Exception as e:
+                st.error(f"No pude leer los pendientes: {e}")
+                st.session_state["preg_band"] = []
+        band = st.session_state["preg_band"]
+
+        if not band:
+            st.success("No queda ninguna pregunta pendiente. 🎉")
+        else:
+            st.metric("Esperando una respuesta", len(band))
+            nombre = st.text_input("Tu nombre (queda en el registro)",
+                                   key="op_band")
+
+            for b in band:
+                with st.container(border=True):
+                    st.markdown(f"**{b['pregunta']}**")
+                    st.caption(f"{b['comprador']} · {b['fecha']} · "
+                               f"publicación `{b['item_id']}`")
+
+                    if b["estado"] == "publicacion_inactiva":
+                        st.info("La publicación está pausada. MercadoLibre no "
+                                "deja responder hasta que la reactives.",
+                                icon="⏸️")
+                    elif b["motivo"]:
+                        st.caption(f"La IA no respondió porque: {b['motivo']}")
+
+                    texto = st.text_area(
+                        "Tu respuesta", value=b["borrador"], height=110,
+                        key=f"resp_{b['question_id']}",
+                        placeholder="Escribí acá la respuesta que se va a "
+                                    "publicar en MercadoLibre...")
+
+                    c_a, c_b = st.columns([1, 3])
+                    if c_a.button("Publicar", key=f"pub_{b['question_id']}",
+                                  disabled=not nombre.strip()
+                                  or b["estado"] == "publicacion_inactiva"):
+                        ok, det = preg.responder_a_mano(
+                            ml, b["question_id"], texto, nombre,
+                            item_id=b["item_id"], pregunta=b["pregunta"],
+                            motivo_previo=b["motivo"])
+                        if ok:
+                            st.success("Publicada." + (f" {det}" if det else ""))
+                            st.session_state.pop("preg_band", None)
+                            st.cache_data.clear()
+                            st.rerun()
+                        else:
+                            st.error(f"No se pudo publicar: {det}")
+                    c_b.markdown(
+                        f"[Ver la publicación en MercadoLibre]"
+                        f"(https://articulo.mercadolibre.com.ar/"
+                        f"{str(b['item_id']).replace('MLA','MLA-')}) ↗")
 
     elif vista_p == "Historial completo":
         st.caption(

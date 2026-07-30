@@ -488,6 +488,87 @@ def registrar(fila):
     almacen.append_hoja(HOJA_RESPUESTAS, COLS_RESPUESTAS, [fila])
 
 
+# --------------------------------------------------- bandeja de pendientes
+
+# Estados en los que la pregunta quedó SIN responder y espera a una persona.
+ESTADOS_ABIERTOS = ("para_revisar", "publicacion_inactiva", "error_tecnico",
+                    "error_al_publicar")
+
+
+def bandeja(ml):
+    """
+    Preguntas que la IA no resolvió y siguen esperando respuesta.
+
+    Cruza el registro con lo que MercadoLibre dice AHORA: si alguien ya la
+    respondió desde el panel, deja de aparecer. Así la bandeja refleja trabajo
+    real pendiente y no un historial de casos viejos.
+    """
+    try:
+        registro = almacen.leer_hoja(HOJA_RESPUESTAS, COLS_RESPUESTAS)
+    except Exception:
+        registro = []
+
+    # El ultimo estado registrado de cada pregunta es el que vale.
+    ultimo = {}
+    for f in registro:
+        ultimo[str(f.get("question_id"))] = f
+
+    sin_responder = {str(q.get("id")): q for q in pendientes(ml)}
+
+    salida = []
+    for qid, q in sin_responder.items():
+        f = ultimo.get(qid)
+        if f and str(f.get("estado", "")).strip() not in ESTADOS_ABIERTOS:
+            continue
+        salida.append({
+            "question_id": qid,
+            "item_id": q.get("item_id"),
+            "pregunta": (q.get("text") or "").strip(),
+            "comprador": (q.get("from") or {}).get("nickname", ""),
+            "fecha": (q.get("date_created") or "")[:16].replace("T", " "),
+            # Lo que la IA llegó a redactar, si redactó algo: sirve de borrador.
+            "borrador": str((f or {}).get("respuesta", "")),
+            "motivo": str((f or {}).get("motivo", "")),
+            "estado": str((f or {}).get("estado", "sin_procesar")),
+        })
+    salida.sort(key=lambda x: x["fecha"])
+    return salida
+
+
+def responder_a_mano(ml, question_id, texto, operador, item_id="",
+                     pregunta="", motivo_previo=""):
+    """
+    Publica una respuesta escrita por una persona y cierra el caso.
+
+    Deja el registro con `publicada_por_persona` para que el contador
+    distinga lo que resolvió la IA de lo que resolvió el equipo.
+    """
+    texto = (texto or "").strip()
+    if not texto:
+        return False, "La respuesta está vacía."
+    if not operador.strip():
+        return False, "Falta tu nombre."
+
+    ok, detalle = publicar(ml, question_id, texto)
+    if not ok:
+        return False, detalle
+
+    try:
+        registrar({
+            "fecha": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "question_id": question_id, "item_id": item_id,
+            "pregunta": str(pregunta)[:400], "respuesta": texto[:900],
+            "estado": "publicada_por_persona", "confianza": "",
+            "fuentes": "", "modelo": "",
+            "motivo": (f"Respondida a mano por {operador.strip()}."
+                       + (f" La IA no lo hizo porque: {motivo_previo[:200]}"
+                          if motivo_previo else "")),
+        })
+    except Exception as e:
+        return True, f"Publicada, pero no pude registrarla: {str(e)[:150]}"
+    return True, ""
+
+
 # Estados que NO bloquean un reintento: si algo falló por configuración o por
 # un error de red, la pregunta tiene que poder procesarse de nuevo. Solo una
 # decision real del modelo (publicada / derivada) cierra el caso.
@@ -712,7 +793,8 @@ def historial():
     return almacen.leer_hoja(HOJA_HISTORIAL, COLS_HISTORIAL)
 
 
-VACIAS = {"respondidas_ia": 0, "derivadas_a_persona": 0, "con_error": 0,
+VACIAS = {"respondidas_ia": 0, "resueltas_a_mano": 0,
+          "derivadas_a_persona": 0, "con_error": 0,
           "tasa_automatica": 0.0, "historial_total": 0,
           "historial_respondidas": 0, "historial_por_ia": 0,
           "historial_por_persona": 0, "error": ""}
@@ -740,11 +822,14 @@ def metricas(incluir_historial=False):
 
     estados = [str(f.get("estado", "")).strip() for f in reg]
     publicadas = estados.count("publicada")
-    revisar = estados.count("para_revisar")
+    a_mano = estados.count("publicada_por_persona")
+    # Las abiertas son las que siguen esperando a una persona.
+    revisar = sum(estados.count(e) for e in ESTADOS_ABIERTOS)
     procesadas = publicadas + revisar
 
     m.update({
         "respondidas_ia": publicadas,
+        "resueltas_a_mano": a_mano,
         "derivadas_a_persona": revisar,
         "con_error": estados.count("error_al_publicar") + estados.count("error_tecnico"),
         "tasa_automatica": (publicadas / procesadas) if procesadas else 0.0,
