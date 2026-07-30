@@ -20,16 +20,20 @@ import pandas as pd
 import streamlit as st
 
 import actualizador as act
+import alertas_stock
 import almacen
 import competencia
 import conciliacion
 import conversion
 import envios
+import full
 import salud
 import espejos
+import reclamos as rec
 import rentabilidad as rent
 import mayoristas
 import preguntas as preg
+import reporte
 import stock_control
 import tramos
 import tutorial_crafters
@@ -164,10 +168,10 @@ with enc_btn:
         st.rerun()
 
 seccion = st.segmented_control(
-    "Sección", ["Precios", "Mayoristas", "Stock ML", "Control de stock",
-                "Rentabilidad", "Competencia", "Oportunidades",
-                "Preguntas"],
-    default="Precios", label_visibility="collapsed")
+    "Sección", ["Reporte semanal", "Alertas", "Precios", "Mayoristas",
+                "Stock ML", "Control de stock", "Rentabilidad", "Competencia",
+                "Oportunidades", "Preguntas"],
+    default="Reporte semanal", label_visibility="collapsed")
 
 # En la nube el disco se borra en cada reinicio: si no hay Sheet configurada,
 # se perderia el refresh_token (habria que reautorizar a mano) y la auditoria.
@@ -301,7 +305,7 @@ def bloque_carga(operacion):
             "valor_nuevo": st.column_config.NumberColumn(
                 "Nuevo", format="%.0f"),
             "variacion": st.column_config.NumberColumn(
-                "Variación", format="%.1f%%"),
+                "Variación", format="percent"),
             "accion": "Acción",
             "motivo": "Motivo",
         })
@@ -365,7 +369,322 @@ def bloque_carga(operacion):
 
 # ===================================================================== secciones
 
-if seccion == "Precios":
+if seccion == "Reporte semanal":
+    st.markdown("#### Cómo vino la semana")
+    st.caption(
+        "Una pantalla para el lunes: qué pasó, contra qué se compara y qué hay "
+        "que resolver. El resto de las secciones hay que acordarse de abrirlas; "
+        "esto se lee en dos minutos.")
+
+    r1, r2, r3 = st.columns([1.6, 1.4, 1.4])
+    periodo = r1.selectbox(
+        "Período", ["Semana cerrada (lunes a domingo)", "Últimos 14 días",
+                    "Últimos 30 días"],
+        help="La semana cerrada se compara contra la anterior completa. "
+             "Comparar una semana a medias contra una entera siempre da que "
+             "las ventas se derrumbaron.")
+    dias_rep = {"Semana cerrada (lunes a domingo)": None,
+                "Últimos 14 días": 14, "Últimos 30 días": 30}[periodo]
+    con_rec = r2.checkbox("Incluir reclamos", value=True,
+                          help="Identificar el producto de cada reclamo cuesta "
+                               "una llamada por envío: suma unos segundos.")
+    r3.write("")
+    if r3.button("Generar reporte", use_container_width=True):
+        estado = st.empty()
+        with st.spinner("Armando el reporte..."):
+            st.session_state["reporte"] = reporte.generar(
+                ml, dias_rep, pubs=pubs, con_reclamos=con_rec,
+                callback=lambda m: estado.caption(str(m)))
+        estado.empty()
+
+    rep = st.session_state.get("reporte")
+    if rep is not None:
+        v = rep["ventas"]
+        st.caption(
+            f"**{v['desde']:%d/%m/%Y}** a **{v['hasta']:%d/%m/%Y}** · "
+            f"comparado contra {v['desde_previa']:%d/%m} a "
+            f"{v['hasta_previa']:%d/%m}")
+
+        def delta(campo):
+            x = v.get(f"var_{campo}")
+            return None if x is None else f"{x:+.1%}"
+
+        a1, a2, a3 = st.columns(3)
+        a1.metric("Facturación", pesos(v["bruto"]), delta("bruto"))
+        a2.metric("Neto post-comisión", pesos(v["neto"]), delta("neto"))
+        a3.metric("Comisiones ML", pesos(v["comisiones"]), delta("comisiones"),
+                  delta_color="inverse")
+
+        b1, b2, b3 = st.columns(3)
+        b1.metric("Órdenes", f"{v['ordenes']:,}".replace(",", "."),
+                  delta("ordenes"))
+        b2.metric("Unidades", f"{v['unidades']:,}".replace(",", "."),
+                  delta("unidades"))
+        b3.metric("Ticket promedio", pesos(v["ticket"]), delta("ticket"))
+        st.caption(f"La comisión se llevó el **{v['comision_pct']:.1%}** de la "
+                   "facturación del período.")
+
+        # ------------------------------------------------------ a resolver
+        st.divider()
+        st.markdown("##### Para resolver esta semana")
+
+        sr = rep["stock_resumen"]
+        urg = rep["stock_urgentes"]
+        if sr and (sr["sin_publicacion"] or sr["criticos"] or sr["sin_stock"]):
+            st.error(
+                f"**{sr['sin_publicacion'] + sr['sin_stock'] + sr['criticos']} "
+                f"productos con problema de stock** — "
+                f"{pesos(sr['plata_en_riesgo'])} de facturación semanal en "
+                f"riesgo. {sr['sin_publicacion']} vendieron y hoy no tienen "
+                f"ninguna publicación activa.", icon="📦")
+            st.dataframe(
+                urg[["sku", "titulo", "diagnostico", "stock", "dias_cobertura",
+                     "plata_semanal_en_riesgo"]].head(15),
+                use_container_width=True, hide_index=True,
+                column_config={
+                    "sku": "SKU", "titulo": "Título",
+                    "diagnostico": "Problema", "stock": "Stock",
+                    "dias_cobertura": st.column_config.NumberColumn(
+                        "Días", format="%.0f"),
+                    "plata_semanal_en_riesgo": st.column_config.NumberColumn(
+                        "Facturación/semana", format="%.0f")})
+        elif sr:
+            st.success("Ningún producto en riesgo de quedarse sin stock. 👌")
+
+        c1, c2 = st.columns(2)
+        if rep["preguntas_sin_responder"] is not None:
+            n = rep["preguntas_sin_responder"]
+            c1.metric("Preguntas sin responder", n)
+        rr = rep["reclamos_resumen"]
+        if rr:
+            c2.metric("Reclamos del período", rr["reclamos"],
+                      f"{rr['abiertos']} abiertos", delta_color="off")
+            rd = rep["reclamos"]
+            graves = (rd[rd["diagnostico"] == "tasa alta"]
+                      if len(rd) else pd.DataFrame())
+            if len(graves):
+                st.warning(
+                    f"**{len(graves)} productos con tasa de reclamo alta** "
+                    f"(la tasa de la cuenta es {rr['tasa_cuenta']:.2%}).",
+                    icon="⚠️")
+                st.dataframe(
+                    graves[["sku", "titulo", "reclamos", "unidades_vendidas",
+                            "tasa", "motivo_principal"]].head(10),
+                    use_container_width=True, hide_index=True,
+                    column_config={
+                        "sku": "SKU", "titulo": "Título",
+                        "reclamos": "Reclamos",
+                        "unidades_vendidas": "Unidades",
+                        "tasa": st.column_config.NumberColumn(
+                            "Tasa", format="percent"),
+                        "motivo_principal": "Motivo más frecuente"})
+
+        # ------------------------------------------------------ que se movio
+        st.divider()
+        st.markdown("##### Lo que más facturó")
+        top = rep["top"]
+        if len(top):
+            st.dataframe(
+                top, use_container_width=True, hide_index=True,
+                column_config={
+                    "sku": "SKU", "titulo": "Título", "unidades": "Unidades",
+                    "facturacion": st.column_config.NumberColumn(
+                        "Facturación", format="%.0f"),
+                    "var": st.column_config.NumberColumn(
+                        "vs período anterior", format="percent",
+                        help="Vacío = no vendió en el período anterior")})
+
+        caidas = rep["caidas"]
+        if len(caidas):
+            st.markdown("##### Vendían y este período no vendieron nada")
+            st.caption(
+                f"Productos con {reporte.MINIMO_CAIDA} o más unidades en el "
+                "período anterior y cero en este. Puede ser estacionalidad, "
+                "pero también una publicación pausada o sin stock.")
+            st.dataframe(
+                caidas, use_container_width=True, hide_index=True,
+                column_config={
+                    "sku": "SKU", "titulo": "Título",
+                    "unidades_previas": "Unidades antes",
+                    "facturacion_previa": st.column_config.NumberColumn(
+                        "Facturaba", format="%.0f")})
+
+        st.download_button(
+            "Descargar el detalle de stock",
+            rep["stock"].to_csv(index=False).encode("utf-8"),
+            f"reporte_stock_{datetime.now():%Y%m%d}.csv", "text/csv")
+
+elif seccion == "Alertas":
+    st.markdown("#### Lo que necesita atención")
+    al = st.radio("Vista", ["Stock crítico", "Reclamos"],
+                  horizontal=True, label_visibility="collapsed")
+
+    if al == "Stock crítico":
+        st.caption(
+            "La pregunta no es cuánto stock hay sino **cuántos días queda**. "
+            "40 unidades de algo que vende 1 por semana están bien; 40 de algo "
+            "que vende 10 por día se agotan el jueves.")
+        st.caption(
+            "Ordenado por **plata en riesgo**: lo que ese producto deja de "
+            "facturar por cada semana sin stock.")
+
+        s1, s2 = st.columns([1.2, 3])
+        # 90 dias por defecto igual que el resto de la app: el historico de
+        # ordenes se cachea por ventana, asi que elegir otra obliga a bajarlo
+        # entero de nuevo (son varios minutos).
+        dias_st = s1.selectbox("Velocidad medida sobre", [30, 60, 90], index=2,
+                               format_func=lambda d: f"{d} días", key="d_stk")
+        if s2.button("Revisar el stock", use_container_width=True):
+            estado = st.empty()
+            with st.spinner("Calculando cobertura..."):
+                st.session_state["alertas_stock"] = alertas_stock.analizar(
+                    ml, dias_st, pubs=pubs,
+                    callback=lambda m: estado.caption(str(m)))
+            estado.empty()
+
+        dfs = st.session_state.get("alertas_stock")
+        if dfs is not None and len(dfs):
+            res = alertas_stock.resumen(dfs)
+            k1, k2, k3, k4 = st.columns(4)
+            k1.metric("Sin publicación activa", res["sin_publicacion"])
+            k2.metric("Sin stock", res["sin_stock"])
+            k3.metric("Críticos", res["criticos"])
+            k4.metric("Bajos", res["bajos"])
+            st.metric("Facturación semanal en riesgo",
+                      pesos(res["plata_en_riesgo"]))
+
+            with st.expander("Cómo se calcula y qué significa cada estado"):
+                st.markdown(
+                    f"- **Sin publicación activa**: el SKU vendió en el "
+                    f"período pero hoy no tiene ninguna publicación activa. "
+                    f"MercadoLibre **pausa sola** la publicación al llegar a "
+                    f"cero, así que este es el caso típico del producto que se "
+                    f"agotó y nadie repuso.\n"
+                    f"- **Sin stock**: tiene publicación activa pero cero "
+                    f"unidades.\n"
+                    f"- **Crítico**: menos de {alertas_stock.DIAS_CRITICO} "
+                    f"días de cobertura ({alertas_stock.DIAS_CRITICO_FULL} si "
+                    f"está en Full, porque reponer allá tarda más).\n"
+                    f"- **Bajo**: menos de {alertas_stock.DIAS_BAJO} días "
+                    f"({alertas_stock.DIAS_BAJO_FULL} en Full).\n"
+                    f"- **Sobrestock**: más de "
+                    f"{alertas_stock.DIAS_SOBRESTOCK} días. No es urgente, "
+                    f"es plata dormida.\n"
+                    f"- **Pocas ventas / sin ventas**: menos de "
+                    f"{alertas_stock.MINIMO_UNIDADES} unidades en el período. "
+                    f"La velocidad no alcanza para proyectar nada.\n\n"
+                    "El stock se agrupa por `user_product_id`: las "
+                    "publicaciones espejo comparten unidades y sumarlas todas "
+                    "contaría lo mismo varias veces.")
+
+            estados = sorted(dfs["diagnostico"].unique())
+            por_defecto = [e for e in estados if e in alertas_stock.URGENTES
+                           or e == "bajo"]
+            filtro_st = st.multiselect("Filtrar por estado", estados,
+                                       default=por_defecto or estados)
+            vst = dfs[dfs["diagnostico"].isin(filtro_st)] if filtro_st else dfs
+
+            st.dataframe(
+                vst, use_container_width=True, height=420, hide_index=True,
+                column_config={
+                    "sku": "SKU", "titulo": "Título", "stock": "Stock",
+                    "stock_propio": "Propio", "stock_full": "Full",
+                    "unidades_periodo": "Vendidas",
+                    "por_dia": st.column_config.NumberColumn(
+                        "Por día", format="%.2f"),
+                    "dias_cobertura": st.column_config.NumberColumn(
+                        "Días de stock", format="%.0f"),
+                    "precio": st.column_config.NumberColumn(
+                        "Precio", format="%.0f"),
+                    "plata_semanal_en_riesgo": st.column_config.NumberColumn(
+                        "Facturación/semana", format="%.0f"),
+                    "publicaciones": "Pub.", "en_full": "En Full",
+                    "diagnostico": "Estado"})
+            st.download_button("Descargar el análisis",
+                               vst.to_csv(index=False).encode("utf-8"),
+                               f"stock_critico_{datetime.now():%Y%m%d}.csv",
+                               "text/csv")
+
+    else:
+        st.caption(
+            "Qué productos concentran los reclamos. Lo que importa no es el "
+            "total sino la **tasa**: un SKU que reclama el 8% de sus ventas "
+            "cuando la cuenta promedia 2,8% tiene un problema de producto, de "
+            "ficha o de embalaje.")
+
+        q1, q2 = st.columns([1.2, 3])
+        dias_rec = q1.selectbox("Período", [30, 60, 90], index=2,
+                                format_func=lambda d: f"{d} días", key="d_rec")
+        if q2.button("Analizar reclamos", use_container_width=True):
+            estado = st.empty()
+            with st.spinner("Trayendo reclamos e identificando productos..."):
+                st.session_state["reclamos"] = rec.analizar(
+                    ml, dias_rec, pubs=pubs,
+                    callback=lambda m: estado.caption(str(m)))
+            estado.empty()
+
+        guardado = st.session_state.get("reclamos")
+        if guardado is not None:
+            dfr, resr = guardado
+            n1, n2, n3, n4 = st.columns(4)
+            n1.metric("Reclamos", resr["reclamos"])
+            n2.metric("Abiertos hoy", resr["abiertos"])
+            n3.metric("Tasa de la cuenta", f"{resr['tasa_cuenta']:.2%}")
+            n4.metric("Sin producto identificado", resr["sin_producto"])
+
+            if resr["sin_producto"]:
+                st.caption(
+                    "Los reclamos que apuntan a un pago (no a un pedido ni a "
+                    "un envío) no se pueden asociar al producto: la API no "
+                    "expone ese camino. Quedan contados aparte.")
+
+            m1, m2 = st.columns(2)
+            with m1:
+                st.markdown("**Por tipo**")
+                st.dataframe(
+                    pd.DataFrame(resr["por_tipo"].most_common(),
+                                 columns=["Tipo", "Reclamos"]),
+                    use_container_width=True, hide_index=True, height=200)
+            with m2:
+                st.markdown("**Motivos más frecuentes**")
+                st.dataframe(
+                    pd.DataFrame(resr["por_motivo"].most_common(8),
+                                 columns=["Motivo", "Reclamos"]),
+                    use_container_width=True, hide_index=True, height=200)
+
+            if len(dfr):
+                graves = dfr[dfr["diagnostico"] == "tasa alta"]
+                if len(graves):
+                    st.warning(
+                        f"**{len(graves)} productos con tasa de reclamo por "
+                        f"encima del {rec.TASA_ALTA:.0%}** sobre "
+                        f"{rec.MINIMO_UNIDADES}+ ventas.", icon="⚠️")
+
+                solo_conf = st.checkbox(
+                    "Ver solo los que tienen ventas suficientes", value=True,
+                    help=f"Con menos de {rec.MINIMO_UNIDADES} unidades "
+                         "vendidas la tasa no significa nada: un reclamo "
+                         "sobre 3 ventas da 33%.")
+                vr = dfr[dfr["confiable"]] if solo_conf else dfr
+
+                st.dataframe(
+                    vr, use_container_width=True, height=420, hide_index=True,
+                    column_config={
+                        "sku": "SKU", "titulo": "Título",
+                        "reclamos": "Reclamos", "abiertos": "Abiertos",
+                        "unidades_vendidas": "Unidades",
+                        "tasa": st.column_config.NumberColumn(
+                            "Tasa", format="percent"),
+                        "tipo_principal": "Tipo",
+                        "motivo_principal": "Motivo más frecuente",
+                        "ultimo_reclamo": "Último",
+                        "diagnostico": "Diagnóstico", "confiable": None})
+                st.download_button("Descargar el análisis",
+                                   vr.to_csv(index=False).encode("utf-8"),
+                                   f"reclamos_{datetime.now():%Y%m%d}.csv",
+                                   "text/csv")
+
+elif seccion == "Precios":
     bloque_carga("precio")
 
 elif seccion == "Mayoristas":
@@ -828,7 +1147,7 @@ elif seccion == "Competencia":
                 "nuestro_precio": st.column_config.NumberColumn(
                     "Nuestro precio", format="%.0f"),
                 "diferencia": st.column_config.NumberColumn(
-                    "Diferencia", format="%.1f%%",
+                    "Diferencia", format="percent",
                     help="Cuánto estamos por encima del más barato"),
                 "posicion": "Posición",
                 "competidores": "Vendedores",
@@ -884,10 +1203,103 @@ elif seccion == "Oportunidades":
     st.markdown("#### Dónde hay plata sobre la mesa")
     op = st.radio("Vista", ["Visitas vs ventas", "Tramos de comisión",
                             "Precios espejo", "Factura de ML",
-                            "Envíos", "Salud del catálogo"],
+                            "Envíos", "Candidatos a Full",
+                            "Salud del catálogo"],
                   horizontal=True, label_visibility="collapsed")
 
-    if op == "Salud del catálogo":
+    if op == "Candidatos a Full":
+        st.caption(
+            "Por qué productos empezar si se agranda el uso de Full, ordenados "
+            "por el tamaño del premio: cuánta plata de envío quema cada uno "
+            "por mes.")
+        st.warning(
+            "**Esto no estima cuánto se ahorraría.** MercadoLibre no expone "
+            "ningún endpoint de recomendación de Full, y CRAFTERS tiene 20 SKU "
+            "en Full sobre 997: con esa muestra no se puede comparar contra "
+            "los del depósito propio sin inventar el número. Lo que sí está "
+            "medido es cuánto envío paga hoy cada producto.", icon="ℹ️")
+
+        f1, f2 = st.columns([1.2, 3])
+        dias_f = f1.selectbox("Período", [30, 60, 90], index=2,
+                              format_func=lambda d: f"{d} días", key="d_full")
+        if f2.button("Analizar candidatos", use_container_width=True):
+            estado = st.empty()
+            with st.spinner("Trayendo costos de envío..."):
+                st.session_state["full"] = full.analizar(
+                    ml, dias_f, pubs=pubs,
+                    callback=lambda m: estado.caption(str(m)))
+            estado.empty()
+
+        guardado_f = st.session_state.get("full")
+        if guardado_f is not None:
+            cand, foto = guardado_f
+            if not len(foto):
+                st.info("Sin datos suficientes de envío para comparar.")
+            else:
+                st.markdown("##### Dónde se paga el envío")
+                st.caption(
+                    "El dato que ordena todo: CRAFTERS paga envío casi solo "
+                    "arriba de $33.000. Debajo de esa franja la mediana de "
+                    "envío pagado por el vendedor es cero.")
+                st.dataframe(
+                    foto, use_container_width=True, hide_index=True,
+                    column_config={
+                        "franja": "Franja de precio",
+                        "sku_propios": "SKU propios",
+                        "sku_en_full": "SKU en Full",
+                        "envio_propio": st.column_config.NumberColumn(
+                            "Envío/u propio", format="%.0f"),
+                        "envio_full": st.column_config.NumberColumn(
+                            "Envío/u Full", format="%.0f"),
+                        "paga_envio": "Pagan envío",
+                        "plata_envio_mes": st.column_config.NumberColumn(
+                            "Plata en envío/mes", format="%.0f"),
+                        "comparable": st.column_config.CheckboxColumn(
+                            "¿Comparable?",
+                            help=f"Necesita {full.MINIMO_POR_FRANJA}+ SKU de "
+                                 "cada lado para poder comparar")})
+
+                if len(cand):
+                    st.metric("Plata de envío que juntan los candidatos",
+                              pesos(cand["plata_envio_mensual"].sum()) + "/mes")
+                    st.caption(
+                        f"Candidatos: no están en Full, vendieron "
+                        f"{full.MINIMO_UNIDADES}+ unidades en el período y "
+                        f"pagan envío. Mirá la columna **u/mes**: un producto "
+                        f"que quema mucho envío pero rota poco es mal "
+                        f"candidato, porque el almacenamiento de Full se come "
+                        f"la diferencia.")
+                    st.dataframe(
+                        cand[["sku", "titulo", "unidades_por_mes",
+                              "precio_prom", "envio_prom", "envio_sobre_precio",
+                              "plata_envio_mensual", "cobertura_envio"]],
+                        use_container_width=True, height=420, hide_index=True,
+                        column_config={
+                            "sku": "SKU", "titulo": "Título",
+                            "unidades_por_mes": st.column_config.NumberColumn(
+                                "u/mes", format="%.0f"),
+                            "precio_prom": st.column_config.NumberColumn(
+                                "Precio", format="%.0f"),
+                            "envio_prom": st.column_config.NumberColumn(
+                                "Envío/u", format="%.0f"),
+                            "envio_sobre_precio": st.column_config.NumberColumn(
+                                "Envío / precio", format="percent"),
+                            "plata_envio_mensual": st.column_config.NumberColumn(
+                                "Envío/mes", format="%.0f"),
+                            "cobertura_envio": st.column_config.NumberColumn(
+                                "Cobertura", format="percent",
+                                help="Qué proporción de las unidades tiene "
+                                     "dato real de envío")})
+                    st.download_button(
+                        "Descargar los candidatos",
+                        cand.to_csv(index=False).encode("utf-8"),
+                        f"candidatos_full_{datetime.now():%Y%m%d}.csv",
+                        "text/csv")
+                else:
+                    st.info("Ningún producto cumple las condiciones de "
+                            "candidato en este período.")
+
+    elif op == "Salud del catálogo":
         st.caption(
             "Qué hay que arreglar en los datos para que el resto de las "
             "herramientas funcione bien. Ordenado por lo que cada publicación "
@@ -991,17 +1403,17 @@ elif seccion == "Oportunidades":
                     "envio_prom": st.column_config.NumberColumn(
                         "Envío", format="%.0f"),
                     "envio_sobre_precio": st.column_config.NumberColumn(
-                        "Envío / precio", format="%.0f%%"),
+                        "Envío / precio", format="percent"),
                     "comision_prom": st.column_config.NumberColumn(
                         "Comisión", format="%.0f"),
                     "queda_antes_del_costo": st.column_config.NumberColumn(
                         "Queda", format="%.0f",
                         help="Antes de restar el costo de la mercadería"),
                     "margen_bruto": st.column_config.NumberColumn(
-                        "Margen bruto", format="%.0f%%"),
+                        "Margen bruto", format="percent"),
                     "unidades_vendidas": "Unidades",
                     "cobertura_envio": st.column_config.NumberColumn(
-                        "Cobertura", format="%.0f%%"),
+                        "Cobertura", format="percent"),
                     "plata_en_envio": st.column_config.NumberColumn(
                         "Plata en envío", format="%.0f"),
                     "diagnostico": "Diagnóstico",
@@ -1068,9 +1480,9 @@ elif seccion == "Oportunidades":
                     "otros_conceptos": st.column_config.NumberColumn(
                         "Otros conceptos", format="%.0f"),
                     "proporcion_otros": st.column_config.NumberColumn(
-                        "% otros", format="%.1f%%"),
+                        "% otros", format="percent"),
                     "desvio_vs_promedio": st.column_config.NumberColumn(
-                        "Desvío", format="%.1f%%"),
+                        "Desvío", format="percent"),
                     "impago": st.column_config.NumberColumn(
                         "Impago", format="%.0f"),
                     "ordenes": "Órdenes", "unidades": "Unidades",
@@ -1119,12 +1531,12 @@ elif seccion == "Oportunidades":
                     "precio_sugerido": st.column_config.NumberColumn(
                         "Sugerido", format="%.0f"),
                     "diferencia": st.column_config.NumberColumn(
-                        "Diferencia", format="%.1f%%"),
+                        "Diferencia", format="percent"),
                     "vendidas": "Vendidas",
                     "vendidas_referencia": "Vendidas (referencia)",
                     "publicaciones_del_grupo": "En el grupo",
                     "spread_del_grupo": st.column_config.NumberColumn(
-                        "Spread", format="%.1f%%"),
+                        "Spread", format="percent"),
                     "riesgo": "Qué pasa"})
 
             st.download_button(
@@ -1181,7 +1593,7 @@ elif seccion == "Oportunidades":
                     "precio_sugerido": st.column_config.NumberColumn(
                         "Precio sugerido", format="%.0f"),
                     "sube_precio": st.column_config.NumberColumn(
-                        "Sube", format="%.1f%%"),
+                        "Sube", format="percent"),
                     "gana_por_unidad": st.column_config.NumberColumn(
                         "Ganás por unidad", format="%.0f"),
                     "neto_actual": st.column_config.NumberColumn(
@@ -1259,7 +1671,7 @@ elif seccion == "Oportunidades":
                     "precio": st.column_config.NumberColumn("Precio", format="%.0f"),
                     "visitas": "Visitas", "unidades": "Vendidas",
                     "conversion": st.column_config.NumberColumn(
-                        "Conversión", format="%.2f%%"),
+                        "Conversión", format="percent"),
                     "importe": st.column_config.NumberColumn(
                         "Facturado", format="%.0f"),
                     "diagnostico": "Diagnóstico",
@@ -1717,7 +2129,7 @@ elif seccion == "Rentabilidad":
                 "envio_prom": st.column_config.NumberColumn("Envío", format="%.0f"),
                 "cargos_totales": st.column_config.NumberColumn("Cargos", format="%.0f"),
                 "margen": st.column_config.NumberColumn("Margen $", format="%.0f"),
-                "margen_pct": st.column_config.NumberColumn("Margen %", format="%.1f%%"),
+                "margen_pct": st.column_config.NumberColumn("Margen %", format="percent"),
                 "unidades_90d": "Unid. vendidas",
                 "base_cargos": "Base",
                 "estado": "Estado",

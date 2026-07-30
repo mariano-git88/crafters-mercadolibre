@@ -128,8 +128,15 @@ for item in ml.items_detalle(ids, atributos=["id", "title", "price",
 | `meli.py` | Cliente: OAuth, renovación automática, paginado, rate limit |
 | `autorizar.py` | Autorización inicial (una sola vez) |
 | `explorar.py` | Prueba endpoints contra la cuenta real y reporta qué anda |
+| `reporte.py` | Reporte semanal: período contra el anterior + qué resolver |
+| `alertas_stock.py` | Días de cobertura por SKU y plata semanal en riesgo |
+| `reclamos.py` | Reclamos por producto y tasa sobre unidades vendidas |
+| `full.py` | Candidatos a Full por plata de envío que queman |
 | `credentials.txt` | App ID + Secret + Redirect URI (**no se sube a git**) |
 | `tokens.json` | Tokens vivos (**no se sube a git**) |
+
+Cada uno corre también suelto desde la Terminal: `python reporte.py`,
+`python alertas_stock.py 60`, `python reclamos.py 90`, `python full.py`.
 
 ---
 
@@ -151,10 +158,34 @@ Cuenta: `CRAFTERSARG` — user_id `422682314` — site MLA — reputación 5_gre
 | Visitas del vendedor | `/users/{uid}/items_visits` | **fecha simple `YYYY-MM-DD`** |
 | Visitas por publicación | `/items/{id}/visits/time_window?last=30&unit=day` | |
 | Preguntas | `/questions/search?seller_id={uid}` | `status=UNANSWERED` |
+| Reclamos | `/post-purchase/v1/claims/search` | **exige al menos un filtro** y solo ordena con `sort=date_desc` |
+| Motivo de reclamo | `/post-purchase/v1/claims/reasons/{id}` | traduce `PNR3210` a texto |
 
 **Trampa de formatos de fecha:** conviven dos formatos y no son intercambiables.
 `/orders/search` quiere ISO completo (`2026-07-01T00:00:00.000-00:00`); los de
 visitas quieren `YYYY-MM-DD` pelado y tiran 400 con ISO.
+
+### Trampas de reclamos (validadas 30/07/2026)
+
+Este endpoint tiene tres formas de mentirte **sin dar error**, y las tres se
+verificaron contra la cuenta:
+
+- **El filtro de fecha se ignora.** `date_created.from` devuelve exactamente el
+  mismo total que sin él (18.117 reclamos históricos). La única forma de acotar
+  el período es traer ordenado y cortar por fecha en el cliente.
+- **Solo `sort=date_desc` ordena.** `date_created_desc`, `-date_created`,
+  `sort_by`/`sort_order` no dan error: se ignoran y devuelven del más viejo al
+  más nuevo. Con uno de esos se traen reclamos de 2019 creyendo que son de esta
+  semana.
+- **El reclamo no trae el producto.** Apunta a un `resource` que puede ser
+  `order` (directo), `shipment` (una llamada más a `/shipments/{id}` para sacar
+  el `order_id`) o `payment`, que **no tiene camino público al pedido** — el
+  filtro `payment_id` de `/orders/search` también se ignora y devuelve las
+  40.730 órdenes.
+
+`/post-purchase/v1/claims/reasons/{id}` devuelve el código **canónico**, que
+puede ser distinto del pedido (`PNR3210` → `PNR9502`). Es el mismo motivo
+renumerado, no un error.
 
 Lo que **no** anda (no bloquea nada):
 
@@ -164,6 +195,11 @@ Lo que **no** anda (no bloquea nada):
   de documentos cambió. Los montos por período igual salen de `monthly/periods`.
 - `/orders/{id}/discounts` da 404 cuando esa orden no tuvo descuentos: es
   respuesta normal, no una falla.
+- **No hay endpoint de recomendación de Full.** Se probaron siete rutas
+  plausibles (`/users/{uid}/stock/fulfillment`,
+  `/users/{uid}/items/fulfillment_recommendations`, `/fbm/recommendations`,
+  `/sites/MLA/inventory_recommendations` y variantes): todas 404 o 403. Por eso
+  `full.py` no estima ahorro, ordena por tamaño del premio.
 
 ## Las herramientas
 
@@ -171,7 +207,20 @@ Lo que **no** anda (no bloquea nada):
 streamlit run crafters_app.py
 ```
 
-Tres secciones: **Precios**, **Stock** y **Rentabilidad**.
+Diez secciones:
+
+| Sección | Qué hace | ¿Escribe en ML? |
+|---|---|---|
+| **Reporte semanal** | La pantalla del lunes: cómo vino la semana contra la anterior y qué hay que resolver | no |
+| **Alertas** | Stock por agotarse y reclamos por producto | no |
+| **Precios** | Cambio masivo de precios desde planilla | **sí** |
+| **Mayoristas** | Precios por cantidad según reglas | **sí** |
+| **Stock ML** | Cambio masivo de stock desde planilla | **sí** |
+| **Control de stock** | Registro propio de unidades, con historial | no (registro propio) |
+| **Rentabilidad** | Margen por SKU con cargos reales | no |
+| **Competencia** | Mejor precio por EAN | no |
+| **Oportunidades** | Siete análisis de plata sobre la mesa | no |
+| **Preguntas** | Respuestas a compradores con IA | **sí** (publica respuestas) |
 
 Precios y stock siguen siempre el mismo flujo, sin atajos:
 subir planilla → **simular** → revisar → confirmar → aplicar.
@@ -286,9 +335,20 @@ invalidar a la otra y habría que reautorizar. Con un solo operador no pasa.
 
 ## Qué sigue
 
-Prioridades definidas para las herramientas:
+Las tres prioridades originales (ventas y facturación, publicaciones y precios,
+visitas y conversión) están cubiertas por las diez secciones.
 
-1. **Ventas y facturación** — órdenes, unidades, facturación por período y por
-   publicación, comisiones de ML (`sale_fee`) y costos de envío.
-2. **Publicaciones y precios** — catálogo, precios, stock, pausadas, sin stock.
-3. **Visitas y conversión** — qué se ve mucho y no vende.
+Lo que queda pendiente:
+
+- **Que el reporte semanal llegue solo.** Hoy hay que abrir la app y apretar un
+  botón. El objetivo era que llegara sin que nadie se acuerde: un mail los lunes
+  a la mañana. La infraestructura ya existe — `reporte.py` corre solo desde la
+  Terminal y hay dos GitHub Actions andando (`sincronizar_stock.yml` y
+  `monitor_competencia.yml`) que se pueden copiar.
+- **Una cuenta fina de Full.** `full.py` ordena por tamaño del premio pero no
+  estima ahorro, porque con 20 SKU en Full no hay muestra. Si CRAFTERS manda más
+  productos, el mismo módulo va a poder comparar: la columna `comparable` de la
+  tabla por franja avisa cuándo se llega a los 15 SKU de cada lado.
+- **Los ~585 reclamos más viejos** no son accesibles por API (el listado de
+  preguntas y reclamos topa en los más recientes). Solo se pueden sacar
+  exportando desde el panel de ML.

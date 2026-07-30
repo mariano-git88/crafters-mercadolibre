@@ -20,25 +20,27 @@ def render() -> None:
         """
 ### ¿Qué hace esta app?
 
-Ocho secciones, cada una para una cosa:
+Diez secciones, cada una para una cosa:
 
 | Sección | Para qué sirve |
 |---|---|
+| **Reporte semanal** | Cómo vino la semana y qué hay que resolver. Es la pantalla del lunes |
+| **Alertas** | Lo que necesita atención: stock por agotarse y reclamos por producto |
 | **Precios** | Cambiar precios de muchas publicaciones de una, desde una planilla |
 | **Mayoristas** | Cargar descuentos por cantidad con reglas por familia de producto |
 | **Stock ML** | Lo mismo pero con las unidades publicadas en MercadoLibre |
 | **Control de stock** | Llevar tu propia cuenta de unidades, con historial de movimientos |
 | **Rentabilidad** | Ver cuánto ganás realmente con cada producto, después de todo lo que se lleva MercadoLibre |
 | **Competencia** | Quién vende más barato cada producto y en qué posición estás |
-| **Oportunidades** | Seis análisis para encontrar dónde estás dejando plata |
+| **Oportunidades** | Siete análisis para encontrar dónde estás dejando plata |
 | **Preguntas** | Responder las consultas de los compradores, con ayuda de IA |
 
 **Precios** y **Stock ML** modifican la cuenta de verdad. Por eso nunca aplican
 nada sin mostrarte antes, en pantalla, exactamente qué va a pasar.
 
 **Control de stock** no toca nada en MercadoLibre: es un registro tuyo,
-aparte. **Rentabilidad**, **Competencia** y **Oportunidades** son solo de
-consulta: no modifican nada.
+aparte. **Reporte semanal**, **Alertas**, **Rentabilidad**, **Competencia** y
+**Oportunidades** son solo de consulta: no modifican nada.
 
 **Preguntas** sí publica en MercadoLibre — las respuestas quedan visibles en
 la publicación.
@@ -163,6 +165,68 @@ cuál de todas aplicarle el cambio:
     st.divider()
     st.markdown(
         """
+### Sección Reporte semanal
+
+Es la pantalla que abre la app, y está pensada para el lunes a la mañana: se
+lee en dos minutos y dice si la semana estuvo bien o mal y qué hay que hacer.
+
+Tiene tres bloques, en ese orden a propósito:
+
+1. **Cómo vino la semana**, siempre contra la anterior. Un número solo no dice
+   nada: $14 millones puede ser una buena o una mala semana.
+2. **Para resolver esta semana**: productos por quedarse sin stock, preguntas
+   sin responder y reclamos abiertos, ordenados por plata.
+3. **Qué se movió**: lo que más facturó y lo que **vendía y este período no
+   vendió nada**.
+
+**Sobre el período.** Por defecto compara la última semana **cerrada** (lunes a
+domingo) contra la anterior. Es a propósito: si comparás una semana a medias
+contra una entera, siempre parece que las ventas se derrumbaron. También podés
+pedir los últimos 14 o 30 días corridos.
+
+Tarda unos 10 segundos. Si destildás *Incluir reclamos* tarda menos, porque
+identificar el producto de cada reclamo cuesta una llamada por envío.
+"""
+    )
+
+    st.divider()
+    st.markdown(
+        """
+### Sección Alertas
+
+Dos vistas de lo que necesita atención. Ninguna modifica nada.
+
+**Stock crítico.** La pregunta no es cuánto stock hay sino **cuántos días
+queda**: 40 unidades de algo que vende 1 por semana están bien, 40 de algo que
+vende 10 por día se agotan el jueves. Está ordenado por **plata en riesgo**, o
+sea lo que ese producto deja de facturar por cada semana sin stock.
+
+El estado más importante es **"sin publicación activa"**: MercadoLibre **pausa
+sola** la publicación cuando el stock llega a cero, así que el producto que se
+agotó desaparece de las activas y deja de aparecer en cualquier listado. Es el
+caso del producto que se agotó y nadie repuso.
+
+> El stock se agrupa por producto de MercadoLibre, no por publicación. Las
+> publicaciones espejo comparten las mismas unidades, así que sumarlas a todas
+> contaría lo mismo varias veces.
+
+**Reclamos.** Qué productos concentran los reclamos. Lo que importa **no es el
+total sino la tasa**: un producto que reclama el 8% de lo que vende, cuando la
+cuenta promedia menos del 3%, tiene un problema de producto, de ficha o de
+embalaje.
+
+Por eso los productos con pocas ventas quedan filtrados por defecto: un reclamo
+sobre 3 ventas da 33% y no significa nada.
+
+> Algunos reclamos no se pueden asociar a un producto. Son los que apuntan a un
+> pago en vez de a un pedido o a un envío: MercadoLibre no expone ese camino.
+> Aparecen contados aparte como *sin producto identificado*.
+"""
+    )
+
+    st.divider()
+    st.markdown(
+        """
 ### Sección Rentabilidad
 
 Subís una planilla con el **costo** de cada producto:
@@ -275,7 +339,7 @@ compartan el catálogo.
         """
 ### Sección Oportunidades
 
-Seis análisis para encontrar dónde estás dejando plata. **Ninguno modifica
+Siete análisis para encontrar dónde estás dejando plata. **Ninguno modifica
 nada**: son todos de consulta.
 
 | Vista | Para qué sirve |
@@ -285,12 +349,25 @@ nada**: son todos de consulta.
 | **Precios espejo** | Publicaciones duplicadas del mismo producto con precios distintos |
 | **Factura de ML** | Verifica que lo que te facturan cierre con lo que deberían cobrarte |
 | **Envíos** | Productos donde el costo de envío se come el margen |
+| **Candidatos a Full** | Por qué productos empezar si se agranda el uso de Full |
 | **Salud del catálogo** | Qué publicaciones tienen datos mal cargados |
 
 **Sobre los tramos de comisión:** MercadoLibre cobra un porcentaje **más un
 cargo fijo por unidad**, y ese cargo salta en escalones — arriba de $33.000
 desaparece. Por eso hay productos donde subir el precio un 1% deja bastante
 más plata. Empezá por los que **más ganan subiendo menos**.
+
+**Sobre los candidatos a Full:** esto **no te dice cuánto ahorrarías**, y es a
+propósito. MercadoLibre no publica esa cuenta, y CRAFTERS tiene 20 productos en
+Full sobre 997: son muy pocos para comparar contra los del depósito propio sin
+inventar el número. Lo que sí está medido es **cuánta plata de envío quema cada
+producto por mes**, que es lo que Full ataca.
+
+Un dato para tener presente: CRAFTERS **paga envío casi solo arriba de
+$33.000**. Debajo de esa franja el envío lo paga el comprador o lo cubre ML, así
+que ahí Full no cambia mucho. Y antes de decidir, mirá la columna **u/mes**: un
+producto que quema mucho envío pero rota poco es mal candidato, porque el
+almacenamiento de Full se come la diferencia.
 
 **Visitas vs ventas tarda unos 10 minutos**: MercadoLibre solo deja consultar
 las visitas de a una publicación por vez.

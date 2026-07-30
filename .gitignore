@@ -44,3 +44,9 @@ faq.csv
 conciliacion.csv
 envios.csv
 salud.csv
+
+# Salidas y cache de las alertas y el reporte semanal
+alertas_stock.csv
+reclamos.csv
+candidatos_full.csv
+reclamos_cache.json
