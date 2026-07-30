@@ -211,6 +211,12 @@ def pesos(v):
         return "—"
 
 
+def cumplen(n):
+    """'1 publicación cumple' / '3 publicaciones cumplen'."""
+    return (f"**1 publicación cumple el criterio.**" if n == 1
+            else f"**{n} publicaciones cumplen el criterio.**")
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def cargos_cacheados(_ml, dias=90):
     """
@@ -841,6 +847,146 @@ elif seccion == "Ganar la venta":
                 f"{buybox.VIGENCIA_HORAS} horas. Para forzar la relectura, "
                 "volvé a apretar el botón después de ese plazo.")
 
+            # ------------------------------------------- bajar precios solo
+            st.divider()
+            st.markdown("##### Bajar precios y seguir ganando plata")
+            st.caption(
+                "Con la planilla de costos, la herramienta calcula qué te "
+                "quedaría vendiendo al precio del Buy Box y te deja aplicar "
+                "la baja en lote, solo en las publicaciones donde el margen "
+                "aguanta.")
+
+            arch_bb = st.file_uploader(
+                "Planilla de costos (.xlsx o .csv) — la misma de Rentabilidad",
+                type=["xlsx", "xls", "csv"], key="up_bb")
+
+            i1, i2 = st.columns([1.2, 3])
+            iva_bb = i1.selectbox(
+                "IVA a descontar", [0.0, 0.21, 0.105],
+                format_func=lambda x: f"{x:.1%}" if x else "Sin descontar",
+                key="iva_bb",
+                help="Usalo si tus costos están sin IVA y los precios de ML "
+                     "lo incluyen.")
+
+            if arch_bb and i2.button("Calcular márgenes",
+                                     use_container_width=True):
+                try:
+                    costos_bb = rent.leer_costos(arch_bb)
+                except Exception as e:
+                    st.error(f"No pude leer la planilla: {e}")
+                    st.stop()
+                with st.spinner("Cruzando con los cargos reales..."):
+                    st.session_state["buybox_costos"] = buybox.con_costos(
+                        dbb, costos_bb, cargos_cacheados(ml), iva=iva_bb)
+
+            dcb = st.session_state.get("buybox_costos")
+            if dcb is not None and len(dcb):
+                rc = buybox.resumen_costos(dcb)
+                w1, w2, w3, w4 = st.columns(4)
+                w1.metric("Podés ganar y seguir ganando", rc["ganables"])
+                w2.metric("Margen flaco", rc["flacas"])
+                w3.metric("Ganar daría pérdida", rc["perdida"])
+                w4.metric("Sin costo cargado", rc["sin_costo"])
+
+                if rc["cruzan_escalon"]:
+                    st.warning(
+                        f"**{rc['cruzan_escalon']} publicaciones cruzarían un "
+                        "escalón de cargo fijo al bajar.** MercadoLibre cobra "
+                        "un porcentaje más un cargo fijo por unidad, y ese "
+                        "cargo salta en escalones: el más grande está en "
+                        "$33.000, donde pasa de cero a $3.005. Bajar de "
+                        "$34.000 a $32.000 cuesta mucho más que los $2.000 de "
+                        "diferencia. El margen ya lo tiene en cuenta y por "
+                        "defecto quedan excluidas.", icon="🪜")
+
+                st.markdown("###### Criterio para bajar")
+                k1, k2, k3 = st.columns(3)
+                margen_min = k1.slider("Margen mínimo al precio nuevo",
+                                       0.0, 0.50, 0.10, 0.01,
+                                       format="%.0f%%", key="mg_bb")
+                baja_max = k2.slider(
+                    "Baja máxima aceptada", 0.01,
+                    float(buybox.TECHO_DE_BAJA), 0.15, 0.01,
+                    format="%.0f%%", key="bj_bb",
+                    help=f"Tope duro del sistema: {buybox.TECHO_DE_BAJA:.0%}. "
+                         "No se puede bajar más aunque el criterio lo permita.")
+                unid_min = k3.number_input("Unidades mínimas en el período",
+                                           min_value=0, value=5, step=1,
+                                           key="un_bb")
+                cruzar = st.checkbox(
+                    "Permitir las que cruzan escalón de cargo fijo",
+                    value=False, key="cr_bb")
+
+                sel_bb = buybox.seleccionar(
+                    dcb, margen_minimo=margen_min, baja_maxima=baja_max,
+                    unidades_minimas=unid_min,
+                    permitir_cruzar_escalon=cruzar)
+
+                st.session_state["buybox_sel"] = sel_bb
+                st.markdown(cumplen(len(sel_bb)))
+
+                if len(sel_bb):
+                    st.dataframe(
+                        sel_bb[["item_id", "sku", "titulo", "precio_actual",
+                                "precio_para_ganar", "bajar_pct", "margen_hoy",
+                                "margen_al_ganar", "margen_al_ganar_pct",
+                                "unidades"]],
+                        use_container_width=True, height=320, hide_index=True,
+                        column_config={
+                            "item_id": "Publicación", "sku": "SKU",
+                            "titulo": "Título",
+                            "precio_actual": st.column_config.NumberColumn(
+                                "Precio hoy", format="%.0f"),
+                            "precio_para_ganar": st.column_config.NumberColumn(
+                                "Precio nuevo", format="%.0f"),
+                            "bajar_pct": st.column_config.NumberColumn(
+                                "Baja", format="percent"),
+                            "margen_hoy": st.column_config.NumberColumn(
+                                "Margen hoy", format="%.0f"),
+                            "margen_al_ganar": st.column_config.NumberColumn(
+                                "Margen nuevo", format="%.0f"),
+                            "margen_al_ganar_pct": st.column_config.NumberColumn(
+                                "Margen %", format="percent"),
+                            "unidades": "Unidades"})
+
+                    st.divider()
+                    st.error(
+                        "**Esto cambia los precios en MercadoLibre de verdad.** "
+                        "Cada cambio queda en la auditoría con el precio "
+                        "anterior, así que se puede revertir a mano.",
+                        icon="⚠️")
+                    op_bb = st.text_input("Tu nombre (queda en el registro)",
+                                          key="op_bb")
+                    conf_bb = st.checkbox(
+                        f"Confirmo que quiero bajar el precio de "
+                        f"{len(sel_bb)} publicaciones", key="conf_bb")
+                    if st.button("Aplicar las bajas en MercadoLibre",
+                                 key="go_bb",
+                                 disabled=not (conf_bb and op_bb.strip())):
+                        barra = st.progress(0.0, text="Aplicando...")
+                        res_bb = buybox.aplicar(
+                            ml, sel_bb, operador=op_bb.strip(),
+                            callback=lambda i, t, iid: barra.progress(
+                                i / t, text=f"Aplicando {i} de {t}: {iid}"))
+                        barra.empty()
+                        ok = int((res_bb["resultado"] == "OK").sum())
+                        if ok == len(res_bb):
+                            st.success(f"{ok} precios actualizados.")
+                        else:
+                            st.error(f"{ok} aplicados, {len(res_bb) - ok} "
+                                     "con error.")
+                        st.dataframe(res_bb, use_container_width=True,
+                                     hide_index=True)
+                        # El cache quedo viejo: los precios cambiaron.
+                        st.session_state.pop("buybox", None)
+                        st.session_state.pop("buybox_costos", None)
+                        st.caption("Volvé a correr el análisis para ver el "
+                                   "estado nuevo del Buy Box.")
+            elif dcb is not None:
+                st.info("Ninguna publicación quedó con margen calculable. "
+                        "Revisá que los SKU de la planilla coincidan con los "
+                        "de MercadoLibre.")
+
     else:
         st.caption(
             "MercadoLibre le ofrece a cada publicación un menú de campañas. "
@@ -938,10 +1084,97 @@ elif seccion == "Ganar la venta":
                                    vpr.to_csv(index=False).encode("utf-8"),
                                    f"promociones_{datetime.now():%Y%m%d}.csv",
                                    "text/csv")
+                # ------------------------------------------ alta automatica
+                st.divider()
+                st.markdown("##### Alta automática por criterio")
                 st.caption(
-                    "Las promociones se toman desde el panel de MercadoLibre. "
-                    "Esta sección te dice cuáles conviene tomar y cuáles no; "
-                    "no las activa por vos.")
+                    "Definís una regla una vez y la herramienta selecciona "
+                    "sola qué publicaciones sumar. El alta se aplica en lote "
+                    "después de que la revises.")
+
+                r1, r2, r3 = st.columns(3)
+                ap_max = r1.slider("CRAFTERS pone como máximo",
+                                   0.0, 0.30, 0.05, 0.01, format="%.0f%%",
+                                   key="ap_max")
+                ml_min = r2.slider("MercadoLibre pone al menos",
+                                   0.0, 0.30, 0.0, 0.01, format="%.0f%%",
+                                   key="ml_min")
+                un_min_pr = r3.number_input("Unidades mínimas en el período",
+                                            min_value=0, value=1, step=1,
+                                            key="un_pr")
+                ml_super = st.checkbox(
+                    "Exigir que MercadoLibre ponga más que CRAFTERS",
+                    value=True, key="ml_sup")
+
+                sel_pr = promociones.seleccionar(
+                    dpr, aporte_crafters_max=ap_max,
+                    ml_debe_superar=ml_super, aporte_ml_min=ml_min,
+                    unidades_minimas=un_min_pr)
+
+                st.markdown(cumplen(len(sel_pr)))
+                st.caption(
+                    "Solo entran ofertas **disponibles y sin tomar**. Si una "
+                    "publicación califica para varias promociones se toma la "
+                    "que deja más plata por unidad: sumarla a todas sería "
+                    "pisar una con otra.")
+
+                if len(sel_pr):
+                    st.dataframe(
+                        sel_pr[["item_id", "sku", "titulo", "promocion",
+                                "nombre", "precio_actual", "precio_promo",
+                                "aporte_ml", "aporte_vendedor",
+                                "queda_por_unidad", "unidades"]],
+                        use_container_width=True, height=300, hide_index=True,
+                        column_config={
+                            "item_id": "Publicación", "sku": "SKU",
+                            "titulo": "Título", "promocion": "Promoción",
+                            "nombre": "Campaña",
+                            "precio_actual": st.column_config.NumberColumn(
+                                "Precio hoy", format="%.0f"),
+                            "precio_promo": st.column_config.NumberColumn(
+                                "Precio con promo", format="%.0f"),
+                            "aporte_ml": st.column_config.NumberColumn(
+                                "Pone ML", format="percent"),
+                            "aporte_vendedor": st.column_config.NumberColumn(
+                                "Ponés vos", format="percent"),
+                            "queda_por_unidad": st.column_config.NumberColumn(
+                                "Te queda", format="%.0f"),
+                            "unidades": "Unidades"})
+
+                    st.divider()
+                    st.error(
+                        "**Esto suma las publicaciones a la promoción en "
+                        "MercadoLibre de verdad**, o sea que cambia el precio "
+                        "que ve el comprador. Queda registrado en la "
+                        "auditoría.", icon="⚠️")
+                    op_pr = st.text_input("Tu nombre (queda en el registro)",
+                                          key="op_pr")
+                    conf_pr = st.checkbox(
+                        f"Confirmo que quiero sumar {len(sel_pr)} "
+                        "publicaciones a su promoción", key="conf_pr")
+                    if st.button("Sumar a las promociones", key="go_pr",
+                                 disabled=not (conf_pr and op_pr.strip())):
+                        barra = st.progress(0.0, text="Dando de alta...")
+                        res_pr = promociones.aplicar(
+                            ml, sel_pr, operador=op_pr.strip(),
+                            callback=lambda i, t, iid: barra.progress(
+                                i / t, text=f"Alta {i} de {t}: {iid}"))
+                        barra.empty()
+                        ok = int((res_pr["resultado"] == "OK").sum())
+                        if ok == len(res_pr):
+                            st.success(f"{ok} publicaciones sumadas.")
+                        else:
+                            st.error(f"{ok} sumadas, {len(res_pr) - ok} "
+                                     "con error.")
+                        st.dataframe(res_pr, use_container_width=True,
+                                     hide_index=True)
+                        st.session_state.pop("promos", None)
+                        st.caption("Volvé a buscar promociones para ver el "
+                                   "estado nuevo.")
+
+                st.caption(
+                    "También podés tomarlas a mano desde el panel de "
+                    "MercadoLibre; esta sección no reemplaza ese camino.")
             else:
                 st.info("Ninguna publicación del alcance elegido tiene "
                         "ofertas disponibles.")

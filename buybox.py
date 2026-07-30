@@ -241,6 +241,121 @@ def analizar(ml, pubs=None, tope=None, cargos=None, unidades=None,
     return df
 
 
+# ------------------------------------------------------------------ margen
+
+def con_costos(df, costos_df, cargos_df, iva=0.0, margen_minimo=0.0):
+    """
+    Agrega a cada fila el margen que quedaria vendiendo al precio para ganar.
+
+    Responde la pregunta concreta: **en que publicaciones puedo bajar hasta el
+    precio del Buy Box y seguir ganando plata.**
+
+    Dos precauciones que cambian el resultado:
+
+    1. La comision NO se estima con una regla de tres sobre la comision
+       actual. MercadoLibre cobra un porcentaje **mas un cargo fijo por
+       unidad**, y ese cargo salta en escalones (ver `tramos.py`). El
+       porcentaje real de cada SKU se despeja de lo que ML cobro de verdad
+       — asi queda bien tanto para Clasica como para Premium — y despues se
+       aplica al precio nuevo con el cargo fijo **del tramo del precio
+       nuevo**.
+
+    2. Por eso mismo se marca `cruza_escalon`: bajar el precio puede meterte
+       en un tramo con cargo fijo mas caro. El salto grande esta en $33.000,
+       donde el cargo fijo pasa de cero a $3.005. Bajar de $34.000 a $32.000
+       cuesta bastante mas que los $2.000 de diferencia.
+    """
+    from tramos import cargo_fijo
+
+    if not len(df):
+        return df
+
+    costos = {}
+    if costos_df is not None and len(costos_df):
+        costos = dict(zip(costos_df["sku"].str.upper(), costos_df["costo"]))
+
+    # Porcentaje real de comision por SKU, despejado de lo que ML cobro.
+    pct, envio = {}, {}
+    if cargos_df is not None and len(cargos_df):
+        for _, f in cargos_df.iterrows():
+            p = f["precio_prom"] or 0
+            if p > 0:
+                variable = (f["comision_prom"] or 0) - cargo_fijo(p)
+                pct[f["sku"]] = max(variable / p, 0.0)
+            envio[f["sku"]] = f["envio_prom"] or 0.0
+
+    def cargos_a(precio, sku):
+        if precio is None or sku not in pct:
+            return None
+        return precio * pct[sku] + cargo_fijo(precio)
+
+    def margen_a(precio, sku):
+        if precio is None or sku not in costos or sku not in pct:
+            return None
+        com = cargos_a(precio, sku)
+        return precio / (1 + iva) - com - envio.get(sku, 0.0) - costos[sku]
+
+    out = df.copy()
+    out["costo"] = out["sku"].map(lambda s: costos.get(s))
+    out["comision_al_precio_para_ganar"] = [
+        cargos_a(r["precio_para_ganar"], r["sku"]) for _, r in out.iterrows()]
+    out["margen_hoy"] = [margen_a(r["precio_actual"], r["sku"])
+                         for _, r in out.iterrows()]
+    out["margen_al_ganar"] = [margen_a(r["precio_para_ganar"], r["sku"])
+                              for _, r in out.iterrows()]
+    out["margen_al_ganar_pct"] = [
+        (m / p) if (m is not None and p) else None
+        for m, p in zip(out["margen_al_ganar"], out["precio_para_ganar"])]
+    out["cruza_escalon"] = [
+        (cargo_fijo(a) != cargo_fijo(b))
+        if (a is not None and b is not None) else False
+        for a, b in zip(out["precio_actual"], out["precio_para_ganar"])]
+
+    def veredicto(f):
+        if f["diagnostico"] in ("ganando", "compartiendo", "no compite",
+                                "sin dato"):
+            return f["diagnostico"]
+        if f["costo"] is None or pd.isna(f["costo"]):
+            return "sin costo cargado"
+        if f["margen_al_ganar"] is None or pd.isna(f["margen_al_ganar"]):
+            return "sin datos de cargos"
+        if f["margen_al_ganar_pct"] is not None and \
+                f["margen_al_ganar_pct"] >= margen_minimo and \
+                f["margen_al_ganar"] > 0:
+            return "podés ganar y seguir ganando plata"
+        if f["margen_al_ganar"] > 0:
+            return "ganás pero con margen flaco"
+        return "ganar el Buy Box da pérdida"
+
+    out["veredicto"] = out.apply(veredicto, axis=1)
+
+    orden = {"podés ganar y seguir ganando plata": 0,
+             "ganás pero con margen flaco": 1,
+             "ganar el Buy Box da pérdida": 2, "sin costo cargado": 3,
+             "sin datos de cargos": 4, "compartiendo": 5, "ganando": 6,
+             "no compite": 7, "sin dato": 8}
+    out["_o"] = out["veredicto"].map(orden)
+    return out.sort_values(["_o", "unidades", "margen_al_ganar"],
+                           ascending=[True, False, False]).drop(columns=["_o"])
+
+
+def resumen_costos(df):
+    """Resumen de la vista con costos."""
+    if not len(df) or "veredicto" not in df:
+        return {}
+    ganables = df[df["veredicto"] == "podés ganar y seguir ganando plata"]
+    return {
+        "ganables": len(ganables),
+        "unidades_ganables": int(ganables["unidades"].sum()),
+        "margen_promedio": float(ganables["margen_al_ganar"].mean())
+        if len(ganables) else 0.0,
+        "flacas": int((df["veredicto"] == "ganás pero con margen flaco").sum()),
+        "perdida": int((df["veredicto"] == "ganar el Buy Box da pérdida").sum()),
+        "sin_costo": int((df["veredicto"] == "sin costo cargado").sum()),
+        "cruzan_escalon": int(df["cruza_escalon"].sum()),
+    }
+
+
 def resumen(df):
     if not len(df):
         return {}
@@ -260,6 +375,88 @@ def resumen(df):
             perdiendo["penalizacion_palancas"].median())
         if perdiendo["penalizacion_palancas"].notna().any() else None,
     }
+
+
+# --------------------------------------------------------- bajar precios
+
+# Nunca se baja mas que esto de una sola vez, aunque el criterio lo permita.
+# Es la misma idea que `UMBRAL_ALERTA_PRECIO` en actualizador.py: atrapar el
+# caso donde un dato raro de la API pide una baja absurda.
+TECHO_DE_BAJA = 0.35
+
+
+def seleccionar(df, margen_minimo=0.10, baja_maxima=0.15, unidades_minimas=1,
+                permitir_cruzar_escalon=False):
+    """
+    Aplica el criterio y devuelve **solo** las publicaciones donde bajar al
+    precio para ganar sigue dejando plata.
+
+    El criterio es el que define el operador, pero hay tres candados que no se
+    pueden abrir desde afuera:
+
+      - nunca se baja mas de `TECHO_DE_BAJA`, pase lo que pase;
+      - el margen al precio nuevo tiene que ser positivo **y** llegar al
+        minimo pedido;
+      - se saltean las que no tienen costo cargado. Sin costo no se sabe si
+        se gana o se pierde, y adivinar eso con plata real no corresponde.
+    """
+    if not len(df) or "veredicto" not in df:
+        return df.iloc[0:0] if len(df) else df
+
+    sel = df[
+        (df["veredicto"] == "podés ganar y seguir ganando plata")
+        & (df["margen_al_ganar_pct"] >= margen_minimo)
+        & (df["bajar_pct"] > 0)
+        & (df["bajar_pct"] <= min(baja_maxima, TECHO_DE_BAJA))
+        & (df["unidades"] >= unidades_minimas)
+    ].copy()
+
+    if not permitir_cruzar_escalon:
+        # Bajar de tramo puede sumar un cargo fijo que no estaba. El margen ya
+        # lo contempla, pero por defecto ni se ofrecen: es plata que se
+        # regala por cruzar un escalon.
+        sel = sel[~sel["cruza_escalon"]]
+
+    return sel.sort_values("unidades", ascending=False)
+
+
+def aplicar(ml, seleccion, operador="", callback=None):
+    """
+    Baja el precio de las publicaciones elegidas al precio para ganar.
+
+    **Escribe en la cuenta de verdad.** Cada cambio queda en la auditoria con
+    el precio anterior, asi que se puede revertir a mano.
+
+    Se toca la publicacion puntual por `item_id`, sin pasar por el resolver de
+    SKU que usan Precios y Stock. Es a proposito: el Buy Box se gana o se
+    pierde **por publicacion**, no por SKU. Dos publicaciones del mismo SKU
+    compiten en paginas de catalogo distintas y pueden necesitar precios
+    distintos.
+    """
+    filas = []
+    total = len(seleccion)
+    for n, (_, f) in enumerate(seleccion.iterrows(), start=1):
+        nuevo = round(float(f["precio_para_ganar"]), 2)
+        ok, detalle = ml.actualizar_publicacion(
+            f["item_id"], {"price": nuevo},
+            valores_previos={"price": f["precio_actual"]},
+            operador=operador,
+            nota=f"Buy Box: bajar para ganar (margen "
+                 f"{f['margen_al_ganar_pct']:.1%})")
+        filas.append({
+            "item_id": f["item_id"],
+            "sku": f["sku"],
+            "titulo": f["titulo"],
+            "precio_anterior": f["precio_actual"],
+            "precio_nuevo": nuevo,
+            "margen_al_ganar": f["margen_al_ganar"],
+            "resultado": "OK" if ok else "ERROR",
+            "detalle": "" if ok else str(detalle)[:200],
+        })
+        if callback:
+            callback(n, total, f["item_id"])
+
+    return pd.DataFrame(filas)
 
 
 def main():

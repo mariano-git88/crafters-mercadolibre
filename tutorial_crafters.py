@@ -258,6 +258,23 @@ La columna *Te quedaría* dice qué te deja por unidad vender al precio para
 ganar, **antes del costo de la mercadería**. Sirve para descartar los casos
 donde ganar el Buy Box directamente da negativo.
 
+**Bajar precios en lote.** Si subís la planilla de costos (la misma de
+Rentabilidad), la herramienta calcula el margen real al precio del Buy Box y te
+deja aplicar la baja **solo donde el margen aguanta**. Definís el criterio una
+vez —margen mínimo, baja máxima, unidades mínimas— y se selecciona sola.
+
+> Esto **cambia precios de verdad**. Hay tres candados que no se pueden abrir
+> desde la pantalla: nunca se baja más del 35%, el margen nuevo tiene que ser
+> positivo y llegar al mínimo que pediste, y **las publicaciones sin costo
+> cargado se saltean** — sin costo no se sabe si se gana o se pierde.
+
+**El escalón del cargo fijo.** MercadoLibre cobra un porcentaje más un cargo
+fijo por unidad, y ese cargo salta en escalones. El más grande está en
+**$33.000**: por encima el cargo fijo es cero, por debajo son $3.005. O sea que
+bajar de $34.000 a $32.000 cuesta mucho más que los $2.000 de diferencia. El
+cálculo del margen ya lo tiene en cuenta, y esas publicaciones quedan excluidas
+por defecto.
+
 **Promociones.** MercadoLibre le ofrece a cada publicación un menú de campañas
 (relámpago, temporada, descuentos sugeridos). Cada una queda como *candidata*
 hasta que la tomás.
@@ -268,8 +285,21 @@ baja el precio más de lo que te cuesta a vos. La campaña **¡Gánale a la
 competencia!** es la respuesta directa a las publicaciones donde perdés el Buy
 Box por precio: en vez de bajarlo vos solo, ML cofinancia la baja.
 
-> Esta sección te dice **cuáles conviene tomar**, pero no las activa. Las
-> promociones se toman desde el panel de MercadoLibre.
+**Alta automática por criterio.** Definís una regla una vez —por ejemplo
+*CRAFTERS pone como máximo 5% y MercadoLibre pone más que CRAFTERS*— y la
+herramienta selecciona sola qué publicaciones sumar. Después las revisás y se
+dan de alta en lote.
+
+Dos cosas que hace sola para que no te pises:
+
+- Solo toma ofertas **disponibles y sin tomar**: las que ya están activas no se
+  vuelven a dar de alta.
+- Si una publicación califica para varias promociones, toma **la que deja más
+  plata por unidad**. Sumarla a todas sería pisar una con otra.
+
+> El alta **cambia el precio que ve el comprador** y queda registrada en la
+> auditoría. También podés tomarlas a mano desde el panel de MercadoLibre;
+> esta sección no reemplaza ese camino.
 """
     )
 

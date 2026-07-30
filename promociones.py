@@ -208,6 +208,107 @@ def resumen(df):
     }
 
 
+# ------------------------------------------------------- alta automatica
+
+def seleccionar(df, aporte_crafters_max=0.05, ml_debe_superar=True,
+                aporte_ml_min=0.0, unidades_minimas=1, tipos=None):
+    """
+    Aplica el criterio y devuelve las ofertas que corresponde tomar.
+
+    El criterio por defecto es el que planteo Mariano: **CRAFTERS pone como
+    maximo 5% y MercadoLibre pone mas que CRAFTERS.** Con eso el precio le baja
+    al comprador bastante mas de lo que cuesta.
+
+    Solo entran ofertas `candidate` (disponibles y sin tomar): las que ya
+    estan activas no se vuelven a dar de alta, y las que dan negativo quedan
+    afuera aunque el reparto sea bueno.
+    """
+    if not len(df):
+        return df
+
+    sel = df[
+        (df["estado"] == "candidate")
+        & (df["diagnostico"] != "da negativo")
+        & (df["aporte_vendedor"].notna())
+        & (df["aporte_vendedor"] <= aporte_crafters_max)
+        & (df["aporte_ml"].notna())
+        & (df["aporte_ml"] >= aporte_ml_min)
+        & (df["unidades"] >= unidades_minimas)
+    ].copy()
+
+    if ml_debe_superar:
+        sel = sel[sel["aporte_ml"] > sel["aporte_vendedor"]]
+    if tipos:
+        sel = sel[sel["tipo"].isin(tipos)]
+
+    # Si una misma publicacion califica para varias promos, se toma la que
+    # deja mas plata por unidad: sumarla a todas es pisar una con otra.
+    sel = sel.sort_values("queda_por_unidad", ascending=False,
+                          na_position="last")
+    sel = sel.drop_duplicates(subset=["item_id"], keep="first")
+    return sel.sort_values("unidades", ascending=False)
+
+
+def aplicar(ml, seleccion, operador="", callback=None):
+    """
+    Suma las publicaciones elegidas a su promocion.
+
+    **Escribe en la cuenta de verdad**: cambia el precio que ve el comprador.
+    Cada alta queda registrada en la auditoria.
+
+    Sobre el cuerpo del pedido: en los tipos donde MercadoLibre ya fija el
+    precio (`SMART`, `PRICE_MATCHING`) se manda ese precio; en los que dan un
+    rango se manda el sugerido. `promotion_id` no viene en todos los tipos
+    (`PRICE_DISCOUNT` no lo trae), asi que se manda solo cuando existe.
+    """
+    import almacen
+
+    filas = []
+    total = len(seleccion)
+    for n, (_, f) in enumerate(seleccion.iterrows(), start=1):
+        cuerpo = {"promotion_type": f["tipo"]}
+        if f.get("campana_id"):
+            cuerpo["promotion_id"] = f["campana_id"]
+        if pd.notna(f["precio_promo"]):
+            cuerpo["deal_price"] = round(float(f["precio_promo"]), 2)
+
+        try:
+            ml.post(f"/seller-promotions/items/{f['item_id']}",
+                    payload=cuerpo, app_version="v2")
+            resultado, detalle = "OK", ""
+        except MeliError as e:
+            resultado, detalle = "ERROR", str(e)[:250]
+
+        almacen.append_auditoria([{
+            "fecha": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "item_id": f["item_id"],
+            "campo": f"promocion:{f['tipo']}",
+            "valor_anterior": f["precio_actual"],
+            "valor_nuevo": f["precio_promo"],
+            "resultado": resultado if resultado == "OK" else f"ERROR: {detalle}",
+            "operador": operador,
+            "nota": f"Alta automática — pone ML {f['aporte_ml']:.1%}, "
+                    f"CRAFTERS {f['aporte_vendedor']:.1%}",
+        }])
+
+        filas.append({
+            "item_id": f["item_id"],
+            "sku": f["sku"],
+            "titulo": f["titulo"],
+            "promocion": f["promocion"],
+            "precio_anterior": f["precio_actual"],
+            "precio_promo": f["precio_promo"],
+            "aporte_ml": f["aporte_ml"],
+            "aporte_vendedor": f["aporte_vendedor"],
+            "resultado": resultado,
+            "detalle": detalle,
+        })
+        if callback:
+            callback(n, total, f["item_id"])
+
+    return pd.DataFrame(filas)
+
+
 def main():
     tope = int(sys.argv[1]) if len(sys.argv) > 1 and sys.argv[1].isdigit() else 300
     ml = Meli(verbose=False)

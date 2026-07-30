@@ -163,6 +163,19 @@ class Meli:
         """
         return self._request("PUT", path, json_body=payload)
 
+    def post(self, path, payload=None, **params):
+        """
+        POST a la API. Se usa para sumar publicaciones a una promocion.
+
+        Igual que `put`: esto escribe en la cuenta de verdad. La logica de que
+        publicacion tocar vive en los modulos de arriba.
+        """
+        return self._request("POST", path, params=params, json_body=payload)
+
+    def delete(self, path, **params):
+        """DELETE a la API. Saca una publicacion de una promocion."""
+        return self._request("DELETE", path, params=params)
+
     def _request(self, metodo, path, params=None, json_body=None, intentos=5):
         url = path if path.startswith("http") else f"{BASE}{path}"
         espera = 2
@@ -196,7 +209,14 @@ class Meli:
             if resp.status_code >= 400:
                 raise MeliError(f"{metodo} {url} -> HTTP {resp.status_code}: {resp.text[:500]}")
 
-            return resp.json()
+            # Un DELETE (y a veces un POST) contesta 204 sin cuerpo: ahi
+            # resp.json() reventaria. Se devuelve un dict vacio.
+            if not resp.content:
+                return {}
+            try:
+                return resp.json()
+            except ValueError:
+                return {"_texto": resp.text[:500]}
 
         raise MeliError(f"{metodo} {url} fallo despues de {intentos} intentos (rate limit).")
 

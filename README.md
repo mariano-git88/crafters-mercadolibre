@@ -167,6 +167,8 @@ Cuenta: `CRAFTERSARG` — user_id `422682314` — site MLA — reputación 5_gre
 | Producto de catálogo | `/products/{id}` y `/products/{id}/items` | todos los que venden ese producto |
 | Promos de la cuenta | `/seller-promotions/users/{uid}?app_version=v2` | campañas abiertas |
 | Promos por publicación | `/seller-promotions/items/{id}?app_version=v2` | ofertas `candidate` y en curso |
+| Alta en promoción | `POST /seller-promotions/items/{id}?app_version=v2` | **escribe**. `app_version` es obligatorio: sin él, 400 |
+| Baja de promoción | `DELETE /seller-promotions/items/{id}` | con `promotion_id` y `promotion_type` |
 | Reputación | `/users/{uid}` → `seller_reputation` | métricas de 60 días de ML |
 
 **Trampa de formatos de fecha:** conviven dos formatos y no son intercambiables.
@@ -214,6 +216,46 @@ beneficios. `buybox.py` los marca aparte como *perdés estando más barato*.
 una lista de `{id, status, description}` donde `status` es `boosted` (la usás) u
 `opportunity` (está disponible y no la usás). Se usa v2 por el texto legible.
 
+### Automatizar los cambios por criterio
+
+Las dos herramientas de "Ganar la venta" escriben en la cuenta cuando el
+operador confirma. El criterio decide **qué** se toca; la confirmación decide
+**cuándo**.
+
+**Bajar precios al del Buy Box** (`buybox.seleccionar` + `buybox.aplicar`).
+Candados que no se pueden abrir desde la pantalla:
+
+- `TECHO_DE_BAJA = 0.35`: nunca se baja más de eso, aunque el criterio lo
+  permita. Misma idea que `UMBRAL_ALERTA_PRECIO` en `actualizador.py`.
+- El margen al precio nuevo tiene que ser **positivo** y llegar al mínimo
+  pedido.
+- Las publicaciones **sin costo cargado se saltean**. Sin costo no se sabe si
+  se gana o se pierde.
+- Por defecto se excluyen las que **cruzan un escalón de cargo fijo**.
+
+La comisión al precio nuevo **no** se estima con una regla de tres: el
+porcentaje real de cada SKU se despeja de lo que ML cobró
+(`(comision_prom - cargo_fijo(precio_prom)) / precio_prom`, así queda bien para
+Clásica y Premium) y se le suma el cargo fijo **del tramo del precio nuevo**.
+
+`aplicar()` toca la publicación puntual por `item_id`, **sin pasar por el
+resolver de SKU** que usan Precios y Stock. Es a propósito: el Buy Box se gana
+por publicación, y dos publicaciones del mismo SKU compiten en páginas de
+catálogo distintas.
+
+**Alta en promociones** (`promociones.seleccionar` + `promociones.aplicar`).
+Criterio por defecto: CRAFTERS pone ≤ 5% y ML pone más que CRAFTERS. Solo entran
+ofertas `candidate`, y si una publicación califica para varias se toma la que
+deja más plata por unidad (sumarla a todas sería pisar una con otra).
+
+> **Pendiente de validación en vivo:** el cuerpo del `POST` está armado según
+> la forma que devuelve el `GET` (`promotion_id`, `promotion_type`,
+> `deal_price`), pero **todavía no se ejecutó un alta real**. La ruta sí está
+> verificada: con un `item_id` inexistente contesta `"Item with id ... not
+> found"` y no el 404 genérico de ruta inexistente. Antes de usarlo en serio
+> hay que hacer una prueba controlada con una sola publicación y revertirla,
+> como se hizo con precio y stock.
+
 ### Dos tasas de reclamo distintas — no compararlas
 
 `reclamos.py` da **2,80%** y la reputación de ML dice **0,19%**. Las dos están
@@ -257,7 +299,7 @@ Once secciones:
 | **Reporte semanal** | La pantalla del lunes: cómo vino la semana contra la anterior y qué hay que resolver | no |
 | **Preguntas** | Respuestas a compradores con IA. Destacada en naranja en el selector | **sí** (publica respuestas) |
 | **Alertas** | Stock por agotarse y reclamos por producto | no |
-| **Ganar la venta** | Buy Box del catálogo y promociones disponibles | no |
+| **Ganar la venta** | Buy Box del catálogo y promociones disponibles | **sí** (baja precios y da de alta en promos) |
 | **Precios** | Cambio masivo de precios desde planilla | **sí** |
 | **Mayoristas** | Precios por cantidad según reglas | **sí** |
 | **Stock ML** | Cambio masivo de stock desde planilla | **sí** |
