@@ -176,11 +176,20 @@ class Meli:
         """DELETE a la API. Saca una publicacion de una promocion."""
         return self._request("DELETE", path, params=params)
 
-    def _request(self, metodo, path, params=None, json_body=None, intentos=5):
+    def _request(self, metodo, path, params=None, json_body=None, intentos=5,
+                 intentos_429=8):
+        """
+        Los 429 tienen su propio presupuesto de reintentos, aparte de
+        `intentos`. En una carga masiva (miles de llamadas seguidas) ML corta
+        por rate limit varias veces seguidas, y gastar el mismo contador que
+        los errores comunes hacia que la corrida muriera a las pocas decenas
+        de publicaciones.
+        """
         url = path if path.startswith("http") else f"{BASE}{path}"
         espera = 2
+        vistos_429 = 0
 
-        for intento in range(1, intentos + 1):
+        for intento in range(1, intentos + intentos_429 + 1):
             resp = self.sesion.request(
                 metodo, url,
                 headers={"Authorization": f"Bearer {self.token}",
@@ -192,11 +201,17 @@ class Meli:
             )
 
             if resp.status_code == 429:
+                vistos_429 += 1
+                if vistos_429 > intentos_429:
+                    raise MeliError(
+                        f"{metodo} {url} -> MercadoLibre sigue devolviendo 429 "
+                        f"despues de {intentos_429} esperas. Es rate limit: "
+                        "conviene reintentar mas tarde o bajar el ritmo.")
                 # ML avisa cuanto esperar; si no, backoff exponencial.
                 pausa = float(resp.headers.get("Retry-After", espera))
                 if self.verbose:
                     print(f"[meli] 429 rate limit, esperando {pausa:.0f}s "
-                          f"(intento {intento}/{intentos})")
+                          f"(espera {vistos_429}/{intentos_429})")
                 time.sleep(pausa)
                 espera = min(espera * 2, 60)
                 continue

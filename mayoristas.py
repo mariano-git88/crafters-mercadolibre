@@ -26,6 +26,7 @@ Gana la regla de menor `orden`, asi que lo especifico pisa a lo generico.
 import json
 import re
 import sys
+import time
 import unicodedata
 from pathlib import Path
 
@@ -342,7 +343,14 @@ def aplicar_uno(ml, item_id, tramos_item, operador=""):
     leemos los precios actuales y reenviamos el id del estandar: si no, se
     borraria el precio de venta de la publicacion.
     """
-    actuales = ml.get(f"/items/{item_id}/prices")
+    # Esta lectura tambien puede fallar (rate limit, publicacion borrada). Si
+    # se escapa, se lleva puesta la corrida entera y se pierden los
+    # resultados de todo lo que ya se habia aplicado bien.
+    try:
+        actuales = ml.get(f"/items/{item_id}/prices")
+    except MeliError as e:
+        return False, f"No pude leer los precios actuales: {str(e)[:200]}"
+
     ids_a_mantener = [
         {"id": p["id"]} for p in actuales.get("prices", [])
         if p.get("type") == "standard"
@@ -379,9 +387,29 @@ def aplicar_uno(ml, item_id, tramos_item, operador=""):
     return True, aplicados
 
 
-def aplicar(ml, sim, operador="", callback=None):
-    """Aplica los tramos de la simulacion a todas las publicaciones."""
+# Con 2.000+ publicaciones son 4.000+ llamadas seguidas y MercadoLibre corta
+# por rate limit. Una pausa chica entre publicaciones evita la mayoria de los
+# 429, y sale mucho mas barata que esperar los backoff.
+PAUSA_ENTRE_ITEMS = 0.25
+
+
+def aplicar(ml, sim, operador="", callback=None, omitir=None,
+            pausa=PAUSA_ENTRE_ITEMS):
+    """
+    Aplica los tramos de la simulacion a todas las publicaciones.
+
+    **Nunca lanza excepcion por una publicacion.** Con miles de items, dejar
+    que una falla corte la corrida significa perder el resultado de todo lo
+    que ya se aplico bien y no saber por donde se quedo. Cada fila se resuelve
+    a OK o ERROR y la corrida sigue.
+
+    `omitir` es un conjunto de `item_id` que ya se aplicaron: sirve para
+    retomar una corrida cortada sin repetir lo hecho.
+    """
     pendientes = sim[sim["accion"] == "aplicar"]
+    if omitir:
+        pendientes = pendientes[~pendientes["item_id"].isin(set(omitir))]
+
     resultados = []
     total = len(pendientes)
 
@@ -390,12 +418,19 @@ def aplicar(ml, sim, operador="", callback=None):
              for n in (1, 2)
              if pd.notna(fila.get(f"q{n}_unidades"))
              and pd.notna(fila.get(f"q{n}_precio"))]
-        ok, detalle = aplicar_uno(ml, fila["item_id"], t, operador=operador)
+        try:
+            ok, detalle = aplicar_uno(ml, fila["item_id"], t, operador=operador)
+        except Exception as e:                     # noqa: BLE001
+            # Red que se cae, respuesta rara, lo que sea: se anota y se sigue.
+            ok, detalle = False, f"{type(e).__name__}: {str(e)[:200]}"
+
         resultados.append({**fila.to_dict(),
                            "resultado": "OK" if ok else "ERROR",
                            "detalle": "" if ok else str(detalle)[:200]})
         if callback:
             callback(i, total, fila)
+        if pausa:
+            time.sleep(pausa)
 
     return pd.DataFrame(resultados)
 

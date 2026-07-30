@@ -1322,19 +1322,58 @@ elif seccion == "Mayoristas":
             conf_may = st.checkbox(
                 f"Confirmo que quiero cargar los tramos en {len(aplicables)} "
                 "publicaciones", key="conf_may")
+            ya_hechas = st.session_state.get("may_ok", set())
+            if ya_hechas:
+                st.info(
+                    f"De una corrida anterior quedaron **{len(ya_hechas)} "
+                    "publicaciones ya cargadas**. Se van a saltear para no "
+                    "repetirlas.", icon="↩️")
+
             if st.button("Aplicar en MercadoLibre", key="go_may",
                          disabled=not (conf_may and op_may.strip())):
                 barra = st.progress(0.0, text="Aplicando...")
                 res = mayoristas.aplicar(
-                    ml, sim, operador=op_may.strip(),
+                    ml, sim, operador=op_may.strip(), omitir=ya_hechas,
                     callback=lambda i, t, f: barra.progress(
                         i / t, text=f"Aplicando {i} de {t}..."))
                 barra.empty()
-                ok = (res["resultado"] == "OK").sum()
-                if ok == len(res):
-                    st.success(f"{ok} publicaciones con precio mayorista cargado.")
+                # Se guarda para poder retomar: con miles de publicaciones,
+                # una corrida puede cortarse y repetir todo es carísimo.
+                st.session_state["may_res"] = res
+                st.session_state["may_ok"] = set(ya_hechas) | set(
+                    res[res["resultado"] == "OK"]["item_id"])
+
+            res = st.session_state.get("may_res")
+            if res is not None and len(res):
+                ok = int((res["resultado"] == "OK").sum())
+                fallaron = res[res["resultado"] != "OK"]
+                if not len(fallaron):
+                    st.success(f"{ok} publicaciones con precio mayorista "
+                               "cargado.")
                 else:
-                    st.error(f"{ok} cargadas, {len(res) - ok} con error.")
+                    st.error(f"{ok} cargadas, {len(fallaron)} con error.")
+                    motivos = fallaron["detalle"].str.slice(0, 60).value_counts()
+                    st.markdown("**Por qué fallaron**")
+                    st.dataframe(
+                        motivos.rename_axis("Motivo").reset_index(
+                            name="Publicaciones"),
+                        use_container_width=True, hide_index=True, height=160)
+                    if st.button(f"Reintentar las {len(fallaron)} que fallaron",
+                                 key="retry_may"):
+                        barra = st.progress(0.0, text="Reintentando...")
+                        res2 = mayoristas.aplicar(
+                            ml, sim[sim["item_id"].isin(fallaron["item_id"])],
+                            operador=op_may.strip() or "reintento",
+                            callback=lambda i, t, f: barra.progress(
+                                i / t, text=f"Reintentando {i} de {t}..."))
+                        barra.empty()
+                        st.session_state["may_res"] = pd.concat(
+                            [res[res["resultado"] == "OK"], res2])
+                        st.session_state["may_ok"] = set(
+                            st.session_state.get("may_ok", set())) | set(
+                            res2[res2["resultado"] == "OK"]["item_id"])
+                        st.rerun()
+
                 st.dataframe(res, use_container_width=True, height=260)
                 st.caption(
                     "Los tramos tardan unos segundos en verse en la publicación. "

@@ -413,6 +413,9 @@ TECHO_DE_BAJA = 0.35
 # un margen peor casi siempre es un dato malo, no una decision.
 PISO_DE_MARGEN = -0.50
 
+# Pausa entre publicaciones al escribir en lote: baja los 429 de ML.
+PAUSA_ENTRE_ITEMS = 0.25
+
 # Diagnosticos donde hay Buy Box para ganar. El resto no se toca.
 PERDIENDO = ("perdés estando más barato", "alcanza con bajar poco",
              "perdés por precio", "habría que bajar mucho")
@@ -485,12 +488,16 @@ def aplicar(ml, seleccion, operador="", callback=None):
     total = len(seleccion)
     for n, (_, f) in enumerate(seleccion.iterrows(), start=1):
         nuevo = round(float(f["precio_para_ganar"]), 2)
-        ok, detalle = ml.actualizar_publicacion(
-            f["item_id"], {"price": nuevo},
-            valores_previos={"price": f["precio_actual"]},
-            operador=operador,
-            nota=f"Buy Box: bajar para ganar (margen "
-                 f"{f['margen_al_ganar_pct']:.1%})")
+        try:
+            ok, detalle = ml.actualizar_publicacion(
+                f["item_id"], {"price": nuevo},
+                valores_previos={"price": f["precio_actual"]},
+                operador=operador,
+                nota=f"Buy Box: bajar para ganar (margen "
+                     f"{f['margen_al_ganar_pct']:.1%})")
+        except Exception as e:                     # noqa: BLE001
+            # Una publicacion no puede llevarse puesta la corrida entera.
+            ok, detalle = False, f"{type(e).__name__}: {str(e)[:200]}"
         filas.append({
             "item_id": f["item_id"],
             "sku": f["sku"],
@@ -503,6 +510,7 @@ def aplicar(ml, seleccion, operador="", callback=None):
         })
         if callback:
             callback(n, total, f["item_id"])
+        time.sleep(PAUSA_ENTRE_ITEMS)
 
     return pd.DataFrame(filas)
 

@@ -216,6 +216,27 @@ beneficios. `buybox.py` los marca aparte como *perdés estando más barato*.
 una lista de `{id, status, description}` donde `status` es `boosted` (la usás) u
 `opportunity` (está disponible y no la usás). Se usa v2 por el texto legible.
 
+### Escrituras masivas — rate limit y corridas cortadas
+
+Con miles de publicaciones (Mayoristas toca 2.281) MercadoLibre corta por rate
+limit. Lo que hay puesto:
+
+- **Ninguna publicación puede matar la corrida.** Cada ítem se resuelve a
+  OK/ERROR dentro de un `try/except`. Ojo con proteger **todas** las llamadas,
+  no solo la escritura: en `mayoristas.aplicar_uno` el `POST` estaba protegido
+  pero el `GET` previo de `/items/{id}/prices` no, y por ahí murió una corrida
+  entera en la publicación 25.
+- **Throttle proactivo:** `PAUSA_ENTRE_ITEMS = 0.25` s entre publicaciones.
+  Sale más barato que esperar los backoff.
+- **Los 429 tienen presupuesto propio de reintentos** (`intentos_429=8` en
+  `meli._request`), aparte de los 5 de los errores comunes, respetando
+  `Retry-After`. Antes compartían contador y se agotaba enseguida.
+- **Se puede retomar:** `aplicar(..., omitir={item_ids})` saltea lo ya hecho, y
+  la app guarda los OK y ofrece reintentar solo los que fallaron.
+
+Si igual una corrida muere, **la auditoría append-only es lo único que dice qué
+llegó a aplicarse**.
+
 ### Automatizar los cambios por criterio
 
 Las dos herramientas de "Ganar la venta" escriben en la cuenta cuando el

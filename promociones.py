@@ -34,6 +34,7 @@ para descartar las promos que directamente dan negativo.
 
 import json
 import sys
+import time
 from collections import Counter
 from pathlib import Path
 
@@ -46,6 +47,9 @@ DIR = Path(__file__).resolve().parent
 
 # Tipos donde ML puede poner parte del descuento.
 CON_APORTE_ML = ("SMART", "PRICE_MATCHING")
+
+# Pausa entre publicaciones al escribir en lote: baja los 429 de ML.
+PAUSA_ENTRE_ITEMS = 0.25
 
 NOMBRES = {
     "LIGHTNING": "Oferta relámpago",
@@ -308,8 +312,9 @@ def aplicar(ml, seleccion, operador="", callback=None):
                         payload=cuerpo, app_version="v2")
             oferta_nueva = (r or {}).get("offer_id", "")
             resultado, detalle = "OK", ""
-        except MeliError as e:
-            resultado, detalle = "ERROR", str(e)[:250]
+        except Exception as e:                     # noqa: BLE001
+            # Una publicacion no puede llevarse puesta la corrida entera.
+            resultado, detalle = "ERROR", f"{type(e).__name__}: {str(e)[:220]}"
 
         almacen.append_auditoria([{
             "fecha": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -343,6 +348,7 @@ def aplicar(ml, seleccion, operador="", callback=None):
         })
         if callback:
             callback(n, total, f["item_id"])
+        time.sleep(PAUSA_ENTRE_ITEMS)
 
     return pd.DataFrame(filas)
 
