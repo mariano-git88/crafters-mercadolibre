@@ -291,8 +291,8 @@ de aplicar.
 
 **El escalón del cargo fijo.** MercadoLibre cobra un porcentaje más un cargo
 fijo por unidad, y ese cargo salta en escalones. El más grande está en
-**$33.000**: por encima el cargo fijo es cero, por debajo son $3.005. O sea que
-bajar de $34.000 a $32.000 cuesta mucho más que los $2.000 de diferencia. El
+**\\$33.000**: por encima el cargo fijo es cero, por debajo son \\$3.005. O sea que
+bajar de \\$34.000 a \\$32.000 cuesta mucho más que los \\$2.000 de diferencia. El
 cálculo del margen ya lo tiene en cuenta, y esas publicaciones quedan excluidas
 por defecto.
 
@@ -462,8 +462,8 @@ toca el cambio de precio en solo 186. En el resto, el consejo de Buy Box es
 informativo: esas se resuelven desde *Ganar la venta*, una por una.
 
 **El escalón puede ser el mayor rendimiento.** Arriba de $33.000 el cargo fijo
-de MercadoLibre es cero. Hay casos donde subir de $29.615 a $33.000 —un 11%—
-lleva el neto por unidad de **−$1.964 a +$2.824**. La columna *Cruza escalón*
+de MercadoLibre es cero. Hay casos donde subir de \\$29.615 a \\$33.000 —un 11%—
+lleva el neto por unidad de **−\\$1.964 a +\\$2.824**. La columna *Cruza escalón*
 te marca esos.
 
 **Cómo usarla.** Poné un cambio máximo bajo (15-20%), mirá cuántos entran,

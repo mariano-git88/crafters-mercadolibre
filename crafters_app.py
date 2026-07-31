@@ -223,6 +223,22 @@ def pesos(v):
         return "—"
 
 
+def pesos_md(v):
+    """
+    Igual que `pesos()` pero con el `$` escapado, para textos en markdown.
+
+    Streamlit interpreta lo que va **entre dos `$`** como fórmula LaTeX y lo
+    renderiza como matemática. Un texto tan común como "de $29.615 a $33.000"
+    se convierte en un engendro ilegible. Con un solo importe no pasa nada;
+    con dos o más en el mismo texto, sí. Usar esta en `st.markdown`,
+    `st.error`, `st.warning`, `st.info`, `st.caption` y `st.success`.
+
+    En `st.metric` y en las tablas NO hace falta: ahí no se interpreta
+    markdown y se vería el backslash.
+    """
+    return pesos(v).replace("$", "\\$")
+
+
 def cumplen(n):
     """'1 publicación cumple' / '3 publicaciones cumplen'."""
     return (f"**1 publicación cumple el criterio.**" if n == 1
@@ -299,7 +315,7 @@ def controles_otros_conceptos(clave):
         "**Otros conceptos** — costos que no cobra MercadoLibre pero igual "
         "hay que cargarle a cada venta. Se aplican como porcentaje del "
         f"**ingreso sin IVA**. El logístico es el porcentaje **o "
-        f"{pesos(rent.TOPE_LOGISTICO)}, lo que sea menor**.")
+        f"{pesos_md(rent.TOPE_LOGISTICO)}, lo que sea menor**.")
     # En puntos porcentuales enteros: mostrar "0.10" se lee como 0,1%.
     o1, o2, o3 = st.columns(3)
     return {
@@ -571,7 +587,7 @@ if seccion == "Reporte semanal":
             st.error(
                 f"**{sr['sin_publicacion'] + sr['sin_stock'] + sr['criticos']} "
                 f"productos con problema de stock** — "
-                f"{pesos(sr['plata_en_riesgo'])} de facturación semanal en "
+                f"{pesos_md(sr['plata_en_riesgo'])} de facturación semanal en "
                 f"riesgo. {sr['sin_publicacion']} vendieron y hoy no tienen "
                 f"ninguna publicación activa.", icon="📦")
             st.dataframe(
@@ -884,7 +900,7 @@ elif seccion == "Ganar la venta":
 
             if rb["mas_barato_y_perdiendo"]:
                 extra = (f" La penalización mediana por no tener las palancas "
-                         f"es {pesos(rb['penalizacion_mediana'])}."
+                         f"es {pesos_md(rb['penalizacion_mediana'])}."
                          if rb["penalizacion_mediana"] else "")
                 st.error(
                     f"**En {rb['mas_barato_y_perdiendo']} publicaciones ya "
@@ -991,8 +1007,8 @@ elif seccion == "Ganar la venta":
                         "escalón de cargo fijo al bajar.** MercadoLibre cobra "
                         "un porcentaje más un cargo fijo por unidad, y ese "
                         "cargo salta en escalones: el más grande está en "
-                        "$33.000, donde pasa de cero a $3.005. Bajar de "
-                        "$34.000 a $32.000 cuesta mucho más que los $2.000 de "
+                        "\\$33.000, donde pasa de cero a \\$3.005. Bajar de "
+                        "\\$34.000 a \\$32.000 cuesta mucho más que los \\$2.000 de "
                         "diferencia. El margen ya lo tiene en cuenta y por "
                         "defecto quedan excluidas.", icon="🪜")
 
@@ -1853,8 +1869,8 @@ elif seccion == "Precio óptimo":
             with st.expander("Ver el motivo de cada sugerencia"):
                 for _, f in aplicar_vt.head(20).iterrows():
                     st.markdown(f"**{f['sku']}** · {f['caso']} · "
-                                f"{pesos(f['precio_actual'])} → "
-                                f"{pesos(f['precio_sugerido'])}")
+                                f"{pesos_md(f['precio_actual'])} → "
+                                f"{pesos_md(f['precio_sugerido'])}")
                     st.caption(f["motivo"])
 
             st.divider()
@@ -2017,8 +2033,8 @@ elif seccion == "Competencia":
             st.warning(
                 f"**En {len(perdiendo)} productos estamos más caros que el "
                 f"más barato.** El caso extremo: EAN {peor['ean']}, "
-                f"nosotros {pesos(peor['nuestro_precio'])} contra "
-                f"{pesos(peor['mejor_precio'])} de *{peor['mejor_vendedor']}* "
+                f"nosotros {pesos_md(peor['nuestro_precio'])} contra "
+                f"{pesos_md(peor['mejor_precio'])} de *{peor['mejor_vendedor']}* "
                 f"({peor['diferencia']:+.0%}).", icon="📉")
 
         sin_cat = df[df["estado"] != "ok"]
@@ -2278,8 +2294,8 @@ elif seccion == "Oportunidades":
                     f"**{pierde} productos pierden plata solo con el envío y "
                     f"la comisión**, antes de contar el costo de la "
                     f"mercadería. El peor: `{peor['sku']}` se vende a "
-                    f"{pesos(peor['precio_prom'])} y el envío cuesta "
-                    f"{pesos(peor['envio_prom'])}.", icon="🚚")
+                    f"{pesos_md(peor['precio_prom'])} y el envío cuesta "
+                    f"{pesos_md(peor['envio_prom'])}.", icon="🚚")
 
             solo_probl = st.checkbox("Ver solo los problemáticos", value=True)
             vv = (dfv[dfv["diagnostico"] != "normal"] if solo_probl else dfv)
@@ -2321,7 +2337,7 @@ elif seccion == "Oportunidades":
 
     elif op == "Factura de ML":
         st.caption(
-            "MercadoLibre te factura entre $22M y $35M por mes. Cada orden "
+            "MercadoLibre te factura entre \\$22M y \\$35M por mes. Cada orden "
             "trae la comisión que ML se cobró por esa venta. Esto compara las "
             "dos cosas, período por período.")
         st.info(
@@ -2450,10 +2466,10 @@ elif seccion == "Oportunidades":
         with st.expander("Los escalones de tu cuenta"):
             st.markdown(
                 "| Precio | Cargo fijo por unidad |\n|---|---|\n"
-                "| menos de $16.000 | $1.250 |\n"
-                "| $16.000 a $23.999 | $2.505 |\n"
-                "| $24.000 a $32.999 | $3.005 |\n"
-                "| **$33.000 o más** | **$0** |\n\n"
+                "| menos de \\$16.000 | \\$1.250 |\n"
+                "| \\$16.000 a \\$23.999 | \\$2.505 |\n"
+                "| \\$24.000 a \\$32.999 | \\$3.005 |\n"
+                "| **\\$33.000 o más** | **\\$0** |\n\n"
                 "Medidos contra la API por búsqueda binaria. El salto de "
                 "$33.000 es el más fuerte: ahí el cargo fijo desaparece.")
 

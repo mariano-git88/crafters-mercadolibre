@@ -24,6 +24,15 @@ ICONO = {"nuevo": "🆕", "mejora": "⬆️", "arreglo": "🔧"}
 
 CAMBIOS = [
     {
+        "fecha": "2026-07-31", "hora": "14:10", "tipo": "arreglo",
+        "titulo": "Los importes se veían como fórmulas matemáticas",
+        "puntos": [
+            "Cuando un texto tenía dos o más importes, Streamlit los tomaba "
+            "como una fórmula y los mostraba ilegibles. Pasaba en este mismo "
+            "registro, en el tutorial y en varios avisos de la app.",
+        ],
+    },
+    {
         "fecha": "2026-07-31", "hora": "12:47", "tipo": "nuevo",
         "titulo": "Las preguntas se contestan solas",
         "puntos": [
@@ -50,8 +59,8 @@ CAMBIOS = [
             "motivo.",
             "Reemplaza a *Precios mínimos*, que quedó adentro: el piso ahora "
             "es una columna más.",
-            "Lo que más rinde es cruzar el escalón: subir de $29.615 a "
-            "$33.000 lleva el neto por unidad de −$1.964 a +$2.824.",
+            "Lo que más rinde es cruzar el escalón: subir de \\$29.615 a "
+            "\\$33.000 lleva el neto por unidad de −\\$1.964 a +\\$2.824.",
         ],
     },
     {
