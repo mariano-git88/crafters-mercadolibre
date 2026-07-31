@@ -484,15 +484,29 @@ def pendientes(ml):
     return r.get("questions") or []
 
 
+def pendientes_respondibles(ml):
+    """
+    Solo las preguntas que **se pueden** contestar.
+
+    MercadoLibre marca como `UNANSWERED` preguntas de publicaciones que ya no
+    estan activas, y **no deja responderlas**. Mostrarlas es peor que inutil:
+    el tablero decia "3 sin responder" cuando la unica accionable era una, y
+    las otras dos eran de enero sobre publicaciones pausadas por falta de
+    stock. No son trabajo pendiente, son ruido.
+
+    Todo el circuito —tablero, procesamiento y bandeja— usa esta.
+    """
+    respondibles, _ = pendientes_detalle(ml)
+    return respondibles
+
+
 def pendientes_detalle(ml):
     """
     Las pendientes separadas en (se pueden responder, bloqueadas).
 
-    MercadoLibre marca como `UNANSWERED` preguntas de publicaciones que ya no
-    estan activas, y **no deja responderlas**. Contarlas juntas hace que el
-    tablero muestre trabajo que no existe: llegamos a ver "3 sin responder"
-    cuando la unica accionable era una — las otras dos eran de enero, sobre
-    publicaciones pausadas por falta de stock.
+    Se mantiene separado de `pendientes_respondibles()` para poder mirar las
+    bloqueadas si alguna vez hace falta diagnosticar, pero la app no las
+    muestra.
     """
     respondibles, bloqueadas = [], []
     for q in pendientes(ml):
@@ -518,8 +532,9 @@ def registrar(fila):
 # --------------------------------------------------- bandeja de pendientes
 
 # Estados en los que la pregunta quedó SIN responder y espera a una persona.
-ESTADOS_ABIERTOS = ("para_revisar", "publicacion_inactiva", "error_tecnico",
-                    "error_al_publicar")
+# `publicacion_inactiva` quedo fuera a proposito: esas preguntas ya no entran
+# al circuito, asi que no pueden aparecer como trabajo pendiente.
+ESTADOS_ABIERTOS = ("para_revisar", "error_tecnico", "error_al_publicar")
 
 
 def bandeja(ml):
@@ -540,7 +555,7 @@ def bandeja(ml):
     for f in registro:
         ultimo[str(f.get("question_id"))] = f
 
-    sin_responder = {str(q.get("id")): q for q in pendientes(ml)}
+    sin_responder = {str(q.get("id")): q for q in pendientes_respondibles(ml)}
 
     salida = []
     for qid, q in sin_responder.items():
@@ -663,7 +678,9 @@ def procesar(ml, publicar_de_verdad=False, callback=None):
     minima = cfg.get("min_confianza", "media").lower()
     orden = {"alta": 3, "media": 2, "baja": 1}
 
-    preguntas = pendientes(ml)
+    # Solo las que se pueden contestar: las de publicaciones inactivas no son
+    # trabajo pendiente y no tiene sentido gastarles una llamada al modelo.
+    preguntas = pendientes_respondibles(ml)
     hechas = ya_procesadas()
     nuevas = [q for q in preguntas if str(q.get("id")) not in hechas]
 

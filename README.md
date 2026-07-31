@@ -137,6 +137,7 @@ for item in ml.items_detalle(ids, atributos=["id", "title", "price",
 | `precio_minimo.py` | El **piso**: precio más chico que llega al margen objetivo |
 | `ventana.py` | Junta piso + Buy Box + escalón en un precio sugerido por SKU |
 | `preguntas_cron.py` | Responde las preguntas nuevas sola; la invocan dos workflows |
+| `cambios.py` | Registro de actualizaciones que se muestra en el modal *Novedades* |
 | `credentials.txt` | App ID + Secret + Redirect URI (**no se sube a git**) |
 | `tokens.json` | Tokens vivos (**no se sube a git**) |
 
@@ -451,6 +452,18 @@ entraba. Así queda en ~1.864.
 
 > Contrapartida honesta: una pregunta que entra a las 3 de la mañana puede
 > esperar hasta una hora. En horario comercial sale en 15 minutos o menos.
+
+### Preguntas que no se pueden contestar
+
+MercadoLibre marca como `UNANSWERED` preguntas de publicaciones que ya no están
+activas y **no deja responderlas**. Antes se contaban como pendientes: el
+tablero decía "3 sin responder" cuando la única accionable era una.
+
+`pendientes_respondibles()` es la que usa **todo** el circuito —tablero,
+`procesar()` y `bandeja()`—, así que esas preguntas no se muestran, no se
+cuentan y no gastan una llamada al modelo. `publicacion_inactiva` salió de
+`ESTADOS_ABIERTOS` por el mismo motivo. Si la publicación se reactiva, la
+pregunta vuelve al circuito sola.
 
 ### El historial se duplicaba en cada sincronización
 

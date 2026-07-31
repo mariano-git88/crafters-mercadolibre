@@ -23,6 +23,7 @@ import actualizador as act
 import alertas_stock
 import almacen
 import buybox
+import cambios
 import competencia
 import conciliacion
 import conversion
@@ -167,6 +168,11 @@ def _tutorial_dialog():
     tutorial_crafters.render()
 
 
+@st.dialog("Novedades — qué cambió en la app", width="large")
+def _cambios_dialog():
+    cambios.render()
+
+
 enc_logo, enc_info, enc_btn = st.columns([1.1, 2, 1.3])
 with enc_logo:
     if LOGO.exists():
@@ -177,9 +183,13 @@ with enc_info:
     st.markdown("##### Herramientas de MercadoLibre")
     st.caption(f"{len(pubs):,} publicaciones · {len(activas):,} activas"
                .replace(",", "."))
+    st.caption(f"Última actualización: **{cambios.ultima_actualizacion()}**")
 with enc_btn:
-    if st.button("📖 Tutorial", use_container_width=True):
+    bt1, bt2 = st.columns(2)
+    if bt1.button("📖 Tutorial", use_container_width=True):
         _tutorial_dialog()
+    if bt2.button("🆕 Novedades", use_container_width=True):
+        _cambios_dialog()
     if st.button("↻ Actualizar catálogo", use_container_width=True):
         st.session_state["sello_catalogo"] += 1
         st.cache_data.clear()
@@ -2616,31 +2626,14 @@ elif seccion == "Preguntas":
             "la publicación y las fuentes cargadas. **Si el contexto no alcanza, "
             "no responde**: deja la pregunta para que la vea una persona.")
 
-        pend, bloqueadas = preg.pendientes_detalle(ml)
-        p1, p2 = st.columns(2)
-        p1.metric("Sin responder", len(pend),
-                  help="Sobre publicaciones activas: se pueden contestar")
-        p2.metric("No se pueden responder", len(bloqueadas),
-                  help="MercadoLibre no deja responder preguntas de "
-                       "publicaciones que no están activas")
-
+        # Solo las contestables: las de publicaciones inactivas no entran al
+        # circuito en ningún lado.
+        pend = preg.pendientes_respondibles(ml)
+        st.metric("Preguntas sin responder", len(pend))
         if pend:
-            with st.expander(f"Ver las {len(pend)} que se pueden responder"):
+            with st.expander("Ver las preguntas pendientes"):
                 for q in pend:
                     st.markdown(f"- `{q['id']}` · {(q.get('text') or '')[:160]}")
-        if bloqueadas:
-            with st.expander(f"Ver las {len(bloqueadas)} bloqueadas"):
-                st.caption(
-                    "MercadoLibre marca estas preguntas como *sin responder* "
-                    "pero **no deja contestarlas** porque la publicación no "
-                    "está activa. Para responderlas hay que reactivar la "
-                    "publicación — normalmente reponiendo el stock.")
-                for q in bloqueadas:
-                    sub = q.get("item_sub_status") or q.get("item_status") or "?"
-                    st.markdown(
-                        f"- `{q['id']}` · _{sub}_ · "
-                        f"{(q.get('text') or '')[:120]}")
-                    st.caption(f"   {q.get('item_titulo', '')[:70]}")
 
         b1, b2 = st.columns(2)
         simular = b1.button("Redactar sin publicar", use_container_width=True,

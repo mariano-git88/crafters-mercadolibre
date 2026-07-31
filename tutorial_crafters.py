@@ -51,6 +51,14 @@ Oportunidades.
     st.divider()
     st.markdown(
         """
+### Dónde ver qué cambió
+
+El botón **🆕 Novedades**, arriba a la derecha al lado del Tutorial, abre el
+registro de actualizaciones: qué se agregó o se arregló y cuándo. En el
+encabezado también figura la fecha de la última actualización.
+
+---
+
 ### La regla más importante
 
 **Lo que no está en la planilla, no se toca.**
@@ -570,11 +578,11 @@ publicación, así que es preferible que la vea una persona.
 pregunta la redacta y la publica; **si no puede, la deja en Gestión manual**.
 El interruptor `ia_activa` de la planilla la apaga por completo.
 
-**Dos contadores, no uno.** MercadoLibre marca como *sin responder* preguntas
-de publicaciones que ya no están activas, y **no deja contestarlas**. Por eso el
-tablero separa *Sin responder* (accionables) de *No se pueden responder*: si
-aparecen ahí, hay que reactivar la publicación —normalmente reponiendo stock—
-para poder contestar.
+**Solo se muestra lo que se puede contestar.** MercadoLibre marca como *sin
+responder* preguntas de publicaciones que ya no están activas, pero **no deja
+responderlas**: no son trabajo pendiente y por eso no aparecen ni se cuentan en
+ningún lado. Si reactivás la publicación —normalmente reponiendo stock— vuelven
+a entrar al circuito solas.
 
 **Si una pregunta queda sin responder**, mirá el motivo en *Gestión manual*. Suele
 ser información que no está en ningún lado: cargando esa ficha en *Fuentes*,
