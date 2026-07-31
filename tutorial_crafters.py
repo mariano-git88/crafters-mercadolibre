@@ -33,7 +33,7 @@ Once secciones, cada una para una cosa:
 | **Stock ML** | Lo mismo pero con las unidades publicadas en MercadoLibre |
 | **Control de stock** | Llevar tu propia cuenta de unidades, con historial de movimientos |
 | **Rentabilidad** | Ver cuánto ganás realmente con cada producto, después de todo lo que se lleva MercadoLibre |
-| **Precios mínimos** | A qué precio tenés que estar para no perder plata, y subirlos en lote |
+| **Precio óptimo** | Entre lo que necesitás cobrar y lo que podés cobrar: un precio sugerido por SKU |
 | **Competencia** | Quién vende más barato cada producto y en qué posición estás |
 | **Oportunidades** | Siete análisis para encontrar dónde estás dejando plata |
 
@@ -420,34 +420,54 @@ técnica. Gana la de **menor orden**, así que lo específico pisa a lo general.
     st.divider()
     st.markdown(
         """
-### Sección Precios mínimos
+### Sección Precio óptimo
 
-Es la herramienta inversa al Buy Box. Buy Box pregunta *hasta dónde puedo
-bajar*; ésta, **desde dónde no puedo bajar**: calcula por SKU el precio más
-chico que llega al margen objetivo contemplando costo, comisión real, envío
-medido y los otros conceptos.
+Es la que contesta la pregunta que ninguna otra contestaba sola: **qué precio
+le pongo a este producto**. Junta tres cuentas que antes estaban en pantallas
+distintas:
 
-**El escalón juega a favor acá.** Arriba de $33.000 el cargo fijo de
-MercadoLibre es cero, así que a veces el precio mínimo cae **justo en $33.000**
-aunque el producto valga bastante menos. No es un error: cruzar el escalón
-elimina $3.005 de cargo fijo que ningún aumento chico logra compensar. La
-columna *Cruza escalón* te marca esos casos.
+- el **piso** — abajo de ahí no llegás al margen objetivo;
+- el **techo útil** — arriba de ahí perdés la página de catálogo, que es donde
+  se lleva las ventas el que gana;
+- el **escalón de cargo fijo** — dentro de la ventana no todos los precios
+  rinden igual.
 
-**Cómo usarla sin romper nada.** El modelo con la estructura completa pide
-subas grandes en muchos productos, así que conviene ir por tramos:
+**Los seis casos**, que piden cosas bien distintas:
 
-1. Poné una **suba máxima** baja (20-30%) y mirá cuántos entran.
-2. Tildá filas para elegir a mano, o filtrá por marca.
-3. **Simulá** antes de aplicar. La simulación pasa por el mismo motor que la
-   sección Precios, así que respeta la regla de las publicaciones espejo y
-   marca como *revisar* todo lo que supere el 50% de variación.
-4. Aplicá. Todo queda en la auditoría con el precio anterior.
+| Caso | Qué significa |
+|---|---|
+| **Ventana amplia** | Podés acomodar el precio *y* quedarte con la página. El único caso donde no se resigna nada |
+| **Bajar para ganar** | Ganar la página exige bajar. El margen aguanta pero se resigna neto por unidad |
+| **Sin ventana** | Ganar la página exige vender bajo tu piso. No es problema de precio sino de costo |
+| **Ya ganás** | Tenés la página; solo mirar si podés acomodar el precio sin perderla |
+| **Catálogo en otra publicación** | La página la pelea otra publicación del mismo SKU |
+| **Fuera de catálogo** | No hay página que ganar, manda el piso |
 
-> **Una advertencia que la herramienta no puede darte sola.** El cálculo dice
-> qué precio necesitás para tu margen objetivo, **no si el mercado lo va a
-> pagar**. Antes de subir, mirá la sección *Competencia* o el Buy Box de esos
-> productos: subir el precio de algo donde ya estás perdiendo la página de
-> catálogo puede dejarte sin ventas en vez de con más margen.
+**"Bajar para ganar" queda afuera de la selección por defecto**, y es a
+propósito: resigna neto por unidad y solo conviene si el volumen extra lo
+compensa. Eso no sale de ningún dato de la API, así que la decisión es tuya.
+
+**"Catálogo en otra publicación" es una trampa que conviene entender.** El
+precio se aplica **por SKU** —y toca las publicaciones que manda la regla de
+Clásica/Premium— pero el Buy Box se pelea **por publicación**. De los 721 SKU
+con página de catálogo, la publicación que pelea la página es la misma que
+toca el cambio de precio en solo 186. En el resto, el consejo de Buy Box es
+informativo: esas se resuelven desde *Ganar la venta*, una por una.
+
+**El escalón puede ser el mayor rendimiento.** Arriba de $33.000 el cargo fijo
+de MercadoLibre es cero. Hay casos donde subir de $29.615 a $33.000 —un 11%—
+lleva el neto por unidad de **−$1.964 a +$2.824**. La columna *Cruza escalón*
+te marca esos.
+
+**Cómo usarla.** Poné un cambio máximo bajo (15-20%), mirá cuántos entran,
+tildá filas si querés elegir a mano, simulá y aplicá. La simulación pasa por
+el mismo motor que la sección Precios: respeta la regla de las publicaciones
+espejo y marca como *revisar* todo lo que supere el 50%.
+
+> **Dos cosas que la herramienta no sabe.** Si el mercado va a pagar el precio
+> nuevo, y cuánto volumen se gana o se pierde. El *Impacto* de la tabla asume
+> el mismo volumen que el período medido: es una referencia de tamaño, no una
+> proyección.
 """
     )
 

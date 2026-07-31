@@ -134,12 +134,15 @@ for item in ml.items_detalle(ids, atributos=["id", "title", "price",
 | `full.py` | Candidatos a Full por plata de envío que queman |
 | `buybox.py` | Buy Box del catálogo: quién gana cada página y a qué precio |
 | `promociones.py` | Campañas que ML ofrece por publicación, con su aporte |
+| `precio_minimo.py` | El **piso**: precio más chico que llega al margen objetivo |
+| `ventana.py` | Junta piso + Buy Box + escalón en un precio sugerido por SKU |
 | `credentials.txt` | App ID + Secret + Redirect URI (**no se sube a git**) |
 | `tokens.json` | Tokens vivos (**no se sube a git**) |
 
 Cada uno corre también suelto desde la Terminal: `python reporte.py`,
 `python alertas_stock.py 60`, `python reclamos.py 90`, `python full.py`,
-`python buybox.py 150`, `python promociones.py 300`.
+`python buybox.py 150`, `python promociones.py 300`,
+`python precio_minimo.py 15`, `python ventana.py 15`.
 
 ---
 
@@ -355,7 +358,7 @@ Once secciones:
 | **Stock ML** | Cambio masivo de stock desde planilla | **sí** |
 | **Control de stock** | Registro propio de unidades, con historial | no (registro propio) |
 | **Rentabilidad** | Margen por SKU con cargos reales | no |
-| **Precios mínimos** | Precio mínimo viable por SKU y suba en lote | **sí** (cambia precios) |
+| **Precio óptimo** | Ventana de precio por SKU (piso + Buy Box + escalón) y cambio en lote | **sí** (cambia precios) |
 | **Competencia** | Mejor precio por EAN | no |
 | **Oportunidades** | Siete análisis de plata sobre la mesa | no |
 
@@ -425,6 +428,29 @@ $3.005 que ningún aumento chico compensa.
 La escritura **no tiene ruta propia**: `planilla_de_precios()` arma la planilla
 que consume `actualizador.simular()`, para reusar el resolver de SKU, el aviso
 de variaciones mayores al 50% y la auditoría.
+
+
+### Ventana de precio — la trampa SKU vs publicación
+
+`ventana.py` junta el piso (`precio_minimo`), el techo útil (`price_to_win`) y
+el escalón de cargo fijo (`tramos`) en un precio sugerido por SKU.
+
+**El precio se aplica por SKU; el Buy Box se pelea por publicación.** De los
+721 SKU con página de catálogo, la publicación que pelea la página es la misma
+que toca el cambio de precio en **solo 186**. La primera versión usaba la
+publicación del resolver para leer el `price_to_win` y clasificaba 535 SKU como
+"fuera de catálogo" sin serlo.
+
+Ahora se busca la publicación de catálogo aparte y se marca `buybox_alcanzable`:
+cuando es falso, el caso es **"catálogo aparte"** y el consejo de Buy Box es
+informativo — esas se resuelven en *Ganar la venta*, publicación por
+publicación.
+
+El otro arreglo: "ventana amplia" al principio incluía los casos donde ganar la
+página exige **bajar** el precio, y sugería recortes de hasta 34% en productos
+sin ventas. Se separó en **"bajar para ganar"**, que queda fuera de la
+selección por defecto: resigna neto por unidad y solo conviene si el volumen lo
+paga, cosa que la API no sabe.
 
 ### Otros conceptos (impuestos, logístico, general)
 

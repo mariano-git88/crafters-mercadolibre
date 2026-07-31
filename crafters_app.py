@@ -33,13 +33,13 @@ import espejos
 import reclamos as rec
 import rentabilidad as rent
 import mayoristas
-import precio_minimo
 import preguntas as preg
 import promociones
 import reporte
 import stock_control
 import tramos
 import tutorial_crafters
+import ventana
 from catalogo import CACHE as CACHE_CATALOGO, bajar_catalogo
 from meli import Meli, MeliError
 
@@ -188,7 +188,7 @@ with enc_btn:
 seccion = st.segmented_control(
     "Sección", ["Reporte semanal", "Preguntas", "Alertas", "Ganar la venta",
                 "Precios", "Mayoristas", "Stock ML", "Control de stock",
-                "Rentabilidad", "Precios mínimos", "Competencia",
+                "Rentabilidad", "Precio óptimo", "Competencia",
                 "Oportunidades"],
     default="Reporte semanal", label_visibility="collapsed")
 
@@ -1691,177 +1691,219 @@ elif seccion == "Control de stock":
             except Exception as e:
                 st.error(f"No pude leer la planilla: {e}")
 
-elif seccion == "Precios mínimos":
-    st.markdown("#### Precio mínimo viable")
+elif seccion == "Precio óptimo":
+    st.markdown("#### Ventana de precio")
     st.caption(
-        "Es la herramienta inversa al Buy Box: en vez de *hasta dónde puedo "
-        "bajar*, **desde dónde no puedo bajar**. Calcula, por SKU, el precio "
-        "más chico que llega al margen objetivo contemplando costo, comisión "
-        "real, envío medido y los otros conceptos.")
+        "Junta las tres cuentas que hasta ahora estaban separadas: el **piso** "
+        "(abajo no llegás al margen), el **techo útil** (arriba perdés la "
+        "página de catálogo) y el **escalón de cargo fijo** (dentro de la "
+        "ventana no todos los precios rinden igual). Devuelve un precio "
+        "sugerido por SKU, con el motivo.")
 
-    costos_pm = bloque_costos("pm")
-    otros_pm = controles_otros_conceptos("pm")
+    with st.expander("Los seis casos y por qué piden cosas distintas"):
+        st.markdown(
+            "- **Ventana amplia** — podés acomodar el precio *y* quedarte con "
+            "la página. Es el único caso donde no se resigna nada.\n"
+            "- **Bajar para ganar** — ganar la página exige bajar. El margen "
+            "lo aguanta, pero se resigna neto por unidad: **solo conviene si "
+            "el volumen extra lo compensa**, y eso no sale de ningún dato de "
+            "la API. Por eso no entra en la selección automática.\n"
+            "- **Sin ventana** — ganar la página exige vender por debajo de "
+            "tu piso. No es problema de precio sino de costo, o de contra "
+            "quién te estás midiendo.\n"
+            "- **Ya ganás** — tenés la página; lo único a mirar es si podés "
+            "acomodar el precio sin perderla.\n"
+            "- **Catálogo en otra publicación** — la página la pelea otra "
+            "publicación del mismo SKU, que este cambio de precio **no "
+            "toca**. El Buy Box de esas se resuelve en *Ganar la venta*.\n"
+            "- **Fuera de catálogo** — no hay página que ganar, manda el "
+            "piso.")
 
-    z1, z2, z3 = st.columns(3)
-    iva_pm = z1.selectbox(
+    costos_vt = bloque_costos("vt")
+    otros_vt = controles_otros_conceptos("vt")
+
+    t1, t2, t3 = st.columns(3)
+    iva_vt = t1.selectbox(
         "IVA a descontar", [0.21, 0.105, 0.0],
-        format_func=lambda x: f"{x:.1%}" if x else "Sin descontar", key="iva_pm")
-    # En puntos porcentuales enteros: ver la nota en Buy Box.
-    objetivo_pm = z2.slider(
-        "Margen objetivo", 0, 40, 15, 1, format="%d%%", key="obj_pm",
+        format_func=lambda x: f"{x:.1%}" if x else "Sin descontar", key="iva_vt")
+    objetivo_vt = t2.slider(
+        "Margen objetivo", 0, 40, 15, 1, format="%d%%", key="obj_vt",
         help="Alimenta el cálculo: si lo cambiás hay que volver a apretar "
-             "«Calcular precios mínimos». El resto de los filtros sí se "
-             "aplican al instante.") / 100
-    z3.write("")
-    if costos_pm is not None and z3.button("Calcular precios mínimos",
+             "«Calcular». El resto de los filtros se aplican al instante."
+        ) / 100
+    t3.write("")
+    if costos_vt is not None and t3.button("Calcular la ventana",
                                            use_container_width=True):
-        with st.spinner("Despejando el precio mínimo de cada SKU..."):
-            st.session_state["pmin"] = precio_minimo.analizar(
-                costos_pm, cargos_cacheados(ml), pubs, iva=iva_pm,
-                otros_conceptos=otros_pm, objetivo=objetivo_pm)
+        estado = st.empty()
+        with st.spinner("Cruzando piso, Buy Box y escalones..."):
+            cat_ids = [p["id"] for p in pubs
+                       if p.get("status") == "active"
+                       and p.get("catalog_listing")]
+            ptw = buybox.traer_price_to_win(
+                ml, cat_ids, callback=lambda m: estado.caption(str(m)))
+            st.session_state["vent"] = ventana.analizar(
+                costos_vt, cargos_cacheados(ml), pubs, iva=iva_vt,
+                otros_conceptos=otros_vt, objetivo=objetivo_vt,
+                ptw_por_item=ptw)
+        estado.empty()
+    st.caption(
+        f"La primera corrida consulta el Buy Box de cada publicación de "
+        f"catálogo y tarda unos minutos; después se cachea "
+        f"{buybox.VIGENCIA_HORAS} horas.")
 
-    dpm = st.session_state.get("pmin")
-    if dpm is not None and len(dpm):
-        rp = precio_minimo.resumen(dpm)
-        y1, y2, y3, y4 = st.columns(4)
-        y1.metric("Ya están bien", rp["ok"])
-        y2.metric("Hay que subir", rp["a_subir"])
-        y3.metric("Perdiendo hoy", rp["perdiendo_hoy"])
-        y4.metric("Suba mediana", f"{rp['suba_mediana']:.0%}")
-        st.metric("Plata perdida en el período",
-                  pesos(abs(rp["perdida_periodo"])))
+    dvt = st.session_state.get("vent")
+    if dvt is not None and len(dvt):
+        rv = ventana.resumen(dvt)
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Ventana amplia", rv["ventana_amplia"])
+        c2.metric("Bajar para ganar", rv["bajar_para_ganar"])
+        c3.metric("Sin ventana", rv["sin_ventana"])
+        c4, c5, c6 = st.columns(3)
+        c4.metric("Ya ganás la página", rv["ya_ganan"])
+        c5.metric("Catálogo en otra pub.", rv["catalogo_aparte"])
+        c6.metric("Fuera de catálogo", rv["fuera"])
 
-        if rp["cruzan_escalon"]:
+        st.metric("Impacto de los que mejoran", pesos(rv["impacto"]))
+        st.caption(
+            "El impacto asume **el mismo volumen** que el período medido. "
+            "Cambiar el precio cambia el volumen, así que es una referencia "
+            "de tamaño, no una proyección.")
+
+        if rv["cruzan_escalon"]:
             st.info(
-                f"**{rp['cruzan_escalon']} de las subas cruzan un escalón de "
-                "cargo fijo.** Arriba de $33.000 el cargo fijo de ML es cero, "
-                "así que a veces el precio mínimo cae justo ahí aunque el "
-                "producto valga menos: cruzar el escalón elimina $3.005 que "
-                "ningún aumento chico compensa.", icon="🪜")
+                f"**{rv['cruzan_escalon']} sugerencias cruzan un escalón de "
+                "cargo fijo.** Arriba de $33.000 el cargo fijo de ML es cero: "
+                "hay casos donde subir unos pesos casi duplica el neto por "
+                "unidad.", icon="🪜")
 
-        st.markdown("###### Criterio para subir")
-        x1, x2 = st.columns(2)
-        suba_max = x1.slider(
-            "Suba máxima aceptada", 1,
-            int(precio_minimo.TECHO_DE_SUBA * 100), 30, 1,
-            format="%d%%", key="sub_pm",
-            help=f"Tope duro del sistema: "
-                 f"{precio_minimo.TECHO_DE_SUBA:.0%}.") / 100
-        unid_pm = x2.number_input("Unidades mínimas en el período",
-                                  min_value=0, value=5, step=1, key="un_pm")
-        w1, w2 = st.columns([2.4, 1.6])
-        marcas_pm = w1.multiselect(
+        st.markdown("###### Criterio")
+        d1, d2 = st.columns(2)
+        cambio_max = d1.slider("Cambio máximo de precio", 1, 100, 20, 1,
+                               format="%d%%", key="cm_vt") / 100
+        unid_vt = d2.number_input("Unidades mínimas en el período",
+                                  min_value=0, value=5, step=1, key="un_vt")
+        e1, e2 = st.columns([2.4, 1.6])
+        casos_vt = e1.multiselect(
+            "Casos a incluir", sorted(dvt["caso"].unique()),
+            default=[c for c in sorted(dvt["caso"].unique())
+                     if c != "bajar para ganar"],
+            key="cs_vt",
+            help="«Bajar para ganar» queda afuera por defecto: resigna neto "
+                 "por unidad y solo conviene si el volumen lo paga.")
+        marcas_vt = e2.multiselect(
             "Marcas (vacío = todas)",
-            sorted(m for m in dpm["marca"].dropna().unique() if m),
-            key="mk_pm")
-        with w2:
-            st.write("")
-            solo_perd = st.checkbox(
-                "Solo las que hoy pierden plata", value=True, key="sp_pm",
-                help="Las que ganan pero no llegan al objetivo son menos "
-                     "urgentes y meten ruido en un lote grande.")
+            sorted(m for m in dvt["marca"].dropna().unique() if m),
+            key="mk_vt")
 
-        sel_pm = precio_minimo.seleccionar(
-            dpm, suba_maxima=suba_max, unidades_minimas=unid_pm,
-            marcas=marcas_pm or None, solo_perdida=solo_perd)
-        st.markdown(cumplen(len(sel_pm)))
+        sel_vt = ventana.seleccionar(
+            dvt, casos=casos_vt or None, cambio_maximo=cambio_max,
+            unidades_minimas=unid_vt, marcas=marcas_vt or None)
+        st.markdown(cumplen(len(sel_vt)))
 
-        if len(sel_pm):
+        if len(sel_vt):
             st.caption("**Tildá filas para elegir a mano.** Si no seleccionás "
                        "ninguna van todas las que cumplen.")
-            ev_pm = st.dataframe(
-                sel_pm[["sku", "marca", "titulo", "precio_actual",
-                        "precio_minimo", "subir_pct", "margen_hoy",
-                        "margen_al_minimo", "unidades", "cruza_escalon"]],
-                use_container_width=True, height=340, hide_index=True,
-                key="tabla_pm", on_select="rerun", selection_mode="multi-row",
+            ev_vt = st.dataframe(
+                sel_vt[["sku", "marca", "titulo", "caso", "precio_actual",
+                        "piso", "precio_para_ganar", "precio_sugerido",
+                        "cambio_pct", "neto_actual", "neto_sugerido",
+                        "impacto_periodo", "unidades", "cruza_escalon"]],
+                use_container_width=True, height=360, hide_index=True,
+                key="tabla_vt", on_select="rerun", selection_mode="multi-row",
                 column_config={
                     "sku": "SKU", "marca": "Marca", "titulo": "Título",
+                    "caso": "Caso",
                     "precio_actual": st.column_config.NumberColumn(
                         "Precio hoy", format="%.0f"),
-                    "precio_minimo": st.column_config.NumberColumn(
-                        "Precio mínimo", format="%.0f"),
-                    "subir_pct": st.column_config.NumberColumn(
-                        "Subir", format="percent"),
-                    "margen_hoy": st.column_config.NumberColumn(
-                        "Margen hoy", format="%.0f"),
-                    "margen_al_minimo": st.column_config.NumberColumn(
-                        "Margen al mínimo", format="%.0f"),
+                    "piso": st.column_config.NumberColumn(
+                        "Piso", format="%.0f",
+                        help="Abajo de acá no llegás al margen objetivo"),
+                    "precio_para_ganar": st.column_config.NumberColumn(
+                        "Para ganar", format="%.0f"),
+                    "precio_sugerido": st.column_config.NumberColumn(
+                        "Sugerido", format="%.0f"),
+                    "cambio_pct": st.column_config.NumberColumn(
+                        "Cambio", format="percent"),
+                    "neto_actual": st.column_config.NumberColumn(
+                        "Neto hoy", format="%.0f"),
+                    "neto_sugerido": st.column_config.NumberColumn(
+                        "Neto sugerido", format="%.0f"),
+                    "impacto_periodo": st.column_config.NumberColumn(
+                        "Impacto", format="%.0f"),
                     "unidades": "Unidades",
                     "cruza_escalon": st.column_config.CheckboxColumn(
                         "Cruza escalón")})
 
-            elegidas_pm = list(getattr(ev_pm.selection, "rows", []) or [])
-            aplicar_pm = sel_pm.iloc[elegidas_pm] if elegidas_pm else sel_pm
-            if elegidas_pm:
-                st.info(f"Vas a aplicar solo las **{len(aplicar_pm)}** que "
+            elegidas_vt = list(getattr(ev_vt.selection, "rows", []) or [])
+            aplicar_vt = sel_vt.iloc[elegidas_vt] if elegidas_vt else sel_vt
+            if elegidas_vt:
+                st.info(f"Vas a aplicar solo las **{len(aplicar_vt)}** que "
                         "tildaste.", icon="👉")
+
+            with st.expander("Ver el motivo de cada sugerencia"):
+                for _, f in aplicar_vt.head(20).iterrows():
+                    st.markdown(f"**{f['sku']}** · {f['caso']} · "
+                                f"{pesos(f['precio_actual'])} → "
+                                f"{pesos(f['precio_sugerido'])}")
+                    st.caption(f["motivo"])
 
             st.divider()
             st.warning(
-                "**Subir precios cambia lo que ve el comprador y puede hacerte "
-                "perder ventas.** El cálculo dice qué precio necesitás para el "
-                "margen objetivo, no si el mercado lo va a pagar. Mirá antes "
-                "la sección *Competencia* o el Buy Box de estos productos.",
-                icon="⚠️")
+                "**Cambiar precios cambia lo que ve el comprador.** El "
+                "cálculo dice qué precio te conviene según tus costos y la "
+                "competencia de catálogo, **no si el mercado lo va a "
+                "pagar**.", icon="⚠️")
 
-            if st.button("Simular el cambio de precios", key="sim_pm"):
-                planilla = precio_minimo.planilla_de_precios(aplicar_pm)
-                st.session_state["pmin_sim"] = act.simular(
-                    planilla, pubs, "precio", col_clave="sku",
-                    col_valor="precio")
+            if st.button("Simular el cambio de precios", key="sim_vt"):
+                st.session_state["vent_sim"] = act.simular(
+                    ventana.planilla_de_precios(aplicar_vt), pubs, "precio",
+                    col_clave="sku", col_valor="precio")
 
-            sim_pm = st.session_state.get("pmin_sim")
-            if sim_pm is not None and len(sim_pm):
-                # Se pasa por el motor de Precios a propósito: trae el
-                # resolver de SKU, el aviso de cambios grandes y la auditoría.
-                revisar = int((sim_pm["accion"] == "revisar").sum())
-                listas = int((sim_pm["accion"] == "actualizar").sum())
-                v1, v2 = st.columns(2)
-                v1.metric("Listas para aplicar", listas)
-                v2.metric("Marcadas para revisar", revisar)
+            sim_vt = st.session_state.get("vent_sim")
+            if sim_vt is not None and len(sim_vt):
+                revisar = int((sim_vt["accion"] == "revisar").sum())
+                f1, f2 = st.columns(2)
+                f1.metric("Listas para aplicar",
+                          int((sim_vt["accion"] == "actualizar").sum()))
+                f2.metric("Marcadas para revisar", revisar)
                 if revisar:
                     st.error(
                         f"**{revisar} superan el "
                         f"{act.UMBRAL_ALERTA_PRECIO:.0%} de variación** y no "
-                        "se aplican salvo que lo pidas aparte. Con la "
-                        "estructura completa el modelo pide subas muy "
-                        "grandes: conviene mirarlas una por una.", icon="🛑")
-
-                st.dataframe(sim_pm, use_container_width=True, height=300,
+                        "se aplican salvo que lo pidas aparte.", icon="🛑")
+                st.dataframe(sim_vt, use_container_width=True, height=280,
                              hide_index=True)
 
-                op_pm = st.text_input("Tu nombre (queda en el registro)",
-                                      key="op_pm")
-                inc_rev = st.checkbox(
-                    "Incluir también las marcadas para revisar", key="rev_pm")
-                conf_pm = st.checkbox(
+                op_vt = st.text_input("Tu nombre (queda en el registro)",
+                                      key="op_vt")
+                inc_vt = st.checkbox("Incluir también las marcadas para "
+                                     "revisar", key="rev_vt")
+                conf_vt = st.checkbox(
                     "Confirmo que quiero cambiar estos precios en "
-                    "MercadoLibre", key="conf_pm")
-                if st.button("Aplicar en MercadoLibre", key="go_pm",
-                             disabled=not (conf_pm and op_pm.strip())):
+                    "MercadoLibre", key="conf_vt")
+                if st.button("Aplicar en MercadoLibre", key="go_vt",
+                             disabled=not (conf_vt and op_vt.strip())):
                     barra = st.progress(0.0, text="Aplicando...")
-                    res_pm = act.aplicar(
-                        ml, sim_pm, "precio", operador=op_pm.strip(),
-                        incluir_revisar=inc_rev,
+                    res_vt = act.aplicar(
+                        ml, sim_vt, "precio", operador=op_vt.strip(),
+                        incluir_revisar=inc_vt,
                         callback=lambda i, t, f: barra.progress(
                             i / t, text=f"Aplicando {i} de {t}..."))
                     barra.empty()
-                    ok = int((res_pm["resultado"] == "OK").sum())
-                    if ok == len(res_pm):
+                    ok = int((res_vt["resultado"] == "OK").sum())
+                    if ok == len(res_vt):
                         st.success(f"{ok} precios actualizados.")
                     else:
-                        st.error(f"{ok} aplicados, {len(res_pm) - ok} "
-                                 "con error.")
-                    st.dataframe(res_pm, use_container_width=True,
+                        st.error(f"{ok} aplicados, {len(res_vt) - ok} con error.")
+                    st.dataframe(res_vt, use_container_width=True,
                                  hide_index=True)
-                    st.session_state.pop("pmin", None)
-                    st.session_state.pop("pmin_sim", None)
+                    st.session_state.pop("vent", None)
+                    st.session_state.pop("vent_sim", None)
 
-            st.download_button(
-                "Descargar el análisis completo",
-                dpm.to_csv(index=False).encode("utf-8"),
-                f"precio_minimo_{datetime.now():%Y%m%d}.csv", "text/csv")
+        st.download_button(
+            "Descargar el análisis completo",
+            dvt.to_csv(index=False).encode("utf-8"),
+            f"ventana_{datetime.now():%Y%m%d}.csv", "text/csv")
 
 elif seccion == "Competencia":
     st.markdown("#### Mejor precio de la competencia por EAN")
