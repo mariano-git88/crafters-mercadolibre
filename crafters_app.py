@@ -644,7 +644,7 @@ if seccion == "Plata sobre la mesa":
         st.markdown("##### Aplicar los cambios de precio")
         st.caption(
             "De las cuatro acciones, **dos se resuelven cambiando un "
-            "precio** y se pueden aplicar desde acá: *pierde plata* y *subir "
+            "precio** y se pueden aplicar desde acá: *pierde plata* y *correr "
             "al escalón*. Reponer stock se hace comprando mercadería y las "
             "promociones se toman desde el panel de MercadoLibre, así que "
             "ésas quedan afuera.")
@@ -1242,11 +1242,11 @@ elif seccion == "Ganar la venta":
                         f"**{rc['cruzan_escalon']} publicaciones cruzarían un "
                         "escalón de cargo fijo al bajar.** MercadoLibre cobra "
                         "un porcentaje más un cargo fijo por unidad, y ese "
-                        "cargo salta en escalones: el más grande está en "
-                        "\\$33.000, donde pasa de cero a \\$3.005. Bajar de "
-                        "\\$34.000 a \\$32.000 cuesta mucho más que los \\$2.000 de "
-                        "diferencia. El margen ya lo tiene en cuenta y por "
-                        "defecto quedan excluidas.", icon="🪜")
+                        "cargo salta en escalones, y en \\$33.000 también "
+                        "cambia quién paga el envío. Bajar de \\$34.000 a "
+                        "\\$32.000 te suma \\$3.005 de cargo fijo pero te saca "
+                        "~\\$7.641 de envío de encima: **suele convenir**. El "
+                        "margen ya lo tiene en cuenta.", icon="🪜")
 
                 st.markdown("###### Criterio para bajar")
                 k1, k2, k3 = st.columns(3)
@@ -2034,9 +2034,10 @@ elif seccion == "Precio óptimo":
         if rv["cruzan_escalon"]:
             st.info(
                 f"**{rv['cruzan_escalon']} sugerencias cruzan un escalón de "
-                "cargo fijo.** Arriba de $33.000 el cargo fijo de ML es cero: "
-                "hay casos donde subir unos pesos casi duplica el neto por "
-                "unidad.", icon="🪜")
+                "cargo fijo.** Ojo con el de \\$33.000: ahí el cargo fijo se "
+                "hace cero, pero el envío pasa a pagarlo el vendedor "
+                "(~\\$7.641), así que lo que conviene es quedarse **debajo**, "
+                "no cruzarlo hacia arriba.", icon="🪜")
 
         st.markdown("###### Criterio")
         d1, d2 = st.columns(2)
@@ -2695,19 +2696,27 @@ elif seccion == "Oportunidades":
     elif op == "Tramos de comisión":
         st.caption(
             "MercadoLibre cobra un porcentaje **más un cargo fijo por unidad**, "
-            "y ese cargo salta en escalones. Hay precios donde **subir unos "
-            "pesos deja más plata neta**, porque cruzar el escalón baja o "
-            "elimina el cargo fijo.")
+            "y ese cargo salta en escalones de precio. El de \\$33.000 **parece "
+            "una oportunidad y es lo contrario**: ahí el cargo fijo desaparece, "
+            "pero el envío pasa a pagarlo el vendedor y cuesta bastante más de "
+            "lo que ahorrás.")
 
         with st.expander("Los escalones de tu cuenta"):
             st.markdown(
-                "| Precio | Cargo fijo por unidad |\n|---|---|\n"
-                "| menos de \\$16.000 | \\$1.250 |\n"
-                "| \\$16.000 a \\$23.999 | \\$2.505 |\n"
-                "| \\$24.000 a \\$32.999 | \\$3.005 |\n"
-                "| **\\$33.000 o más** | **\\$0** |\n\n"
-                "Medidos contra la API por búsqueda binaria. El salto de "
-                "$33.000 es el más fuerte: ahí el cargo fijo desaparece.")
+                "| Precio | Cargo fijo | Envío |\n|---|---|---|\n"
+                "| menos de \\$16.000 | \\$1.250 | lo paga el comprador |\n"
+                "| \\$16.000 a \\$23.999 | \\$2.505 | lo paga el comprador |\n"
+                "| \\$24.000 a \\$32.999 | \\$3.005 | lo paga el comprador |\n"
+                "| **\\$33.000 o más** | **\\$0** | **lo pagás vos (~\\$7.641)** |\n\n"
+                "Los cargos fijos están medidos contra la API por búsqueda "
+                "binaria. El umbral del envío está medido sobre 5.170 ventas "
+                "reales: debajo de \\$33.000 solo el 6% de las órdenes tiene "
+                "costo de envío para vos; desde \\$33.000, el **99%**.\n\n"
+                "Por eso cruzar \\$33.000 hacia arriba **cuesta ~\\$4.600 por "
+                "unidad**: ahorrás \\$3.005 de cargo fijo y te cargás \\$7.641 de "
+                "envío. La oportunidad está al revés: los productos apenas por "
+                "encima de \\$33.000 dejan más plata bajando a \\$32.999 — y "
+                "encima se venden más baratos.")
 
         if st.button("Analizar el catálogo"):
             with st.spinner("Calculando..."):
@@ -2734,8 +2743,14 @@ elif seccion == "Oportunidades":
                         "Precio hoy", format="%.0f"),
                     "precio_sugerido": st.column_config.NumberColumn(
                         "Precio sugerido", format="%.0f"),
-                    "sube_precio": st.column_config.NumberColumn(
-                        "Sube", format="percent"),
+                    "cambia_precio": st.column_config.NumberColumn(
+                        "Cambia", format="percent"),
+                    "motivo": "Por qué",
+                    "envio_actual": st.column_config.NumberColumn(
+                        "Envío hoy", format="%.0f"),
+                    "envio_nuevo": st.column_config.NumberColumn(
+                        "Envío nuevo", format="%.0f"),
+                    "sube_precio": None,
                     "gana_por_unidad": st.column_config.NumberColumn(
                         "Ganás por unidad", format="%.0f"),
                     "neto_actual": st.column_config.NumberColumn(
@@ -2758,9 +2773,10 @@ elif seccion == "Oportunidades":
                      "la sección Precios")
 
             st.info(
-                "Antes de aplicar: subir un precio puede bajar la conversión. "
-                "Conviene empezar por las que **más ganan por unidad y menos "
-                "suben** — las que ya están cerca del escalón.", icon="💡")
+                "Casi todas las sugerencias son **bajas** de precio: al "
+                "quedar debajo de \\$33.000 el envío vuelve a pagarlo el "
+                "comprador. Bajar no baja la conversión, así que se pueden "
+                "aplicar con más tranquilidad que una suba.", icon="💡")
 
     else:
         st.caption(

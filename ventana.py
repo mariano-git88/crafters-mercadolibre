@@ -29,10 +29,11 @@ Los cuatro casos que salen, y por que piden cosas distintas:
     subir hasta el piso (o mas) sin perderla.
   - **Fuera de catalogo**: no hay pagina que ganar, manda el piso.
 
-Sobre el escalon: cuando el precio sugerido queda apenas por debajo de un
-umbral de cargo fijo, se evalua correrlo hasta el umbral. Arriba de $33.000 el
-cargo fijo es cero, asi que subir unos pesos puede dejar mas neto que quedarse
-abajo — y a veces incluso mas que el precio "optimo" sin mirar el escalon.
+Sobre el escalon: cuando el precio sugerido queda cerca de un umbral, se
+evalua correrlo hasta el borde **para los dos lados**. En $33.000 pasan dos
+cosas a la vez: el cargo fijo se hace cero (a favor) y el envio pasa a pagarlo
+el vendedor, ~$7.641 (en contra, y mas grande). Por eso lo que suele dejar mas
+neto es quedarse en $32.999, no cruzar. Ver `tramos.envio_a_cargo()`.
 """
 
 import json
@@ -49,40 +50,65 @@ DIR = Path(__file__).resolve().parent
 # de cargo fijo, si eso deja mas neto. Mismo criterio que tramos.py.
 MARGEN_CRUCE = 0.08
 
+# Cuanto se acepta BAJARLO para quedar debajo de $33.000 y esquivar el envio
+# a cargo del vendedor. Se permite mas margen que para subir, porque bajar el
+# precio ademas deberia ayudar al volumen.
+MARGEN_BAJADA = 0.12
+
 
 def _neto_por_unidad(precio, pct, envio, costo, iva, otros):
-    """Lo que queda por unidad a un precio dado, despues de todo."""
+    """
+    Lo que queda por unidad a un precio dado, despues de todo.
+
+    `envio` es el promedio historico del SKU, y **no se usa tal cual**: pasa
+    por `tramos.envio_a_cargo()`, que decide si a ESE precio el envio lo paga
+    el vendedor. Desde $33.000 lo paga el vendedor; debajo, el comprador.
+    """
     from rentabilidad import otros_conceptos_monto
-    from tramos import cargo_fijo
+    from tramos import cargo_fijo, envio_a_cargo
 
     ingreso = precio / (1 + iva)
     _, otros_monto = otros_conceptos_monto(ingreso, otros)
-    return ingreso - otros_monto - precio * pct - cargo_fijo(precio) - envio - costo
+    return (ingreso - otros_monto - precio * pct - cargo_fijo(precio)
+            - envio_a_cargo(precio, envio) - costo)
 
 
 def _mejor_con_escalon(precio, pct, envio, costo, iva, otros,
                        techo=None, margen_cruce=MARGEN_CRUCE):
     """
-    Si correr el precio hasta el proximo umbral de cargo fijo deja mas neto,
-    devuelve ese precio. Si no, el original.
+    Corre el precio hasta el borde de escalon que deje mas neto, para arriba o
+    para abajo. Si ninguno mejora, devuelve el original.
 
-    `techo` limita hasta donde se puede llegar (por ejemplo, el precio para
+    **Para abajo importa tanto como para arriba.** Un producto apenas por
+    encima de $33.000 esta pagando ~$7.641 de envio para ahorrarse $3.005 de
+    cargo fijo: bajarlo a $32.999 deja mas plata y encima se vende mas barato.
+
+    `techo` limita hasta donde se puede subir (por ejemplo, el precio para
     ganar el Buy Box: no sirve cruzar el escalon si eso te saca de la pagina).
     """
     from tramos import TRAMOS
 
     mejor, neto_mejor = precio, _neto_por_unidad(precio, pct, envio, costo,
                                                  iva, otros)
+
+    candidatos = []
     for tope, _ in TRAMOS:
         if tope == float("inf") or tope <= precio:
             continue
-        if tope > precio * (1 + margen_cruce):
-            break
-        if techo is not None and tope > techo:
-            break
-        neto = _neto_por_unidad(tope, pct, envio, costo, iva, otros)
+        if tope <= precio * (1 + margen_cruce) and (techo is None or tope <= techo):
+            candidatos.append(float(tope))
+        break
+
+    bordes = [t for t, _ in TRAMOS if t != float("inf") and t <= precio]
+    if bordes:
+        abajo = float(max(bordes)) - 1.0
+        if abajo >= precio * (1 - MARGEN_BAJADA):
+            candidatos.append(abajo)
+
+    for c in candidatos:
+        neto = _neto_por_unidad(c, pct, envio, costo, iva, otros)
         if neto > neto_mejor:
-            mejor, neto_mejor = float(tope), neto
+            mejor, neto_mejor = c, neto
     return mejor
 
 

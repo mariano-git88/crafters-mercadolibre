@@ -36,7 +36,7 @@ DIR = Path(__file__).resolve().parent
 # Las unicas dos acciones que se resuelven cambiando un precio, o sea las que
 # la app puede ejecutar sola. Reponer stock se hace comprando mercaderia; tomar
 # una promo, desde el panel de MercadoLibre.
-ACCIONES_EJECUTABLES = ("revisar_perdida", "subir_escalon")
+ACCIONES_EJECUTABLES = ("revisar_perdida", "correr_escalon")
 
 # Tope duro de cambio para la ejecucion desde esta pantalla. Es MAS ESTRICTO
 # que el de Precio optimo (100%) a proposito: aca se ejecuta en lote desde una
@@ -50,7 +50,7 @@ TECHO_DE_CAMBIO = 0.30
 
 ACCIONES = {
     "reponer": "Reponer stock",
-    "subir_escalon": "Subir al escalón de comisión",
+    "correr_escalon": "Correr el precio al borde del escalón",
     "revisar_perdida": "Revisar: pierde plata",
     "tomar_promo": "Tomar promoción cofinanciada",
 }
@@ -89,8 +89,16 @@ def de_stock(df_stock):
 
 def de_escalon(df_ventana, cambio_max=0.20, unidades_min=3):
     """
-    Subas chicas que cruzan el escalon de $33.000, donde el cargo fijo de ML
-    pasa a cero. Es lo mas cercano a plata gratis que hay.
+    Cambios chicos de precio que aprovechan un escalon de ML.
+
+    **Casi siempre son BAJAS, no subas.** El escalon de $33.000 ahorra $3.005
+    de cargo fijo pero activa ~$7.641 de envio a cargo del vendedor, asi que
+    lo que deja plata es quedarse debajo de esa linea, no cruzarla. Un
+    producto a $33.079 baja a $32.999 —dos decimas de por ciento— y gana
+    ~$4.566 por unidad.
+
+    Hasta jul 2026 esto decia lo contrario y recomendaba subir: el neto se
+    calculaba sin el envio. Ver `tramos.envio_a_cargo()`.
 
     Solo entran las que **mejoran el neto** y no arriesgan una pagina de
     catalogo que hoy se este ganando.
@@ -107,7 +115,7 @@ def de_escalon(df_ventana, cambio_max=0.20, unidades_min=3):
     filas = []
     for _, f in sel.iterrows():
         filas.append({
-            "accion": "subir_escalon",
+            "accion": "correr_escalon",
             "sku": f["sku"],
             "titulo": f["titulo"],
             "detalle": (f"${f['precio_actual']:,.0f} → "
@@ -203,7 +211,7 @@ def de_promos(df_promos):
 # que mezcle las dos es un numero lindo y mentiroso.
 UNIDAD = {
     "reponer": "facturación",
-    "subir_escalon": "margen",
+    "correr_escalon": "margen",
     "revisar_perdida": "margen",
     "tomar_promo": "sin cuantificar",
 }

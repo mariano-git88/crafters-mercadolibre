@@ -10,20 +10,28 @@ bajar"; esta pregunta **"desde donde no puedo bajar"**, que con los costos
 reales de CRAFTERS resulto ser el problema grande: 197 SKU vendieron a perdida
 en 90 dias.
 
-**El detalle que hace toda la diferencia: el cargo fijo.** MercadoLibre cobra
+**El detalle que hace toda la diferencia: los escalones.** MercadoLibre cobra
 un porcentaje mas un cargo fijo por unidad, y ese cargo salta en escalones
-(ver `tramos.py`). Arriba de $33.000 el cargo fijo es **cero**. Eso hace que
-el precio minimo NO se pueda despejar con una sola cuenta: hay que resolverlo
-por tramo y quedarse con el menor precio que efectivamente cierra.
+(ver `tramos.py`). Eso hace que el precio minimo NO se pueda despejar con una
+sola cuenta: hay que resolverlo por tramo y quedarse con el menor precio que
+efectivamente cierra.
 
-Y produce un resultado que parece un error y no lo es: a veces el precio
-minimo viable esta **justo en $33.000** aunque el producto valga bastante
-menos, porque cruzar el escalon elimina un cargo fijo de $3.005 que ningun
-aumento chico logra compensar.
+**El envio es el otro escalon, y es mas grande que el cargo fijo.** Desde
+$33.000 el envio deja de pagarlo el comprador y pasa a pagarlo el vendedor:
+~$7.641 de mediana, contra los $3.005 de cargo fijo que se ahorran. O sea que
+cruzar $33.000 **encarece** el producto en ~$4.600 por unidad.
+
+Durante meses esta funcion recibio el envio como una constante por SKU (el
+promedio historico) y por eso devolvia precios minimos justo arriba de
+$33.000, creyendo que ahi se ahorraba plata. Un producto que hoy vende debajo
+del umbral tiene promedio ~0, y al empujarlo por encima se seguia calculando
+con envio cero. Ahora el envio pasa por `tramos.envio_a_cargo()`, que lo
+evalua **al precio candidato**.
 
 La cuenta, con el ingreso ya sin IVA:
 
-    margen = ingreso*(1 - otros) - precio*pct - cargo_fijo(precio) - envio - costo
+    margen = ingreso*(1 - otros) - precio*pct - cargo_fijo(precio) \\
+             - envio_a_cargo(precio) - costo
 
 y se busca el precio mas chico donde `margen >= objetivo * precio`.
 """
@@ -39,11 +47,15 @@ from meli import Meli, MeliError
 DIR = Path(__file__).resolve().parent
 
 
+def _bandas_topes():
+    from tramos import TRAMOS
+    return TRAMOS
+
+
 def _bandas():
     """Los tramos de cargo fijo como (desde, hasta, fijo)."""
-    from tramos import TRAMOS
     bandas, desde = [], 0.0
-    for tope, fijo in TRAMOS:
+    for tope, fijo in _bandas_topes():
         bandas.append((desde, float(tope), float(fijo)))
         desde = float(tope)
     return bandas
@@ -57,14 +69,31 @@ def precio_minimo(costo, pct, envio, iva=0.21, otros=None, objetivo=0.15):
     porcentual mas los conceptos porcentuales mas el objetivo se comen todo
     el ingreso, y ahi subir el precio no arregla nada.
 
-    **Hay dos escalones distintos que resolver, no uno.** El cargo fijo de ML
-    salta por tramos de precio, y el costo logistico es 10% **o $9.000, lo que
+    **Hay TRES escalones distintos que resolver, no uno.** El cargo fijo de ML
+    salta por tramos de precio; el costo logistico es 10% **o $9.000, lo que
     sea menor**, asi que arriba de cierto ingreso deja de ser porcentual y
-    pasa a ser un monto fijo. La ecuacion cambia de forma en cada combinacion,
-    asi que se resuelve en cada una y se toma el menor precio que de verdad
-    cierra en su propio tramo.
+    pasa a ser un monto fijo; y desde $33.000 el **envio** deja de pagarlo el
+    comprador y pasa a pagarlo el vendedor. La ecuacion cambia de forma en
+    cada combinacion, asi que se resuelve en cada una y se toma el menor
+    precio que de verdad cierra en su propio tramo.
+
+    `envio` es el promedio historico medido del SKU. **No se usa tal cual**:
+    se pasa por `tramos.envio_a_cargo()`, que decide si a ese precio el envio
+    corre por cuenta del vendedor. Usarlo como constante es lo que hacia que
+    esta funcion devolviera precios minimos apenas por encima de $33.000
+    creyendo que ahi se ahorraba el cargo fijo, cuando en realidad ahi arranca
+    un envio de ~$7.641 que se come el ahorro cuatro veces.
+
+    Funciona porque `UMBRAL_ENVIO_GRATIS` cae justo en un borde de `TRAMOS`:
+    dentro de cada banda el envio es constante.
     """
     from rentabilidad import OTROS_CONCEPTOS, TOPE_LOGISTICO
+    from tramos import UMBRAL_ENVIO_GRATIS, envio_a_cargo
+
+    assert any(t == UMBRAL_ENVIO_GRATIS for t, _ in _bandas_topes()), (
+        "El umbral de envio gratis dejo de coincidir con un borde de TRAMOS: "
+        "el envio ya no es constante dentro de cada banda y hay que partir "
+        "las bandas antes de resolver.")
 
     o = dict(OTROS_CONCEPTOS)
     if otros:
@@ -87,7 +116,8 @@ def precio_minimo(costo, pct, envio, iva=0.21, otros=None, objetivo=0.15):
         if k <= 0:
             continue
         for desde, hasta, fijo in _bandas():
-            base = fijo + envio + costo + extra
+            # El envio es constante dentro de la banda: se evalua en `desde`.
+            base = fijo + envio_a_cargo(desde, envio) + costo + extra
             p = base / k
             ingreso = p / (1 + iva)
             # Solo vale si el precio cae en la banda de cargo fijo Y en el
@@ -106,7 +136,8 @@ def precio_minimo(costo, pct, envio, iva=0.21, otros=None, objetivo=0.15):
                                    else (o["impuestos"] + o["general"],
                                          TOPE_LOGISTICO))
                 margen_b = (borde * (1 - tasa_b) / (1 + iva) - borde * pct
-                            - cargo_fijo_de(borde) - envio - costo - extra_b)
+                            - cargo_fijo_de(borde)
+                            - envio_a_cargo(borde, envio) - costo - extra_b)
                 if margen_b >= objetivo * borde:
                     candidatos.append(borde)
 

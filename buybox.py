@@ -139,6 +139,8 @@ def analizar(ml, pubs=None, tope=None, cargos=None, unidades=None,
     calcula que queda por unidad al precio para ganar. `unidades` es un dict
     SKU -> unidades del periodo, para priorizar por lo que realmente vende.
     """
+    from tramos import envio_a_cargo
+
     if pubs is None:
         pubs = json.loads((DIR / "catalogo.json").read_text(encoding="utf-8"))
 
@@ -194,7 +196,8 @@ def analizar(ml, pubs=None, tope=None, cargos=None, unidades=None,
 
         queda = None
         if ptw is not None and sku in envio_fijo:
-            queda = ptw * (1 - tasa_comision.get(sku, 0.0)) - envio_fijo[sku]
+            queda = (ptw * (1 - tasa_comision.get(sku, 0.0))
+                     - envio_a_cargo(ptw, envio_fijo[sku]))
 
         if estado_api == "winning":
             diag = "ganando"
@@ -270,10 +273,11 @@ def con_costos(df, costos_df, cargos_df, iva=0.0, margen_minimo=0.0,
        aplica al precio nuevo con el cargo fijo **del tramo del precio
        nuevo**.
 
-    2. Por eso mismo se marca `cruza_escalon`: bajar el precio puede meterte
-       en un tramo con cargo fijo mas caro. El salto grande esta en $33.000,
-       donde el cargo fijo pasa de cero a $3.005. Bajar de $34.000 a $32.000
-       cuesta bastante mas que los $2.000 de diferencia.
+    2. Por eso mismo se marca `cruza_escalon`: bajar el precio te cambia de
+       tramo de cargo fijo. El salto grande esta en $33.000, y ahi bajar
+       **conviene**: sumas $3.005 de cargo fijo pero te sacas ~$7.641 de envio
+       de encima, porque debajo de esa linea lo paga el comprador. Bajar de
+       $34.000 a $32.000 sale mas barato que los $2.000 de diferencia.
 
     3. Se descuentan los **otros conceptos** (impuestos, logistico, general)
        con los mismos porcentajes que usa Rentabilidad. Tiene que ser asi:
@@ -281,7 +285,7 @@ def con_costos(df, costos_df, cargos_df, iva=0.0, margen_minimo=0.0,
        los costos de estructura aprobaria bajas que Rentabilidad marca como
        perdida.
     """
-    from tramos import cargo_fijo
+    from tramos import cargo_fijo, envio_a_cargo
     from rentabilidad import OTROS_CONCEPTOS, otros_conceptos_monto
 
     otros = dict(OTROS_CONCEPTOS)
@@ -316,7 +320,12 @@ def con_costos(df, costos_df, cargos_df, iva=0.0, margen_minimo=0.0,
         com = cargos_a(precio, sku)
         ingreso = precio / (1 + iva)
         _, otros_monto = otros_conceptos_monto(ingreso, otros)
-        return ingreso - com - envio.get(sku, 0.0) - costos[sku] - otros_monto
+        # El envio se evalua AL PRECIO que se esta probando: bajar por debajo
+        # de $33.000 te lo saca de encima, y esta pantalla baja precios de
+        # verdad. Usar el promedio historico del SKU subestimaba el margen de
+        # las bajas que cruzan el umbral hacia abajo.
+        env = envio_a_cargo(precio, envio.get(sku, 0.0))
+        return ingreso - com - env - costos[sku] - otros_monto
 
     out = df.copy()
     out["costo"] = out["sku"].map(lambda s: costos.get(s))
