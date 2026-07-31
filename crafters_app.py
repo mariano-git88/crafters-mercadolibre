@@ -2616,12 +2616,31 @@ elif seccion == "Preguntas":
             "la publicación y las fuentes cargadas. **Si el contexto no alcanza, "
             "no responde**: deja la pregunta para que la vea una persona.")
 
-        pend = preg.pendientes(ml)
-        st.metric("Preguntas sin responder", len(pend))
+        pend, bloqueadas = preg.pendientes_detalle(ml)
+        p1, p2 = st.columns(2)
+        p1.metric("Sin responder", len(pend),
+                  help="Sobre publicaciones activas: se pueden contestar")
+        p2.metric("No se pueden responder", len(bloqueadas),
+                  help="MercadoLibre no deja responder preguntas de "
+                       "publicaciones que no están activas")
+
         if pend:
-            with st.expander("Ver las preguntas pendientes"):
+            with st.expander(f"Ver las {len(pend)} que se pueden responder"):
                 for q in pend:
                     st.markdown(f"- `{q['id']}` · {(q.get('text') or '')[:160]}")
+        if bloqueadas:
+            with st.expander(f"Ver las {len(bloqueadas)} bloqueadas"):
+                st.caption(
+                    "MercadoLibre marca estas preguntas como *sin responder* "
+                    "pero **no deja contestarlas** porque la publicación no "
+                    "está activa. Para responderlas hay que reactivar la "
+                    "publicación — normalmente reponiendo el stock.")
+                for q in bloqueadas:
+                    sub = q.get("item_sub_status") or q.get("item_status") or "?"
+                    st.markdown(
+                        f"- `{q['id']}` · _{sub}_ · "
+                        f"{(q.get('text') or '')[:120]}")
+                    st.caption(f"   {q.get('item_titulo', '')[:70]}")
 
         b1, b2 = st.columns(2)
         simular = b1.button("Redactar sin publicar", use_container_width=True,

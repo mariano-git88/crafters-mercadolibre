@@ -136,6 +136,7 @@ for item in ml.items_detalle(ids, atributos=["id", "title", "price",
 | `promociones.py` | Campañas que ML ofrece por publicación, con su aporte |
 | `precio_minimo.py` | El **piso**: precio más chico que llega al margen objetivo |
 | `ventana.py` | Junta piso + Buy Box + escalón en un precio sugerido por SKU |
+| `preguntas_cron.py` | Responde las preguntas nuevas sola; la invocan dos workflows |
 | `credentials.txt` | App ID + Secret + Redirect URI (**no se sube a git**) |
 | `tokens.json` | Tokens vivos (**no se sube a git**) |
 
@@ -429,6 +430,36 @@ La escritura **no tiene ruta propia**: `planilla_de_precios()` arma la planilla
 que consume `actualizador.simular()`, para reusar el resolver de SKU, el aviso
 de variaciones mayores al 50% y la auditoría.
 
+
+
+### Responder preguntas sola — y el presupuesto de Actions
+
+La regla del producto es: **apenas entra una pregunta la IA responde; si no
+puede, la deja para una persona**. Eso solo se cumple si corre solo, así que
+`preguntas_cron.py` se invoca desde dos lados:
+
+- **`sincronizar_stock.yml`**, como un paso más (8-21 AR, L-S, cada 15 min).
+  Va pegado ahí **por los minutos de Actions**: ese job ya pagó el checkout y
+  el `pip install`, que son la mayor parte del minuto, así que el paso extra
+  cuesta segundos. Lleva `continue-on-error` para no tirar abajo el sync.
+- **`responder_preguntas.yml`**, que cubre el hueco (noches y domingos) **cada
+  hora**.
+
+El presupuesto manda: el plan gratuito da 2.000 min/mes y el sync de stock ya
+se lleva ~1.456. Un workflow propio cada 15 minutos costaría ~2.100 y no
+entraba. Así queda en ~1.864.
+
+> Contrapartida honesta: una pregunta que entra a las 3 de la mañana puede
+> esperar hasta una hora. En horario comercial sale en 15 minutos o menos.
+
+### El historial se duplicaba en cada sincronización
+
+`sincronizar_historial()` decía ser idempotente por `question_id` pero no lo
+era: **gspread devuelve los `question_id` de la hoja como enteros** y se
+comparaban contra `str(q["id"])`. Ninguna existente matcheaba, todas entraban
+como nuevas. La hoja tenía **4.000 filas para 1.006 preguntas** (cada una hasta
+4 veces). Se corrigió normalizando con `str()` y se deduplicó la hoja
+conservando, por pregunta, la fila con respuesta más reciente.
 
 ### Ventana de precio — la trampa SKU vs publicación
 

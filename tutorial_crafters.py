@@ -20,7 +20,7 @@ def render() -> None:
         """
 ### ¿Qué hace esta app?
 
-Once secciones, cada una para una cosa:
+Doce secciones, cada una para una cosa:
 
 | Sección | Para qué sirve |
 |---|---|
@@ -37,15 +37,14 @@ Once secciones, cada una para una cosa:
 | **Competencia** | Quién vende más barato cada producto y en qué posición estás |
 | **Oportunidades** | Siete análisis para encontrar dónde estás dejando plata |
 
-**Precios** y **Stock ML** modifican la cuenta de verdad. Por eso nunca aplican
-nada sin mostrarte antes, en pantalla, exactamente qué va a pasar.
+**Modifican la cuenta de verdad**: Precios, Mayoristas, Stock ML, Ganar la
+venta, Precio óptimo y Preguntas (publica las respuestas). Ninguna aplica nada
+sin mostrarte antes, en pantalla, exactamente qué va a pasar.
 
-**Control de stock** no toca nada en MercadoLibre: es un registro tuyo,
-aparte. **Reporte semanal**, **Alertas**, **Ganar la venta**, **Rentabilidad**,
-**Competencia** y **Oportunidades** son solo de consulta: no modifican nada.
+**Solo de consulta**: Reporte semanal, Alertas, Rentabilidad, Competencia y
+Oportunidades.
 
-**Preguntas** sí publica en MercadoLibre — las respuestas quedan visibles en
-la publicación.
+**Control de stock** no toca nada en MercadoLibre: es un registro tuyo, aparte.
 """
     )
 
@@ -565,6 +564,17 @@ publicación, así que es preferible que la vea una persona.
   decisión.
 - **Fuentes** — subís PDFs (fichas técnicas, manuales) o páginas web para que
   tenga más información con qué responder.
+
+**La IA contesta sola, sin que nadie abra la app.** Corre cada 15 minutos de 8 a
+21 de lunes a sábado, y cada hora las noches y los domingos. Apenas entra una
+pregunta la redacta y la publica; **si no puede, la deja en Gestión manual**.
+El interruptor `ia_activa` de la planilla la apaga por completo.
+
+**Dos contadores, no uno.** MercadoLibre marca como *sin responder* preguntas
+de publicaciones que ya no están activas, y **no deja contestarlas**. Por eso el
+tablero separa *Sin responder* (accionables) de *No se pueden responder*: si
+aparecen ahí, hay que reactivar la publicación —normalmente reponiendo stock—
+para poder contestar.
 
 **Si una pregunta queda sin responder**, mirá el motivo en *Gestión manual*. Suele
 ser información que no está en ningún lado: cargando esa ficha en *Fuentes*,

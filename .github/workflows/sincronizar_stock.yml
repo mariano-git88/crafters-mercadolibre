@@ -50,6 +50,16 @@ jobs:
       - name: Sincronizar ventas
         run: python stock_control.py --dias 3
 
+      # Va pegado acá y no en un workflow propio por los minutos de Actions:
+      # este job ya pagó el checkout y el pip install, que son la mayor parte
+      # del minuto. Sumar el paso cuesta segundos. Un workflow aparte cada 15
+      # minutos costaría ~2.100 min/mes y el plan gratuito son 2.000 en total.
+      # Las horas que este workflow no cubre (noches y domingos) las atiende
+      # responder_preguntas.yml.
+      - name: Responder preguntas nuevas
+        continue-on-error: true      # que no tire abajo el sync de stock
+        run: python preguntas_cron.py
+
       - name: Limpiar credenciales
         if: always()
         run: rm -f .streamlit/secrets.toml

@@ -484,6 +484,33 @@ def pendientes(ml):
     return r.get("questions") or []
 
 
+def pendientes_detalle(ml):
+    """
+    Las pendientes separadas en (se pueden responder, bloqueadas).
+
+    MercadoLibre marca como `UNANSWERED` preguntas de publicaciones que ya no
+    estan activas, y **no deja responderlas**. Contarlas juntas hace que el
+    tablero muestre trabajo que no existe: llegamos a ver "3 sin responder"
+    cuando la unica accionable era una — las otras dos eran de enero, sobre
+    publicaciones pausadas por falta de stock.
+    """
+    respondibles, bloqueadas = [], []
+    for q in pendientes(ml):
+        estado, titulo = None, ""
+        try:
+            it = ml.get(f"/items/{q.get('item_id')}",
+                        attributes="status,title,sub_status")
+            estado = it.get("status")
+            titulo = it.get("title") or ""
+            sub = it.get("sub_status") or []
+        except MeliError:
+            sub = []
+        fila = {**q, "item_status": estado, "item_titulo": titulo,
+                "item_sub_status": ", ".join(sub) if sub else ""}
+        (respondibles if estado == "active" else bloqueadas).append(fila)
+    return respondibles, bloqueadas
+
+
 def registrar(fila):
     almacen.append_hoja(HOJA_RESPUESTAS, COLS_RESPUESTAS, [fila])
 
@@ -762,7 +789,11 @@ def sincronizar_historial(ml, callback=None):
             break
 
     por_ia = _respondidas_por_ia()
-    existentes = {f["question_id"]: f
+    # str() no es decorativo: gspread devuelve los question_id de la hoja como
+    # ENTEROS, y aca se comparan contra `str(q["id"])`. Sin normalizar, ninguna
+    # existente matchea, todas se toman como nuevas y la hoja se duplica entera
+    # en cada corrida. Asi llego a tener 4.000 filas para 1.006 preguntas.
+    existentes = {str(f.get("question_id")): f
                   for f in almacen.leer_hoja(HOJA_HISTORIAL, COLS_HISTORIAL)}
     ahora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
