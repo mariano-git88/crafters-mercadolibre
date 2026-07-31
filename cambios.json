@@ -1,6 +1,17 @@
 [
   {
     "fecha": "2026-07-31",
+    "hora": "18:45",
+    "tipo": "nuevo",
+    "titulo": "Aplicar los cambios de precio desde Plata sobre la mesa",
+    "puntos": [
+      "Las dos acciones que se resuelven cambiando un precio —*pierde plata* y *subir al escalón*— ya se pueden aplicar en lote desde la misma pantalla, sin ir a buscarlas a otra sección.",
+      "El tope de cambio acá es 30%, más estricto que en Precio óptimo: se ejecuta sobre una lista que no armaste vos producto por producto.",
+      "Reponer stock y tomar promociones **no** tienen botón: la primera se hace comprando y la segunda desde el panel de MercadoLibre."
+    ]
+  },
+  {
+    "fecha": "2026-07-31",
     "hora": "17:20",
     "tipo": "arreglo",
     "titulo": "Novedades no se actualizaba después de publicar",

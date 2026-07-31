@@ -639,6 +639,125 @@ if seccion == "Plata sobre la mesa":
             "medido. Cambiar un precio cambia el volumen, así que son "
             "referencias de tamaño para priorizar, no proyecciones.")
 
+        # ------------------------------------------------ ejecutar en lote
+        st.divider()
+        st.markdown("##### Aplicar los cambios de precio")
+        st.caption(
+            "De las cuatro acciones, **dos se resuelven cambiando un "
+            "precio** y se pueden aplicar desde acá: *pierde plata* y *subir "
+            "al escalón*. Reponer stock se hace comprando mercadería y las "
+            "promociones se toman desde el panel de MercadoLibre, así que "
+            "ésas quedan afuera.")
+
+        ej1, ej2 = st.columns([1.4, 2.6])
+        cambio_pl = ej1.slider(
+            "Cambio máximo", 1, int(plata_mod.TECHO_DE_CAMBIO * 100), 15, 1,
+            format="%d%%", key="cb_pl",
+            help=f"Tope duro de esta pantalla: "
+                 f"{plata_mod.TECHO_DE_CAMBIO:.0%}. Para subas más grandes "
+                 "está Precio óptimo, que obliga a mirarlas de a una.") / 100
+        acc_pl = ej2.multiselect(
+            "Qué aplicar",
+            [plata_mod.ACCIONES[a] for a in plata_mod.ACCIONES_EJECUTABLES],
+            default=[plata_mod.ACCIONES[a]
+                     for a in plata_mod.ACCIONES_EJECUTABLES],
+            key="ac_pl")
+        claves_acc = [a for a in plata_mod.ACCIONES_EJECUTABLES
+                      if plata_mod.ACCIONES[a] in acc_pl]
+
+        ejec = plata_mod.ejecutables(dpl, cambio_maximo=cambio_pl,
+                                     acciones=claves_acc or None)
+        st.markdown(cumplen(len(ejec)))
+
+        if len(ejec):
+            st.caption("**Tildá filas para elegir a mano.** Si no seleccionás "
+                       "ninguna van todas las que cumplen.")
+            ev_pl = st.dataframe(
+                ejec[["accion_nombre", "sku", "precio_actual",
+                      "precio_sugerido", "cambio_pct", "plata_mes",
+                      "detalle"]],
+                use_container_width=True, height=320, hide_index=True,
+                key="tabla_ejec", on_select="rerun",
+                selection_mode="multi-row",
+                column_config={
+                    "accion_nombre": "Qué hacer", "sku": "SKU",
+                    "precio_actual": st.column_config.NumberColumn(
+                        "Precio hoy", format="%.0f"),
+                    "precio_sugerido": st.column_config.NumberColumn(
+                        "Precio nuevo", format="%.0f"),
+                    "cambio_pct": st.column_config.NumberColumn(
+                        "Cambio", format="percent"),
+                    "plata_mes": st.column_config.NumberColumn(
+                        "Plata/mes", format="%.0f"),
+                    "detalle": "Detalle"})
+
+            elegidas_pl = list(getattr(ev_pl.selection, "rows", []) or [])
+            aplicar_pl = ejec.iloc[elegidas_pl] if elegidas_pl else ejec
+            if elegidas_pl:
+                st.info(f"Vas a aplicar solo las **{len(aplicar_pl)}** que "
+                        "tildaste.", icon="👉")
+
+            st.warning(
+                "**Esto cambia precios en MercadoLibre de verdad.** El "
+                "cálculo dice qué precio necesitás según tus costos, **no si "
+                "el mercado lo va a pagar**. Todo queda en la auditoría con "
+                "el precio anterior.", icon="⚠️")
+
+            if st.button("Simular los cambios", key="sim_pl"):
+                st.session_state["plata_sim"] = act.simular(
+                    plata_mod.planilla_de_precios(aplicar_pl), pubs, "precio",
+                    col_clave="sku", col_valor="precio")
+
+            sim_pl = st.session_state.get("plata_sim")
+            if sim_pl is not None and len(sim_pl):
+                # Se pasa por el motor de Precios a propósito: trae el
+                # resolver de SKU, el aviso de >50% y la auditoría.
+                rev_pl = int((sim_pl["accion"] == "revisar").sum())
+                q1, q2 = st.columns(2)
+                q1.metric("Listas para aplicar",
+                          int((sim_pl["accion"] == "actualizar").sum()))
+                q2.metric("Marcadas para revisar", rev_pl)
+                if rev_pl:
+                    st.error(
+                        f"**{rev_pl} superan el "
+                        f"{act.UMBRAL_ALERTA_PRECIO:.0%} de variación** y no "
+                        "se aplican salvo que lo pidas aparte.", icon="🛑")
+                st.dataframe(sim_pl, use_container_width=True, height=280,
+                             hide_index=True)
+
+                op_pl = st.text_input("Tu nombre (queda en el registro)",
+                                      key="op_pl")
+                inc_pl = st.checkbox("Incluir también las marcadas para "
+                                     "revisar", key="rev_pl")
+                conf_pl = st.checkbox(
+                    "Confirmo que quiero cambiar estos precios en "
+                    "MercadoLibre", key="conf_pl")
+                if st.button("Aplicar en MercadoLibre", key="go_pl",
+                             disabled=not (conf_pl and op_pl.strip())):
+                    barra = st.progress(0.0, text="Aplicando...")
+                    res_pl = act.aplicar(
+                        ml, sim_pl, "precio", operador=op_pl.strip(),
+                        incluir_revisar=inc_pl,
+                        callback=lambda i, t, f: barra.progress(
+                            i / t, text=f"Aplicando {i} de {t}..."))
+                    barra.empty()
+                    ok = int((res_pl["resultado"] == "OK").sum())
+                    if ok == len(res_pl):
+                        st.success(f"{ok} precios actualizados.")
+                    else:
+                        st.error(f"{ok} aplicados, {len(res_pl) - ok} "
+                                 "con error.")
+                    st.dataframe(res_pl, use_container_width=True,
+                                 hide_index=True)
+                    # Los precios cambiaron: la lista quedó vieja.
+                    st.session_state.pop("plata", None)
+                    st.session_state.pop("plata_sim", None)
+                    st.caption("Volvé a buscar la plata para ver el estado "
+                               "nuevo.")
+        else:
+            st.info("Ninguna fila cumple el criterio de ejecución. Probá "
+                    "subiendo el cambio máximo.")
+
 elif seccion == "Reporte semanal":
     st.markdown("#### Cómo vino la semana")
     st.caption(

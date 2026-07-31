@@ -198,6 +198,24 @@ margen.
 Las estimaciones asumen el mismo volumen que el período medido. Son referencias
 de tamaño para priorizar, no proyecciones.
 
+**Aplicar los cambios desde acá.** De las cuatro acciones, **dos se resuelven
+cambiando un precio** y se pueden ejecutar en lote: *pierde plata* y *subir al
+escalón*. Reponer stock se hace comprando mercadería y las promociones se toman
+desde el panel de MercadoLibre, así que ésas no tienen botón.
+
+El tope de cambio de esta pantalla es **30%**, más estricto que el de Precio
+óptimo. Es a propósito: acá se ejecuta en lote desde una lista que no armaste
+producto por producto, así que el límite tiene que ser el que pondrías sin
+mirar. Para subas más grandes está Precio óptimo, que te obliga a verlas de a
+una.
+
+Lo que está marcado como **conflicto** (para reponer pero pierde plata) queda
+afuera de la ejecución: son dos decisiones distintas y hay que mirarlo.
+
+El flujo es el de siempre: simular, revisar, confirmar, aplicar. La simulación
+pasa por el mismo motor que la sección Precios, así que respeta la regla de las
+publicaciones espejo y marca como *revisar* todo lo que supere el 50%.
+
 ---
 
 ### Sección Reporte semanal

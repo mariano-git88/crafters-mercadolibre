@@ -33,8 +33,21 @@ from meli import Meli, MeliError
 
 DIR = Path(__file__).resolve().parent
 
+# Las unicas dos acciones que se resuelven cambiando un precio, o sea las que
+# la app puede ejecutar sola. Reponer stock se hace comprando mercaderia; tomar
+# una promo, desde el panel de MercadoLibre.
+ACCIONES_EJECUTABLES = ("revisar_perdida", "subir_escalon")
+
+# Tope duro de cambio para la ejecucion desde esta pantalla. Es MAS ESTRICTO
+# que el de Precio optimo (100%) a proposito: aca se ejecuta en lote desde una
+# lista que el operador no armo item por item, asi que el limite tiene que ser
+# el que uno pondria sin mirar. Para subas mas grandes esta Precio optimo, que
+# obliga a pasar por la simulacion y a mirarlas de a una.
+TECHO_DE_CAMBIO = 0.30
+
 # Las oportunidades se agrupan por que hay que hacer, no por que analisis las
 # encontro: al operador le importa la accion.
+
 ACCIONES = {
     "reponer": "Reponer stock",
     "subir_escalon": "Subir al escalón de comisión",
@@ -69,6 +82,7 @@ def de_stock(df_stock):
             "base": "facturación que hoy no entra",
             "seccion": "Alertas → Stock crítico",
             "certeza": "alta",
+            "precio_actual": None, "precio_sugerido": None,
         })
     return filas
 
@@ -105,19 +119,37 @@ def de_escalon(df_ventana, cambio_max=0.20, unidades_min=3):
             "base": "mismo volumen que el período medido",
             "seccion": "Precio óptimo",
             "certeza": "alta",
+            "precio_actual": f["precio_actual"],
+            "precio_sugerido": f["precio_sugerido"],
         })
     return filas
 
 
-def de_perdida(df_rent, dias=90):
-    """SKU que pierden plata de caja: costo + comision + envio > precio."""
+def de_perdida(df_rent, dias=90, df_ventana=None):
+    """
+    SKU que pierden plata de caja: costo + comision + envio > precio.
+
+    El precio nuevo sale de la **ventana de precio**, no de aca: esta funcion
+    sabe cuanto se pierde pero no a que precio habria que estar. Si un SKU no
+    tiene fila en la ventana queda sin `precio_sugerido` y por lo tanto **no
+    es ejecutable** — se muestra igual, para revisarlo a mano.
+    """
     if df_rent is None or not len(df_rent):
         return []
 
-    sel = df_rent[(df_rent["margen"] < 0) & (df_rent["unidades_90d"] > 0)]
+    sugerido, actual = {}, {}
+    if df_ventana is not None and len(df_ventana):
+        for _, v in df_ventana.iterrows():
+            if pd.notna(v.get("precio_sugerido")):
+                sugerido[v["sku"]] = float(v["precio_sugerido"])
+                actual[v["sku"]] = float(v["precio_actual"])
+
     filas = []
-    for _, f in sel.iterrows():
+    for _, f in df_rent[(df_rent["margen"] < 0)
+                        & (df_rent["unidades_90d"] > 0)].iterrows():
         perdida = abs(f["margen"] * f["unidades_90d"])
+        p_act = actual.get(f["sku"], f.get("precio_ml"))
+        p_sug = sugerido.get(f["sku"])
         filas.append({
             "accion": "revisar_perdida",
             "sku": f["sku"],
@@ -129,6 +161,8 @@ def de_perdida(df_rent, dias=90):
             "base": "lo que se pierde hoy, si se sigue vendiendo igual",
             "seccion": "Precio óptimo / Rentabilidad",
             "certeza": "alta",
+            "precio_actual": p_act,
+            "precio_sugerido": p_sug,
         })
     return filas
 
@@ -159,6 +193,7 @@ def de_promos(df_promos):
             "base": "no cuantificable: depende de cuánto suba el volumen",
             "seccion": "Ganar la venta → Promociones",
             "certeza": "media",
+            "precio_actual": None, "precio_sugerido": None,
         })
     return filas
 
@@ -191,7 +226,8 @@ def juntar(stock=None, ventana=None, rentabilidad=None, promos=None,
     subtotal por accion, cada uno con su unidad.
     """
     filas = (de_stock(stock) + de_escalon(ventana)
-             + de_perdida(rentabilidad, dias_rent) + de_promos(promos))
+             + de_perdida(rentabilidad, dias_rent, df_ventana=ventana)
+             + de_promos(promos))
     df = pd.DataFrame(filas)
     if not len(df):
         return df
@@ -207,8 +243,64 @@ def juntar(stock=None, ventana=None, rentabilidad=None, promos=None,
         + " — OJO: este producto pierde plata en cada unidad, reponerlo "
           "aumenta la pérdida")
 
+    # Ejecutable = se puede escribir el precio nuevo de una. Reponer stock y
+    # tomar una promo NO lo son: la primera se hace comprando mercadería y la
+    # segunda desde el panel de ML.
+    df["cambio_pct"] = [
+        ((s_ - a) / a) if (pd.notna(s_) and pd.notna(a) and a) else None
+        for s_, a in zip(df["precio_sugerido"], df["precio_actual"])]
+    df["ejecutable"] = (
+        df["accion"].isin(ACCIONES_EJECUTABLES)
+        & df["precio_sugerido"].notna()
+        & df["cambio_pct"].notna()
+        & (df["cambio_pct"].abs() > 0.001)
+        # Un producto marcado como conflicto no se toca solo: reponerlo y
+        # subirle el precio son decisiones distintas y hay que mirarlo.
+        & (~df["conflicto"]))
+
     df["veces"] = df.groupby("sku")["sku"].transform("size")
     return df.sort_values("plata_mes", ascending=False).reset_index(drop=True)
+
+
+def ejecutables(df, cambio_maximo=TECHO_DE_CAMBIO, acciones=None, items=None):
+    """
+    Las filas a las que se les puede escribir el precio nuevo de una.
+
+    `cambio_maximo` se clampea contra `TECHO_DE_CAMBIO`: desde esta pantalla no
+    se ejecutan cambios mas grandes aunque se pidan. Los casos que quedan
+    afuera **no desaparecen**, se resuelven desde Precio optimo mirandolos de
+    a uno.
+    """
+    if df is None or not len(df) or "ejecutable" not in df:
+        return df.iloc[0:0] if df is not None and len(df) else pd.DataFrame()
+
+    tope = min(cambio_maximo, TECHO_DE_CAMBIO)
+    sel = df[df["ejecutable"] & (df["cambio_pct"].abs() <= tope)].copy()
+    if acciones:
+        sel = sel[sel["accion"].isin(acciones)]
+    if items is not None:
+        sel = sel[sel["sku"].isin(list(items))]
+
+    # Un SKU puede caer en las dos acciones a la vez (pierde plata Y cruza
+    # escalon). Como el precio nuevo sale de la misma ventana, mandarlo dos
+    # veces no cambia nada pero ensucia la planilla: el motor lo marca como
+    # `duplicado_en_planilla`. Se manda una sola, la de mayor impacto.
+    sel = sel.sort_values("plata_mes", ascending=False)
+    return sel.drop_duplicates(subset=["sku"], keep="first")
+
+
+def planilla_de_precios(seleccion):
+    """
+    La planilla que consume `actualizador.simular()`.
+
+    Se reusa ese motor y no se escribe directo: trae el resolver de SKU (que
+    decide a que publicaciones aplicar), el aviso de variaciones mayores al
+    50% y la auditoria con el precio anterior.
+    """
+    return pd.DataFrame({
+        "sku": seleccion["sku"],
+        "precio": seleccion["precio_sugerido"].round(2),
+    })
 
 
 def resumen(df):
