@@ -1,0 +1,65 @@
+name: Reporte semanal de competencia
+
+# Lunes a las 8 de la mañana de Argentina (11 UTC).
+#
+# Cuesta ~4 corridas de 3 minutos por mes: nada frente a los 2.000 minutos del
+# plan gratuito, que ya se usan casi enteros entre el sync de stock y el
+# respondedor de preguntas.
+on:
+  schedule:
+    - cron: '0 11 * * 1'
+  workflow_dispatch:
+    inputs:
+      top:
+        description: 'Cuántos de los más vendidos'
+        default: '100'
+      sin_mail:
+        description: 'Solo generar, sin mandar el mail'
+        type: boolean
+        default: false
+
+concurrency:
+  group: reporte-competencia
+  cancel-in-progress: false
+
+jobs:
+  reportar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r requirements.txt
+
+      - name: Escribir los secrets
+        env:
+          SECRETS_TOML: ${{ secrets.CRAFTERS_SECRETS_TOML }}
+        run: |
+          if [ -z "$SECRETS_TOML" ]; then
+            echo "Falta el secret CRAFTERS_SECRETS_TOML."; exit 1
+          fi
+          mkdir -p .streamlit
+          printf '%s' "$SECRETS_TOML" > .streamlit/secrets.toml
+
+      - name: Generar y enviar
+        run: |
+          python reporte_competencia.py ${{ inputs.top || '100' }} \
+            ${{ inputs.sin_mail == true && '--sin-mail' || '' }}
+
+      # Queda descargable desde la corrida aunque el mail falle o no esté
+      # configurado todavía: asi el reporte nunca se pierde.
+      - name: Guardar el reporte
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reporte-competencia
+          path: reporte_competencia.html
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Limpiar credenciales
+        if: always()
+        run: rm -f .streamlit/secrets.toml

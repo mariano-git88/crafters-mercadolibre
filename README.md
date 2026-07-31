@@ -138,6 +138,8 @@ for item in ml.items_detalle(ids, atributos=["id", "title", "price",
 | `ventana.py` | Junta piso + Buy Box + escalón en un precio sugerido por SKU |
 | `preguntas_cron.py` | Responde las preguntas nuevas sola; la invocan dos workflows |
 | `cambios.py` | Registro de actualizaciones que se muestra en el modal *Novedades* |
+| `correo.py` | Envío de mails para los reportes automáticos (Resend o SMTP) |
+| `reporte_competencia.py` | Reporte semanal de competencia; lo manda un workflow los lunes |
 | `credentials.txt` | App ID + Secret + Redirect URI (**no se sube a git**) |
 | `tokens.json` | Tokens vivos (**no se sube a git**) |
 
@@ -432,6 +434,39 @@ que consume `actualizador.simular()`, para reusar el resolver de SKU, el aviso
 de variaciones mayores al 50% y la auditoría.
 
 
+
+
+### Reporte semanal de competencia por mail
+
+`reporte_competencia.py` compara los **100 más vendidos del último mes** contra
+el catálogo y lo manda por mail los **lunes a las 8 AR** (`reporte_competencia.yml`).
+
+Lo que lo hace útil no es la foto sino **la comparación contra la corrida
+anterior**: qué competidores bajaron el precio y en qué productos dejamos de
+ser los más baratos. Eso sale del historial (`historial_competencia`), así que
+la primera corrida no tiene con qué comparar — recién la segunda sirve.
+
+El reporte **siempre queda como artifact de la corrida**, aunque el mail falle
+o no esté configurado. Así nunca se pierde.
+
+#### Configurar el envío
+
+En los secrets, sección `[correo]`:
+
+```toml
+[correo]
+proveedor     = "resend"
+api_key       = "re_..."
+remitente     = "reportes@crafters.com.ar"   # dominio verificado en Resend
+destinatarios = "uno@crafters.com.ar, otro@crafters.com.ar"
+```
+
+Hay que cargarlo en **dos lados**: en `.streamlit/secrets.toml` para probar
+local, y dentro del secret `CRAFTERS_SECRETS_TOML` del repo para que lo use
+Actions.
+
+Probar con `python correo.py --prueba`. Sin `[correo]`, `enviar()` devuelve
+`(False, motivo)` y no rompe nada.
 
 ### Responder preguntas sola — y el presupuesto de Actions
 

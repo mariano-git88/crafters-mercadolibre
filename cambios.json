@@ -1,6 +1,17 @@
 [
   {
     "fecha": "2026-07-31",
+    "hora": "21:40",
+    "tipo": "nuevo",
+    "titulo": "Reporte de competencia por mail, todos los lunes",
+    "puntos": [
+      "Compara los **100 artículos que más vendiste** en el último mes contra el catálogo de MercadoLibre, y lo manda por mail los lunes a la mañana.",
+      "Lo importante no es la foto sino **qué cambió**: qué competidores bajaron el precio y en qué productos dejamos de ser los más baratos.",
+      "También marca los productos que están en el catálogo, otros venden, y nosotros no tenemos publicación ahí."
+    ]
+  },
+  {
+    "fecha": "2026-07-31",
     "hora": "20:15",
     "tipo": "arreglo",
     "titulo": "El costo de envío se repartía mal entre productos",
