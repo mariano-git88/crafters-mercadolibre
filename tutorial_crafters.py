@@ -20,10 +20,11 @@ def render() -> None:
         """
 ### ¿Qué hace esta app?
 
-Doce secciones, cada una para una cosa:
+Trece secciones, cada una para una cosa:
 
 | Sección | Para qué sirve |
 |---|---|
+| **Plata sobre la mesa** | Todo lo accionable en una lista, ordenado por pesos. Es la que abre la app |
 | **Reporte semanal** | Cómo vino la semana y qué hay que resolver. Es la pantalla del lunes |
 | **Preguntas** | Responder las consultas de los compradores, con ayuda de IA |
 | **Alertas** | Lo que necesita atención: stock por agotarse y reclamos por producto |
@@ -174,6 +175,31 @@ cuál de todas aplicarle el cambio:
     st.divider()
     st.markdown(
         """
+### Sección Plata sobre la mesa
+
+Es la que abre la app. No trae análisis nuevo: junta en **una sola lista** lo
+accionable que antes estaba repartido en seis secciones, ordenado por plata.
+Cada fila dice cuánto es, qué hay que hacer y en qué sección se hace.
+
+**Dos números que no se suman**, y por eso están separados:
+
+- **Facturación parada** — lo que hoy no entra porque el producto no se puede
+  vender (agotados, sin publicación activa).
+- **Margen en juego** — lo que se pierde o se deja de ganar vendiendo.
+
+Sumarlos daría un número grande y sin sentido: uno es facturación y el otro es
+margen.
+
+> **El aviso más importante de la pantalla** es el de conflicto: un producto
+> puede estar a la vez *para reponer* y *perdiendo plata en cada unidad*.
+> Reponerlo **aumenta** la pérdida. Esos aparecen marcados y hay que arreglar
+> el precio o el costo antes de comprar.
+
+Las estimaciones asumen el mismo volumen que el período medido. Son referencias
+de tamaño para priorizar, no proyecciones.
+
+---
+
 ### Sección Reporte semanal
 
 Es la pantalla que abre la app, y está pensada para el lunes a la mañana: se

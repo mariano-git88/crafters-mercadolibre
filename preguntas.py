@@ -216,11 +216,11 @@ def contexto_publicacion(ml, item_id):
     """Datos del articulo sobre el que preguntan."""
     try:
         it = ml.get(f"/items/{item_id}")
-    except MeliError:
+    except Exception:  # noqa: BLE001
         return {}
     try:
         desc = (ml.get(f"/items/{item_id}/description").get("plain_text") or "")[:2500]
-    except MeliError:
+    except Exception:  # noqa: BLE001
         desc = ""
 
     atributos = {a.get("name"): a.get("value_name")
@@ -243,7 +243,7 @@ def preguntas_del_item(ml, item_id, excluir=None):
     """Q&A previas del MISMO articulo: el contexto mas directo que hay."""
     try:
         r = ml.get("/questions/search", item=item_id, limit=30)
-    except MeliError:
+    except Exception:  # noqa: BLE001
         return []
     salida = []
     for q in r.get("questions") or []:
@@ -517,7 +517,7 @@ def pendientes_detalle(ml):
             estado = it.get("status")
             titulo = it.get("title") or ""
             sub = it.get("sub_status") or []
-        except MeliError:
+        except Exception:  # noqa: BLE001
             sub = []
         fila = {**q, "item_status": estado, "item_titulo": titulo,
                 "item_sub_status": ", ".join(sub) if sub else ""}
@@ -829,7 +829,7 @@ def sincronizar_historial(ml, callback=None):
             try:
                 titulos[item_id] = (ml.get(f"/items/{item_id}",
                                            attributes="title").get("title") or "")
-            except MeliError:
+            except Exception:  # noqa: BLE001
                 titulos[item_id] = ""
 
         fila = {

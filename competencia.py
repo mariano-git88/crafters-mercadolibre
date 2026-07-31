@@ -59,7 +59,7 @@ def nickname(ml, seller_id):
         u = ml.get(f"/users/{seller_id}")
         nick = u.get("nickname") or str(seller_id)
         rep = (u.get("seller_reputation") or {}).get("level_id") or ""
-    except MeliError:
+    except Exception:  # noqa: BLE001
         nick, rep = str(seller_id), ""
     _cache_nicks[seller_id] = (nick, rep)
     return _cache_nicks[seller_id]
@@ -69,7 +69,7 @@ def producto_de_ean(ml, ean):
     """EAN -> producto de catalogo. Devuelve (id, nombre) o (None, None)."""
     try:
         r = ml.get("/products/search", site_id=SITE_ID, q=ean)
-    except MeliError:
+    except Exception:  # noqa: BLE001
         return None, None
     res = r.get("results") or []
     if not res:
@@ -81,7 +81,7 @@ def competidores(ml, product_id):
     """Publicaciones que venden ese producto de catalogo."""
     try:
         r = ml.get(f"/products/{product_id}/items")
-    except MeliError:
+    except Exception:  # noqa: BLE001
         return []
     return r.get("results") or []
 

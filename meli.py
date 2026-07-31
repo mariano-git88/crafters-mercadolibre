@@ -51,6 +51,23 @@ class MeliError(RuntimeError):
     """Error devuelto por la API de MercadoLibre."""
 
 
+def es_error_de_api(e):
+    """
+    True si `e` es un error de la API, **aunque venga de otra copia del
+    modulo**.
+
+    Hace falta por `st.cache_resource`: el cliente cacheado puede quedar
+    viviendo en una copia reimportada de `meli`, y entonces el `MeliError` que
+    lanza NO es la misma clase que la que importo el modulo que llama. El
+    `except MeliError` no matchea, la excepcion se escapa y se lleva puesta la
+    corrida entera — pasó en Competencia, donde el `try/except` estaba puesto
+    y aun asi la app murio en la publicacion 3 de 50.
+
+    Comparar por nombre es feo pero es lo unico que sobrevive a las dos copias.
+    """
+    return isinstance(e, MeliError) or type(e).__name__ == "MeliError"
+
+
 def leer_credenciales():
     """
     Devuelve app_id / secret_key / redirect_uri.

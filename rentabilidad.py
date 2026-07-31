@@ -103,7 +103,7 @@ def traer_costos_envio(ml, ordenes, refrescar=False, callback=None,
     for i, sid in enumerate(ids, start=1):
         try:
             cache[sid] = costo_envio_vendedor(ml.get(f"/shipments/{sid}/costs"))
-        except MeliError:
+        except Exception:  # noqa: BLE001
             cache[sid] = None       # envio sin costos accesibles
         if callback and i % 25 == 0:
             callback(i, len(ids))
@@ -281,7 +281,7 @@ def precios_reales(ml, item_ids, callback=None):
         try:
             r = ml.get(f"/items/{iid}/sale_price")
             salida[iid] = float(r["amount"]) if r.get("amount") is not None else None
-        except MeliError:
+        except Exception:  # noqa: BLE001
             salida[iid] = None      # nos quedamos con el de lista
         if callback and i % 20 == 0:
             callback(i, len(ids))

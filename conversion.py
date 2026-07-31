@@ -71,7 +71,7 @@ def visitas_por_item(ml, item_ids, desde, hasta, callback=None,
                        date_to=hasta.strftime("%Y-%m-%d"))
             fila = r[0] if isinstance(r, list) and r else (r or {})
             cache[iid] = fila.get("total_visits")
-        except MeliError:
+        except Exception:  # noqa: BLE001
             cache[iid] = None       # no medida, distinto de cero visitas
         if callback and n % 25 == 0:
             callback(n, len(ids))

@@ -24,6 +24,7 @@ import alertas_stock
 import almacen
 import buybox
 import cambios
+import plata as plata_mod
 import competencia
 import conciliacion
 import conversion
@@ -81,15 +82,15 @@ st.markdown("""
     /* Preguntas va destacada en naranja, como el boton de Tutorial. Es la
        segunda opcion del selector de seccion: si se reordena la lista de
        arriba, hay que mover el nth-of-type junto con ella. */
-    [data-testid="stMain"] [data-testid="stButtonGroup"] button:nth-of-type(2),
-    [data-testid="stMain"] [data-testid="stButtonGroup"] button:nth-of-type(2):hover,
-    [data-testid="stMain"] [data-testid="stButtonGroup"] button:nth-of-type(2):focus,
-    [data-testid="stMain"] [data-testid="stButtonGroup"] > div > button:nth-of-type(2) {
+    [data-testid="stMain"] [data-testid="stButtonGroup"] button:nth-of-type(3),
+    [data-testid="stMain"] [data-testid="stButtonGroup"] button:nth-of-type(3):hover,
+    [data-testid="stMain"] [data-testid="stButtonGroup"] button:nth-of-type(3):focus,
+    [data-testid="stMain"] [data-testid="stButtonGroup"] > div > button:nth-of-type(3) {
         background-color: #C8552F !important;
         color: #FFFFFF !important;
         border-color: #C8552F !important;
     }
-    [data-testid="stMain"] [data-testid="stButtonGroup"] button:nth-of-type(2) * {
+    [data-testid="stMain"] [data-testid="stButtonGroup"] button:nth-of-type(3) * {
         color: #FFFFFF !important;
     }
     </style>
@@ -196,11 +197,12 @@ with enc_btn:
         st.rerun()
 
 seccion = st.segmented_control(
-    "Sección", ["Reporte semanal", "Preguntas", "Alertas", "Ganar la venta",
+    "Sección", ["Plata sobre la mesa", "Reporte semanal", "Preguntas",
+                "Alertas", "Ganar la venta",
                 "Precios", "Mayoristas", "Stock ML", "Control de stock",
                 "Rentabilidad", "Precio óptimo", "Competencia",
                 "Oportunidades"],
-    default="Reporte semanal", label_visibility="collapsed")
+    default="Plata sobre la mesa", label_visibility="collapsed")
 
 # En la nube el disco se borra en cada reinicio: si no hay Sheet configurada,
 # se perderia el refresh_token (habria que reautorizar a mano) y la auditoria.
@@ -522,7 +524,122 @@ def bloque_carga(operacion):
 
 # ===================================================================== secciones
 
-if seccion == "Reporte semanal":
+if seccion == "Plata sobre la mesa":
+    st.markdown("#### Todo lo accionable, ordenado por plata")
+    st.caption(
+        "La información ya estaba repartida en seis secciones. Acá está junta: "
+        "cada fila dice cuánta plata es, qué hay que hacer y dónde se hace.")
+
+    costos_pl = bloque_costos("pl")
+    otros_pl = controles_otros_conceptos("pl")
+
+    g1, g2 = st.columns([1.2, 3])
+    con_promos = g1.checkbox("Incluir promociones", value=False,
+                             help="Suma unos minutos: consulta las ofertas "
+                                  "publicación por publicación.")
+    g2.write("")
+    if costos_pl is not None and g2.button("Buscar la plata",
+                                           use_container_width=True):
+        estado = st.empty()
+        with st.spinner("Cruzando stock, márgenes y Buy Box..."):
+            cargos_pl = cargos_cacheados(ml)
+            ordenes_pl = rent.traer_historico(ml, 90)
+
+            estado.caption("Revisando el stock...")
+            stock_pl = alertas_stock.analizar(ml, dias=90, pubs=pubs,
+                                              ordenes=ordenes_pl)
+            estado.caption("Calculando márgenes...")
+            rent_pl = rent.calcular(costos_pl, cargos_pl, pubs, iva=0.21,
+                                    otros_conceptos=otros_pl)
+            estado.caption("Consultando el Buy Box...")
+            cat_pl = [p["id"] for p in pubs if p.get("status") == "active"
+                      and p.get("catalog_listing")]
+            ptw_pl = buybox.traer_price_to_win(
+                ml, cat_pl, callback=lambda m: estado.caption(str(m)))
+            ven_pl = ventana.analizar(costos_pl, cargos_pl, pubs, iva=0.21,
+                                      otros_conceptos=otros_pl, objetivo=0.0,
+                                      ptw_por_item=ptw_pl)
+            promos_pl = None
+            if con_promos:
+                estado.caption("Buscando promociones...")
+                unid_pl = dict(zip(cargos_pl["sku"],
+                                   cargos_pl["unidades_vendidas"]))
+                promos_pl, _ = promociones.analizar(
+                    ml, pubs=pubs, tope=150, cargos=cargos_pl,
+                    unidades=unid_pl,
+                    callback=lambda m: estado.caption(str(m)))
+
+            st.session_state["plata"] = plata_mod.juntar(
+                stock=stock_pl, ventana=ven_pl, rentabilidad=rent_pl,
+                promos=promos_pl)
+        estado.empty()
+
+    dpl = st.session_state.get("plata")
+    if dpl is not None and len(dpl):
+        rpl = plata_mod.resumen(dpl)
+
+        h1, h2 = st.columns(2)
+        h1.metric("Facturación parada", pesos(rpl["facturacion_parada"]) + "/mes",
+                  help="Lo que hoy NO entra porque el producto no se puede "
+                       "vender")
+        h2.metric("Margen en juego", pesos(rpl["margen_en_juego"]) + "/mes",
+                  help="Lo que se pierde o se deja de ganar vendiendo")
+        st.caption(
+            "**Los dos números no se suman**: uno es facturación que no entra "
+            "y el otro es margen que se pierde. Sumarlos daría un número "
+            "grande y sin sentido.")
+
+        if rpl["conflictos"]:
+            n_conf = rpl["conflictos"]
+            st.error(
+                (f"**{n_conf} producto está para reponer pero pierde plata "
+                 "en cada unidad.**" if n_conf == 1 else
+                 f"**{n_conf} productos están para reponer pero pierden "
+                 "plata en cada unidad.**")
+                + " Reponerlos aumenta la pérdida: primero hay que arreglar "
+                  "el precio o el costo. Están marcados en la lista.",
+                icon="⚠️")
+
+        st.markdown("##### Por acción")
+        st.dataframe(
+            pd.DataFrame([
+                {"Acción": k, "Casos": v["count"],
+                 "Plata por mes": v["sum"], "Mide": v["unidad"]}
+                for k, v in sorted(rpl["por_accion"].items(),
+                                   key=lambda x: -x[1]["sum"])]),
+            use_container_width=True, hide_index=True,
+            column_config={"Plata por mes": st.column_config.NumberColumn(
+                "Plata por mes", format="%.0f")})
+
+        acciones = sorted(dpl["accion_nombre"].unique())
+        filtro_pl = st.multiselect("Filtrar por acción", acciones,
+                                   default=acciones, key="f_pl")
+        vpl = dpl[dpl["accion_nombre"].isin(filtro_pl)] if filtro_pl else dpl
+
+        st.dataframe(
+            vpl[["accion_nombre", "sku", "titulo", "detalle", "plata_mes",
+                 "unidad", "seccion", "base"]],
+            use_container_width=True, height=440, hide_index=True,
+            column_config={
+                "accion_nombre": "Qué hacer", "sku": "SKU",
+                "titulo": "Título", "detalle": "Detalle",
+                "plata_mes": st.column_config.NumberColumn(
+                    "Plata/mes", format="%.0f"),
+                "unidad": "Mide", "seccion": "Dónde se hace",
+                "base": st.column_config.TextColumn(
+                    "Sobre qué base", help="De dónde sale el número")})
+
+        st.download_button(
+            "Descargar la lista",
+            vpl.to_csv(index=False).encode("utf-8"),
+            f"plata_{datetime.now():%Y%m%d}.csv", "text/csv")
+
+        st.caption(
+            "Las estimaciones asumen **el mismo volumen** que el período "
+            "medido. Cambiar un precio cambia el volumen, así que son "
+            "referencias de tamaño para priorizar, no proyecciones.")
+
+elif seccion == "Reporte semanal":
     st.markdown("#### Cómo vino la semana")
     st.caption(
         "Una pantalla para el lunes: qué pasó, contra qué se compara y qué hay "

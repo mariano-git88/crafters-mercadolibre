@@ -68,7 +68,7 @@ def campanas_disponibles(ml):
     """Las campañas abiertas a nivel cuenta."""
     try:
         r = ml.get(f"/seller-promotions/users/{ml.user_id}", app_version="v2")
-    except MeliError:
+    except Exception:  # noqa: BLE001
         return pd.DataFrame()
     filas = [{
         "id": c.get("id"),
@@ -131,7 +131,7 @@ def analizar(ml, pubs=None, tope=300, cargos=None, unidades=None,
         try:
             ofertas = ml.get(f"/seller-promotions/items/{p['id']}",
                              app_version="v2")
-        except MeliError:
+        except Exception:  # noqa: BLE001
             ofertas = []
         if callback and n % 25 == 0:
             callback(f"Promociones {n}/{len(act)}...")
@@ -373,7 +373,7 @@ def dar_de_baja(ml, item_id, oferta_id, campana_id, tipo):
     try:
         ml.delete(f"/seller-promotions/items/{item_id}", **params)
         return True, ""
-    except MeliError as e:
+    except Exception as e:  # noqa: BLE001
         return False, str(e)[:250]
 
 
@@ -390,7 +390,7 @@ def estado_de_oferta(ml, oferta_id):
         r = ml.get(f"/seller-promotions/offers/{oferta_id}", app_version="v2")
         est = r.get("status")
         return est.get("id") if isinstance(est, dict) else est
-    except MeliError:
+    except Exception:  # noqa: BLE001
         return None
 
 

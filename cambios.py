@@ -24,6 +24,21 @@ ICONO = {"nuevo": "🆕", "mejora": "⬆️", "arreglo": "🔧"}
 
 CAMBIOS = [
     {
+        "fecha": "2026-07-31", "hora": "16:30", "tipo": "nuevo",
+        "titulo": "Plata sobre la mesa — la nueva pantalla de entrada",
+        "puntos": [
+            "Junta en una sola lista todo lo accionable que antes estaba "
+            "repartido en seis secciones, ordenado por pesos: qué reponer, "
+            "qué precio subir, qué revisar porque pierde plata.",
+            "Separa **facturación parada** de **margen en juego**, que son "
+            "cosas distintas y no se pueden sumar.",
+            "Avisa cuando un producto está para reponer **y** pierde plata en "
+            "cada unidad: reponerlo aumentaría la pérdida.",
+            "Se arregló un error en **Competencia** que cortaba la consulta a "
+            "los pocos productos.",
+        ],
+    },
+    {
         "fecha": "2026-07-31", "hora": "14:10", "tipo": "arreglo",
         "titulo": "Los importes se veían como fórmulas matemáticas",
         "puntos": [

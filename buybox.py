@@ -99,7 +99,7 @@ def traer_price_to_win(ml, item_ids, refrescar=False, callback=None):
             r = ml.get(f"/items/{iid}/price_to_win", version="v2")
             r["bajado"] = time.time()
             cache[iid] = r
-        except MeliError:
+        except Exception:  # noqa: BLE001
             cache[iid] = {"status": "error", "bajado": time.time()}
         if callback and n % 20 == 0:
             callback(f"Buy Box {n}/{len(pendientes)}...")

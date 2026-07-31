@@ -135,7 +135,7 @@ def traducir_motivos(ml, codigos, cache=None):
         try:
             r = ml.get(f"/post-purchase/v1/claims/reasons/{cod}")
             motivos[cod] = r.get("detail") or r.get("name") or cod
-        except MeliError:
+        except Exception:  # noqa: BLE001
             motivos[cod] = cod
     return motivos
 
@@ -168,7 +168,7 @@ def mapear_a_productos(ml, claims, ordenes_conocidas=None, callback=None):
                 try:
                     envio_a_orden[rid] = str(
                         ml.get(f"/shipments/{rid}").get("order_id") or "")
-                except MeliError:
+                except Exception:  # noqa: BLE001
                     envio_a_orden[rid] = ""
             oid = envio_a_orden[rid]
         elif recurso == "order":
@@ -189,7 +189,7 @@ def mapear_a_productos(ml, claims, ordenes_conocidas=None, callback=None):
                     {"sku": (it["item"].get("seller_sku") or "").strip().upper(),
                      "titulo": it["item"].get("title") or ""}
                     for it in (o.get("order_items") or [])]
-            except MeliError:
+            except Exception:  # noqa: BLE001
                 orden_a_items[oid] = []
 
         items = orden_a_items[oid]

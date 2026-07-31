@@ -304,7 +304,7 @@ def leer_tramos(ml, item_id, cantidades=(2, 3, 4, 6, 12, 18)):
         try:
             r = ml.get(f"/items/{item_id}/sale_price",
                        context="user_type_business", quantity=q)
-        except MeliError:
+        except Exception:  # noqa: BLE001
             continue
         if not (r.get("metadata") or {}).get("is_price_per_quantity"):
             continue
@@ -331,7 +331,7 @@ def borrar_tramos(ml, item_id):
         ml._request("POST", f"/items/{item_id}/prices/standard/quantity",
                     json_body={"prices": base})
         return True, ""
-    except MeliError as e:
+    except Exception as e:  # noqa: BLE001
         return False, str(e)[:200]
 
 
@@ -348,7 +348,7 @@ def aplicar_uno(ml, item_id, tramos_item, operador=""):
     # resultados de todo lo que ya se habia aplicado bien.
     try:
         actuales = ml.get(f"/items/{item_id}/prices")
-    except MeliError as e:
+    except Exception as e:  # noqa: BLE001
         return False, f"No pude leer los precios actuales: {str(e)[:200]}"
 
     ids_a_mantener = [
@@ -372,7 +372,7 @@ def aplicar_uno(ml, item_id, tramos_item, operador=""):
     try:
         resp = ml._request("POST", f"/items/{item_id}/prices/standard/quantity",
                            json_body=payload)
-    except MeliError as e:
+    except Exception as e:  # noqa: BLE001
         return False, str(e)[:250]
 
     aplicados = [(p.get("conditions", {}).get("min_purchase_unit"), p.get("amount"))

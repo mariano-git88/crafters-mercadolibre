@@ -213,7 +213,7 @@ def sincronizar_devoluciones(ml, operador="automatico"):
 
     try:
         r = ml.get("/post-purchase/v1/claims/search", limit=50)
-    except MeliError as e:
+    except Exception as e:  # noqa: BLE001
         return {"nuevas": 0, "ok": False, "detalle": str(e)[:200]}
 
     for c in r.get("data", []):
