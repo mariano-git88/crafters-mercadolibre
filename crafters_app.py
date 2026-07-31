@@ -3275,7 +3275,14 @@ elif seccion == "Rentabilidad":
                 "en_promo": st.column_config.CheckboxColumn("En promo"),
                 "costo": st.column_config.NumberColumn("Costo", format="%.0f"),
                 "comision_prom": st.column_config.NumberColumn("Comisión", format="%.0f"),
-                "envio_prom": st.column_config.NumberColumn("Envío", format="%.0f"),
+                "envio_prom": st.column_config.NumberColumn(
+                    "Envío", format="%.0f"),
+                "envio_base": st.column_config.TextColumn(
+                    "Base del envío",
+                    help="'solo' = medido en envíos donde el producto viajó "
+                         "solo, que es el costo real. 'prorrateado' = viajó "
+                         "acompañado y se le asignó la parte que le toca por "
+                         "valor"),
                 "cargos_totales": st.column_config.NumberColumn("Cargos", format="%.0f"),
                 "impuestos": st.column_config.NumberColumn(
                     "Impuestos", format="%.0f"),

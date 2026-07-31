@@ -1,6 +1,17 @@
 [
   {
     "fecha": "2026-07-31",
+    "hora": "20:15",
+    "tipo": "arreglo",
+    "titulo": "El costo de envío se repartía mal entre productos",
+    "puntos": [
+      "MercadoLibre parte una compra de varios productos en **una orden por producto**, todas con el mismo envío. La app lo miraba orden por orden, así que **cada producto del paquete cargaba el envío entero**.",
+      "El caso que lo destapó: un disco de \\\\$2.038 que viajó junto a una amoladora cargaba \\\\$4.125 de envío por unidad. Ahora carga \\\\$419, que es el 10% del valor del paquete que representa.",
+      "Cuando el producto viajó alguna vez **solo**, se usa ese costo real en vez de repartir nada. La tabla de Rentabilidad muestra cuál de los dos se usó."
+    ]
+  },
+  {
+    "fecha": "2026-07-31",
     "hora": "18:45",
     "tipo": "nuevo",
     "titulo": "Aplicar los cambios de precio desde Plata sobre la mesa",

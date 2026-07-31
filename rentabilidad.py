@@ -114,37 +114,92 @@ def traer_costos_envio(ml, ordenes, refrescar=False, callback=None,
 
 # ------------------------------------------------------------------ cargos
 
+# Cuantas unidades enviadas SOLAS hacen falta para creerle a ese promedio en
+# vez de al prorrateado. Con menos, el dato es demasiado flaco.
+MINIMO_UNIDADES_SOLO = 2
+
+
 def cargos_por_sku(ordenes, costos_envio=None):
     """
     Promedia por SKU lo que costo vender una unidad.
 
     Solo mira ordenes pagadas: las canceladas no representan una venta real.
-    """
-    acc = defaultdict(lambda: {"unidades": 0, "ingreso": 0.0, "comision": 0.0,
-                               "envio": 0.0, "unid_con_envio": 0,
-                               "ordenes": 0, "sin_fee": 0})
 
-    for o in ordenes:
-        if o.get("status") not in ("paid", "partially_refunded"):
+    **El envio se agrupa por ENVIO, no por orden**, y esto no es un detalle.
+    MercadoLibre parte una compra de varios productos en **una orden por
+    producto**, todas apuntando al mismo `shipping.id`. Medido sobre 90 dias:
+    ninguna orden trae dos items, y 551 envios estan compartidos por 1.369
+    ordenes (23% del total). Si se mira orden por orden, **cada producto del
+    paquete se lleva el costo entero del envio** y encima se cuenta una vez
+    por orden: $845.872 contados de mas solo entre los que tienen costo medido.
+
+    **Se reparte por valor, no por unidades.** En un paquete con una amoladora
+    de $36.000 y dos discos de $2.038, repartir por unidades le carga a cada
+    disco un tercio del envio — mas del doble de lo que vale el disco. Por
+    valor, los discos se llevan el 10% que representan.
+
+    **Y cuando se puede, no se reparte nada.** Si el SKU viajo alguna vez
+    solo, ese es el costo real de enviarlo y se usa ese. El prorrateo es el
+    plan B. La columna `envio_base` dice cual de los dos se uso.
+    """
+    pagadas = [o for o in ordenes
+               if o.get("status") in ("paid", "partially_refunded")]
+
+    # ---------------------------------------------- envio, agrupado por envio
+    por_envio = defaultdict(list)
+    for o in pagadas:
+        sid = str((o.get("shipping") or {}).get("id") or "")
+        if sid:
+            por_envio[sid].append(o)
+
+    envio_prorr = defaultdict(lambda: {"monto": 0.0, "unidades": 0})
+    envio_solo = defaultdict(lambda: {"monto": 0.0, "unidades": 0})
+
+    for sid, grupo in por_envio.items():
+        # Si el envio no entro en la muestra su costo es DESCONOCIDO, no cero:
+        # se excluye del promedio en vez de bajarlo.
+        costo = (costos_envio or {}).get(sid)
+        if costo is None:
             continue
 
-        items = o.get("order_items") or []
-        # El envio es por orden, no por item: si la orden trae varios SKU lo
-        # prorrateamos por unidades para no cargarselo todo al primero.
-        sid = str((o.get("shipping") or {}).get("id") or "")
-        # Ojo: si esta orden no entro en la muestra de envios, su costo es
-        # desconocido, NO cero. Se excluye del promedio en vez de bajarlo.
-        envio_orden = (costos_envio or {}).get(sid)
-        hay_envio = envio_orden is not None
-        envio_orden = envio_orden or 0.0
-        unidades_orden = sum(it.get("quantity") or 0 for it in items) or 1
+        renglones = []
+        for o in grupo:
+            for it in o.get("order_items") or []:
+                sku = (it["item"].get("seller_sku")
+                       or it["item"].get("seller_custom_field")
+                       or "").strip().upper()
+                if not sku:
+                    continue
+                qty = it.get("quantity") or 0
+                renglones.append((sku, qty, (it.get("unit_price") or 0) * qty))
 
-        for it in items:
+        if not renglones:
+            continue
+
+        skus = {r[0] for r in renglones}
+        total_valor = sum(r[2] for r in renglones)
+
+        if len(skus) == 1:
+            # Viajo solo: este ES el costo de enviar ese producto.
+            sku, _, _ = renglones[0]
+            unidades = sum(r[1] for r in renglones)
+            envio_solo[sku]["monto"] += costo
+            envio_solo[sku]["unidades"] += unidades
+
+        for sku, qty, valor in renglones:
+            parte = (valor / total_valor) if total_valor else (1 / len(renglones))
+            envio_prorr[sku]["monto"] += costo * parte
+            envio_prorr[sku]["unidades"] += qty
+
+    # ------------------------------------------------- comision e ingresos
+    acc = defaultdict(lambda: {"unidades": 0, "ingreso": 0.0, "comision": 0.0,
+                               "ordenes": 0, "sin_fee": 0})
+    for o in pagadas:
+        for it in o.get("order_items") or []:
             sku = (it["item"].get("seller_sku")
                    or it["item"].get("seller_custom_field") or "").strip().upper()
             if not sku:
                 continue
-
             qty = it.get("quantity") or 0
             fee = it.get("sale_fee")
             a = acc[sku]
@@ -156,23 +211,30 @@ def cargos_por_sku(ordenes, costos_envio=None):
             else:
                 # sale_fee es POR UNIDAD (verificado contra /listing_prices).
                 a["comision"] += fee * qty
-            if hay_envio:
-                a["envio"] += envio_orden * (qty / unidades_orden)
-                a["unid_con_envio"] += qty
 
     filas = []
     for sku, a in acc.items():
         u = a["unidades"] or 1
-        # El envio se promedia solo sobre las unidades de las que tenemos dato.
-        u_envio = a["unid_con_envio"]
+        solo, prorr = envio_solo.get(sku), envio_prorr.get(sku)
+
+        if solo and solo["unidades"] >= MINIMO_UNIDADES_SOLO:
+            envio_unit = solo["monto"] / solo["unidades"]
+            u_envio, base = solo["unidades"], "solo"
+        elif prorr and prorr["unidades"]:
+            envio_unit = prorr["monto"] / prorr["unidades"]
+            u_envio, base = prorr["unidades"], "prorrateado"
+        else:
+            envio_unit, u_envio, base = 0.0, 0, "sin dato"
+
         filas.append({
             "sku": sku,
             "unidades_vendidas": a["unidades"],
             "ordenes": a["ordenes"],
             "precio_prom": a["ingreso"] / u,
             "comision_prom": a["comision"] / u,
-            "envio_prom": (a["envio"] / u_envio) if u_envio else 0.0,
+            "envio_prom": envio_unit,
             "cobertura_envio": (u_envio / u) if u else 0.0,
+            "envio_base": base,
             "items_sin_comision": a["sin_fee"],
         })
     return pd.DataFrame(filas)

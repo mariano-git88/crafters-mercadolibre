@@ -18,6 +18,11 @@ Sobre los datos: el costo de envio sale de `/shipments/{id}/costs`, mirando el
 envio, asi que se muestrean unas pocas ventas por SKU y se cachea. La columna
 `cobertura` dice que proporcion de las unidades tiene dato real: con cobertura
 baja, el promedio es orientativo.
+
+El reparto del envio entre productos lo hace `rentabilidad.cargos_por_sku()`,
+agrupando **por envio y no por orden**: MercadoLibre parte una compra de varios
+productos en una orden por producto, todas con el mismo `shipping.id`. Ver la
+nota ahi, que explica por que repartir por valor y no por unidades.
 """
 
 import sys
