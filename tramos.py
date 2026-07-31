@@ -103,6 +103,13 @@ def analizar(pubs=None):
                 continue
             if tope > precio * (1 + MARGEN_SUBIDA):
                 break
+            # Cruzar SOLO sirve si el cargo fijo BAJA. Si sube, el neto mejora
+            # igual (subiste el precio), pero quedarse un peso abajo del
+            # escalon deja todavia mas: cobras casi lo mismo y pagas menos
+            # cargo. Sin esta condicion el analisis recomendaba cruzar hacia
+            # arriba escalones que son peores: 76 de 164 sugerencias.
+            if cargo_fijo(tope) >= cargo_fijo(precio):
+                break
             n = neto(tope)
             if n > neto_sug:
                 sugerido, neto_sug = float(tope), n
