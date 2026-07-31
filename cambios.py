@@ -5,10 +5,19 @@ Se pinta en un modal, igual que el tutorial, cuando se aprieta el boton
 "Novedades". Esta pensado para que el operador se entere de que cambio sin
 tener que leer commits.
 
+**El contenido vive en `cambios.json`, no en este archivo, y es a proposito.**
+Streamlit Cloud a veces se queda con una copia vieja de los modulos importados
+aunque el push haya entrado bien: paso dos veces el mismo dia — una con una
+constante nueva de `rentabilidad` y otra con este mismo registro, que se
+publico y siguio mostrando la version anterior. Un archivo de datos se lee **en
+cada corrida**, asi que no se puede quedar viejo. Ese es todo el motivo del
+JSON separado.
+
 **Como mantenerlo:** cada vez que se pushea algo que el operador nota, agregar
-una entrada ARRIBA de la lista. La fecha y la hora son las del push. Escribir
-en criollo lo que cambia para quien usa la app, no lo que cambio en el codigo:
-"ahora las preguntas se contestan solas" y no "se agrego preguntas_cron.py".
+una entrada ARRIBA de la lista en `cambios.json`. La fecha y la hora son las
+del push. Escribir en criollo lo que cambia para quien usa la app, no lo que
+cambio en el codigo: "ahora las preguntas se contestan solas" y no "se agrego
+preguntas_cron.py".
 
 Cada entrada:
     fecha   'YYYY-MM-DD'
@@ -16,232 +25,81 @@ Cada entrada:
     titulo  una linea
     tipo    'nuevo' | 'mejora' | 'arreglo'
     puntos  lista de bullets, opcional
+
+Ojo con los importes: Streamlit toma lo que va entre dos `$` como formula
+LaTeX. En el JSON van escapados con barra invertida.
 """
+
+import json
+from pathlib import Path
 
 import streamlit as st
 
+ARCHIVO = Path(__file__).resolve().parent / "cambios.json"
+
 ICONO = {"nuevo": "🆕", "mejora": "⬆️", "arreglo": "🔧"}
 
-CAMBIOS = [
-    {
-        "fecha": "2026-07-31", "hora": "16:30", "tipo": "nuevo",
-        "titulo": "Plata sobre la mesa — la nueva pantalla de entrada",
-        "puntos": [
-            "Junta en una sola lista todo lo accionable que antes estaba "
-            "repartido en seis secciones, ordenado por pesos: qué reponer, "
-            "qué precio subir, qué revisar porque pierde plata.",
-            "Separa **facturación parada** de **margen en juego**, que son "
-            "cosas distintas y no se pueden sumar.",
-            "Avisa cuando un producto está para reponer **y** pierde plata en "
-            "cada unidad: reponerlo aumentaría la pérdida.",
-            "Se arregló un error en **Competencia** que cortaba la consulta a "
-            "los pocos productos.",
-        ],
-    },
-    {
-        "fecha": "2026-07-31", "hora": "14:10", "tipo": "arreglo",
-        "titulo": "Los importes se veían como fórmulas matemáticas",
-        "puntos": [
-            "Cuando un texto tenía dos o más importes, Streamlit los tomaba "
-            "como una fórmula y los mostraba ilegibles. Pasaba en este mismo "
-            "registro, en el tutorial y en varios avisos de la app.",
-        ],
-    },
-    {
-        "fecha": "2026-07-31", "hora": "12:47", "tipo": "nuevo",
-        "titulo": "Las preguntas se contestan solas",
-        "puntos": [
-            "La IA responde apenas entra la pregunta, sin que nadie abra la "
-            "app: cada 15 minutos de 8 a 21 de lunes a sábado, y cada hora "
-            "las noches y los domingos. Si no puede responder, la deja en "
-            "*Gestión manual*.",
-            "El historial también se sincroniza solo, en la misma corrida.",
-            "**Las preguntas que MercadoLibre no deja contestar** (porque la "
-            "publicación está pausada) ya no se muestran ni se cuentan: no "
-            "eran trabajo pendiente, eran ruido.",
-            "Se corrigió un problema que duplicaba el historial en cada "
-            "sincronización. La planilla tenía 4.000 filas para 1.006 "
-            "preguntas; quedó limpia.",
-        ],
-    },
-    {
-        "fecha": "2026-07-31", "hora": "08:05", "tipo": "nuevo",
-        "titulo": "Sección Precio óptimo: la ventana de precio",
-        "puntos": [
-            "Junta en una sola pantalla el **piso** (abajo no llegás al "
-            "margen), el **techo útil** (arriba perdés la página de catálogo) "
-            "y el **escalón de comisión**, y sugiere un precio por SKU con su "
-            "motivo.",
-            "Reemplaza a *Precios mínimos*, que quedó adentro: el piso ahora "
-            "es una columna más.",
-            "Lo que más rinde es cruzar el escalón: subir de \\$29.615 a "
-            "\\$33.000 lleva el neto por unidad de −\\$1.964 a +\\$2.824.",
-        ],
-    },
-    {
-        "fecha": "2026-07-30", "hora": "19:40", "tipo": "arreglo",
-        "titulo": "Los sliders de porcentaje mostraban 0%",
-        "puntos": [
-            "Todos los sliders de porcentaje se veían de 0% a 0%. Los valores "
-            "que se usaban eran correctos: lo que estaba mal era cómo se "
-            "mostraban.",
-        ],
-    },
-    {
-        "fecha": "2026-07-30", "hora": "18:08", "tipo": "mejora",
-        "titulo": "Costo logístico con tope, e IVA al 21%",
-        "puntos": [
-            "El costo logístico pasa a ser **10% o $9.000, lo que sea "
-            "menor**: mover una caja no cuesta el doble porque el producto "
-            "valga el doble.",
-            "El IVA viene al 21% por defecto. La planilla de costos está sin "
-            "IVA y los precios de ML lo incluyen, así que antes los márgenes "
-            "salían inflados en 21 puntos.",
-            "El margen descuenta además impuestos 10% y general 5%.",
-        ],
-    },
-    {
-        "fecha": "2026-07-30", "hora": "15:53", "tipo": "mejora",
-        "titulo": "La planilla de costos se sube una sola vez",
-        "puntos": [
-            "Queda guardada y la usan Rentabilidad, Buy Box y Precio óptimo. "
-            "Antes había que volver a subirla en cada sección y en cada "
-            "visita.",
-        ],
-    },
-    {
-        "fecha": "2026-07-30", "hora": "15:11", "tipo": "arreglo",
-        "titulo": "Las cargas masivas ya no se cortan por un error",
-        "puntos": [
-            "La carga de precios mayoristas a 2.281 publicaciones moría en la "
-            "número 25 y se perdía todo lo hecho. Ahora cada publicación se "
-            "resuelve por separado y la corrida sigue.",
-            "Se puede **reintentar solo las que fallaron** sin repetir el "
-            "resto.",
-        ],
-    },
-    {
-        "fecha": "2026-07-30", "hora": "14:26", "tipo": "nuevo",
-        "titulo": "Sección Ganar la venta: Buy Box y promociones",
-        "puntos": [
-            "**Buy Box**: en qué publicaciones de catálogo ganás la página y "
-            "en cuáles no, con el precio que haría falta. Se pueden bajar "
-            "precios en lote por criterio, por marca o a mano.",
-            "Hay casos donde ya estás más barato que el ganador y perdés "
-            "igual: ahí lo que falta es Full o envío gratis, no precio.",
-            "**Promociones**: qué campañas te ofrece ML, cuáles cofinancia, y "
-            "alta automática por criterio.",
-        ],
-    },
-    {
-        "fecha": "2026-07-30", "hora": "09:54", "tipo": "mejora",
-        "titulo": "Preguntas pasa al segundo lugar",
-        "puntos": [
-            "Queda destacada en naranja en el selector de secciones.",
-            "*Responder* pasa a llamarse **Dashboard** y *Pendientes* a "
-            "**Gestión manual**.",
-        ],
-    },
-    {
-        "fecha": "2026-07-30", "hora": "09:05", "tipo": "nuevo",
-        "titulo": "Reporte semanal y Alertas",
-        "puntos": [
-            "**Reporte semanal**: la pantalla del lunes. Cómo vino la semana "
-            "contra la anterior y qué hay que resolver. Es la que abre la app.",
-            "**Alertas**: stock por agotarse ordenado por plata en riesgo, y "
-            "reclamos por producto medidos como tasa sobre lo que vende cada "
-            "uno.",
-            "Apareció que MercadoLibre **pausa sola** la publicación al "
-            "llegar a stock cero: había 20 productos agotados que no "
-            "aparecían en ningún informe.",
-            "Se corrigieron todos los porcentajes de las tablas, que se "
-            "mostraban 100 veces más chicos.",
-        ],
-    },
-    {
-        "fecha": "2026-07-29", "hora": "22:09", "tipo": "nuevo",
-        "titulo": "Sección Oportunidades",
-        "puntos": [
-            "Siete análisis: visitas contra ventas, tramos de comisión, "
-            "precios espejo, factura de ML, envíos, candidatos a Full y salud "
-            "del catálogo.",
-        ],
-    },
-    {
-        "fecha": "2026-07-29", "hora": "21:06", "tipo": "nuevo",
-        "titulo": "Respuestas automáticas con IA",
-        "puntos": [
-            "La IA redacta con el historial de respuestas de la cuenta, los "
-            "datos de la publicación y los documentos que cargues.",
-            "Si el contexto no alcanza **no inventa**: deja la pregunta para "
-            "una persona.",
-        ],
-    },
-    {
-        "fecha": "2026-07-29", "hora": "20:55", "tipo": "nuevo",
-        "titulo": "Competencia por código de barras",
-        "puntos": [
-            "Quién vende más barato cada producto y en qué posición estás.",
-        ],
-    },
-    {
-        "fecha": "2026-07-29", "hora": "16:24", "tipo": "nuevo",
-        "titulo": "Precios mayoristas por reglas",
-        "puntos": [
-            "Descuentos por cantidad con reglas por familia, por SKU o "
-            "generales.",
-        ],
-    },
-    {
-        "fecha": "2026-07-29", "hora": "15:43", "tipo": "nuevo",
-        "titulo": "Control de stock propio",
-        "puntos": [
-            "Tu propia cuenta de unidades con historial de movimientos, "
-            "descontando las ventas de MercadoLibre. No toca el stock de ML.",
-        ],
-    },
-    {
-        "fecha": "2026-07-28", "hora": "21:59", "tipo": "nuevo",
-        "titulo": "Primera versión",
-        "puntos": [
-            "Precios, Stock y Rentabilidad desde planilla, con simulación "
-            "obligatoria antes de aplicar y registro de todo lo que se cambia.",
-        ],
-    },
-]
+
+def cargar():
+    """
+    Lee el registro del disco. **Sin cachear, a proposito** — ver la nota de
+    arriba: cachearlo reintroduce el problema que este archivo vino a evitar.
+
+    Nunca lanza: si el archivo falta o esta roto devuelve vacio, y el modal
+    muestra un aviso en vez de tumbar la app.
+    """
+    try:
+        datos = json.loads(ARCHIVO.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    return datos if isinstance(datos, list) else []
+
+
+def _dma(fecha):
+    """'2026-07-31' -> '31/07/2026'. Vacio si la fecha no tiene la forma."""
+    partes = str(fecha or "").split("-")
+    if len(partes) != 3:
+        return ""
+    a, m, d = partes
+    return f"{d}/{m}/{a}"
 
 
 def ultima_actualizacion():
-    """'31/07/2026 12:47' de la entrada más reciente, para el encabezado."""
-    if not CAMBIOS:
+    """'31/07/2026 16:30' de la entrada más reciente, para el encabezado."""
+    datos = cargar()
+    if not datos:
         return ""
-    c = CAMBIOS[0]
-    d, m, a = c["fecha"].split("-")[::-1]
-    return f"{d}/{m}/{a} {c['hora']}"
+    return f"{_dma(datos[0].get('fecha'))} {datos[0].get('hora', '')}".strip()
 
 
 def cuantos_desde(fecha=None):
     """Cuántas entradas hay desde una fecha (para un badge, si algún día va)."""
+    datos = cargar()
     if not fecha:
-        return len(CAMBIOS)
-    return sum(1 for c in CAMBIOS if c["fecha"] > fecha)
+        return len(datos)
+    return sum(1 for c in datos if str(c.get("fecha", "")) > fecha)
 
 
 def render() -> None:
     """Pinta el registro completo dentro del modal."""
+    datos = cargar()
+    if not datos:
+        st.warning(f"No pude leer el registro de novedades (`{ARCHIVO.name}`).",
+                   icon="⚠️")
+        return
+
     st.caption(
         "Qué fue cambiando en la app, de lo más nuevo a lo más viejo. "
         "Las fechas son las de cada actualización.")
 
     dia_anterior = None
-    for c in CAMBIOS:
-        if c["fecha"] != dia_anterior:
-            d, m, a = c["fecha"].split("-")[::-1]
-            st.markdown(f"### {d}/{m}/{a}")
-            dia_anterior = c["fecha"]
+    for c in datos:
+        if c.get("fecha") != dia_anterior:
+            st.markdown(f"### {_dma(c.get('fecha'))}")
+            dia_anterior = c.get("fecha")
 
-        st.markdown(f"**{ICONO.get(c['tipo'], '•')} {c['hora']} — "
-                    f"{c['titulo']}**")
+        st.markdown(f"**{ICONO.get(c.get('tipo'), '•')} {c.get('hora', '')} — "
+                    f"{c.get('titulo', '')}**")
         for p in c.get("puntos", []):
             st.markdown(f"- {p}")
         st.markdown("")
