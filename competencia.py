@@ -194,8 +194,8 @@ def main():
     if len(sys.argv) > 1:
         eans = [e for a in sys.argv[1:] for e in limpiar_eans(a)]
     else:
-        import json
-        pubs = json.loads((DIR / "catalogo.json").read_text(encoding="utf-8"))
+        from catalogo import cargar_catalogo
+        pubs = cargar_catalogo(ml)
         eans = []
         for p in pubs:
             if p.get("status") != "active":
@@ -372,8 +372,15 @@ def eans_mas_vendidos(ml, n=50, dias=30, callback=None):
             if iid:
                 unidades[iid] += it.get("quantity") or 0
 
-    pubs = {p["id"]: p for p in json.loads(
-        (DIR / "catalogo.json").read_text(encoding="utf-8"))}
+    # OJO: `catalogo.json` es un cache **gitignoreado**. En la app siempre
+    # esta, pero en GitHub Actions el runner arranca limpio y no existe: leerlo
+    # directo hacia fallar el reporte semanal con FileNotFoundError. Se usa el
+    # cargador, que lo baja si falta (~2 min) y lo cachea para el resto de la
+    # corrida.
+    from catalogo import cargar_catalogo
+    if callback:
+        callback("Cargando el catálogo...")
+    pubs = {p["id"]: p for p in cargar_catalogo(ml)}
 
     def gtin(p):
         for a in p.get("attributes") or []:

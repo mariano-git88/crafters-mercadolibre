@@ -1,5 +1,16 @@
 [
   {
+    "fecha": "2026-08-01",
+    "hora": "12:05",
+    "tipo": "arreglo",
+    "titulo": "La IA no podía responder desde el proceso automático",
+    "puntos": [
+      "Las preguntas quedaban con el motivo «no encuentro la clave de Anthropic» porque la configuración del proceso automático estaba desactualizada. Ya se corrigió.",
+      "Esas preguntas **se reintentan solas** en la próxima corrida: no hay que hacer nada con ellas.",
+      "El reporte de competencia también fallaba al correr automáticamente, por un archivo de caché que no existe en el servidor. Arreglado."
+    ]
+  },
+  {
     "fecha": "2026-07-31",
     "hora": "21:40",
     "tipo": "nuevo",
