@@ -44,7 +44,7 @@ import tramos
 import tutorial_crafters
 import ventana
 from catalogo import CACHE as CACHE_CATALOGO, bajar_catalogo
-from meli import Meli, MeliError
+from meli import Meli, MeliError, es_error_de_api
 
 _ASSETS = Path(__file__).resolve().parent / "_assets"
 LOGO = _ASSETS / "logo_crafters.png"          # horizontal, para el encabezado
@@ -2772,9 +2772,27 @@ elif seccion == "Oportunidades":
         n_per = st.selectbox("Períodos a comparar", [3, 4, 6], index=0)
         if st.button("Conciliar"):
             estado = st.empty()
-            with st.spinner("Trayendo facturación y órdenes..."):
-                st.session_state["concil"] = conciliacion.conciliar(
-                    ml, n_per, callback=lambda m: estado.caption(str(m)))
+            try:
+                with st.spinner("Trayendo facturación y órdenes..."):
+                    st.session_state["concil"] = conciliacion.conciliar(
+                        ml, n_per, callback=lambda m: estado.caption(str(m)))
+            except Exception as e:
+                # Sin este except, Streamlit Cloud **tapa el mensaje** ("error
+                # redacted to prevent data leaks") y no queda forma de saber
+                # que contesto ML. Se captura Exception y no MeliError porque
+                # con st.cache_resource el cliente puede vivir en otra copia
+                # del modulo (ver es_error_de_api en meli.py).
+                estado.empty()
+                if es_error_de_api(e):
+                    st.error(f"MercadoLibre rechazó el pedido: {e}")
+                    st.info(
+                        "La API de facturación tiene un límite de tasa muy "
+                        "bajo (aguanta unas pocas llamadas seguidas). Si "
+                        "apretaste **Conciliar** varias veces, esperá un "
+                        "minuto y probá de nuevo.", icon="⏳")
+                else:
+                    st.error(f"Falló la conciliación: {type(e).__name__}: {e}")
+                st.stop()
             estado.empty()
 
         dfk = st.session_state.get("concil")
