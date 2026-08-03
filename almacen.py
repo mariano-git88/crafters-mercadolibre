@@ -44,6 +44,59 @@ class AlmacenError(RuntimeError):
     pass
 
 
+# ------------------------------------------------------------------ reintentos
+#
+# Google Sheets se cae por momentos. Un 503 justo cuando arrancaba el
+# respondedor de preguntas dejo una corrida en rojo (3/8/2026) sin que hubiera
+# nada mal configurado: la corrida anterior y la siguiente anduvieron bien.
+#
+# Lo importante es NO reintentar los errores de configuracion (403 sin
+# permiso, 404 ID inexistente): esos no se arreglan solos y reintentarlos solo
+# hace esperar al pedo antes de dar el mismo error.
+#
+# Ojo con que se reintenta: repetir una lectura es gratis, pero repetir un
+# append puede duplicar filas, porque un 503 no dice si la escritura llego o
+# no. Por eso los append-only de aca abajo NO pasan por esto.
+
+CODIGOS_TRANSITORIOS = {429, 500, 502, 503, 504}
+INTENTOS = 4
+ESPERA_BASE = 2.0        # espera 2, 4 y 8 segundos: 14 en total
+
+
+def _es_transitorio(e):
+    """True si conviene reintentar: Google hipo, no configuracion mal puesta."""
+    # gspread expone el codigo en la APIError. Preferimos el status HTTP real
+    # porque .code sale del JSON del error y vale -1 si no se pudo parsear.
+    codigo = getattr(getattr(e, "response", None), "status_code", None)
+    if not isinstance(codigo, int):
+        codigo = getattr(e, "code", None)
+    if isinstance(codigo, int) and codigo > 0:
+        return codigo in CODIGOS_TRANSITORIOS
+
+    # Sin codigo HTTP puede ser un corte de red, que tambien se arregla solo.
+    # Los errores de gspread que no son de red si traen codigo, asi que esto
+    # no se traga una mala configuracion.
+    try:
+        import requests
+        return isinstance(e, (requests.exceptions.ConnectionError,
+                              requests.exceptions.Timeout))
+    except ImportError:
+        return False
+
+
+def _reintentar(operacion):
+    """Corre la operacion, reintentando solo si Google contesto algo transitorio."""
+    for intento in range(1, INTENTOS + 1):
+        try:
+            return operacion()
+        except AlmacenError:
+            raise
+        except Exception as e:
+            if intento == INTENTOS or not _es_transitorio(e):
+                raise
+            time.sleep(ESPERA_BASE ** intento)
+
+
 # ------------------------------------------------------------------ config
 
 def _seccion(nombre):
@@ -108,8 +161,16 @@ def _abrir():
 
     cliente = gspread.service_account_from_dict(credenciales)
     try:
-        return cliente.open_by_key(cfg["spreadsheet_id"])
+        return _reintentar(lambda: cliente.open_by_key(cfg["spreadsheet_id"]))
     except Exception as e:
+        # Dos causas muy distintas, dos mensajes distintos: mandar a revisar
+        # los permisos cuando el problema es que Google esta caido hace perder
+        # el tiempo buscando donde no hay nada roto.
+        if _es_transitorio(e):
+            raise AlmacenError(
+                f"Google Sheets no respondio en {INTENTOS} intentos. Es una "
+                f"falla momentanea de Google, no de la configuracion: la "
+                f"proxima corrida deberia andar sola. Detalle: {e}") from e
         raise AlmacenError(
             f"No pude abrir la Google Sheet ({cfg['spreadsheet_id']}). "
             f"Verifica el ID y que este compartida como Editor con el "
@@ -119,7 +180,9 @@ def _abrir():
 def _hoja(planilla, titulo, columnas):
     import gspread
     try:
-        return planilla.worksheet(titulo)
+        # WorksheetNotFound no trae codigo HTTP, asi que _reintentar la deja
+        # pasar de una y la hoja se crea sin esperar de mas.
+        return _reintentar(lambda: planilla.worksheet(titulo))
     except gspread.WorksheetNotFound:
         hoja = planilla.add_worksheet(title=titulo, rows=1000,
                                       cols=max(len(columnas), 8))
@@ -134,7 +197,7 @@ def leer_tokens():
     if hay_sheet():
         try:
             hoja = _hoja(_abrir(), HOJA_TOKENS, COLUMNAS_TOKENS)
-            filas = hoja.get_all_records()
+            filas = _reintentar(hoja.get_all_records)
             if filas:
                 d = dict(filas[-1])       # siempre vale el ultimo guardado
                 d["expira_en"] = float(d.get("expira_en") or 0)
@@ -161,9 +224,17 @@ def guardar_tokens(datos):
         try:
             hoja = _hoja(_abrir(), HOJA_TOKENS, COLUMNAS_TOKENS)
             fila = [str(datos.get(c, "")) for c in COLUMNAS_TOKENS]
-            hoja.clear()
-            hoja.append_row(COLUMNAS_TOKENS)
-            hoja.append_row(fila)
+
+            # Se reintenta la secuencia completa, no cada paso: como arranca
+            # borrando, repetirla deja el mismo resultado. Y hay que insistir,
+            # porque el refresh_token es de un solo uso: si el que acabamos de
+            # usar no queda guardado, hay que reautorizar a mano.
+            def escribir():
+                hoja.clear()
+                hoja.append_row(COLUMNAS_TOKENS)
+                hoja.append_row(fila)
+
+            _reintentar(escribir)
             return datos
         except Exception as e:
             raise AlmacenError(f"No pude guardar los tokens en la Sheet: {e}") from e
@@ -190,6 +261,9 @@ def append_auditoria(filas):
 
     if hay_sheet():
         try:
+            # El append NO se reintenta a proposito: un 503 no dice si la
+            # escritura llego, y reintentar duplicaria el registro. La
+            # apertura de la planilla si reintenta, que es donde mas pega.
             hoja = _hoja(_abrir(), HOJA_AUDITORIA, COLUMNAS_AUDITORIA)
             hoja.append_rows([[str(f.get(c, "")) for c in COLUMNAS_AUDITORIA]
                               for f in filas])
@@ -227,7 +301,8 @@ def leer_hoja(titulo, columnas):
     """Devuelve la hoja como lista de dicts. Si no existe, lista vacia."""
     if hay_sheet():
         try:
-            return _hoja(_abrir(), titulo, columnas).get_all_records()
+            hoja = _hoja(_abrir(), titulo, columnas)
+            return _reintentar(hoja.get_all_records)
         except Exception as e:
             raise AlmacenError(f"No pude leer la hoja '{titulo}': {e}") from e
 
@@ -249,7 +324,8 @@ def columna_hoja(titulo, columnas, nombre):
         try:
             hoja = _hoja(_abrir(), titulo, columnas)
             idx = columnas.index(nombre) + 1
-            return [v for v in hoja.col_values(idx)[1:] if v]
+            valores = _reintentar(lambda: hoja.col_values(idx))
+            return [v for v in valores[1:] if v]
         except Exception as e:
             raise AlmacenError(f"No pude leer la columna '{nombre}': {e}") from e
     return [str(f.get(nombre, "")) for f in leer_hoja(titulo, columnas)
@@ -262,6 +338,10 @@ def append_hoja(titulo, columnas, filas):
         return True, ""
     if hay_sheet():
         try:
+            # Sin reintento, por lo mismo que append_auditoria: repetir un
+            # append duplica filas. El control de stock evita duplicados
+            # comparando claves ANTES de escribir, y un reintento a ciegas
+            # aca adentro se saltearia ese control.
             hoja = _hoja(_abrir(), titulo, columnas)
             hoja.append_rows([[str(f.get(c, "")) for c in columnas] for f in filas])
             return True, ""
@@ -285,11 +365,17 @@ def reescribir_hoja(titulo, columnas, filas):
     if hay_sheet():
         try:
             hoja = _hoja(_abrir(), titulo, columnas)
-            hoja.clear()
-            hoja.append_row(columnas)
-            if filas:
-                hoja.append_rows([[str(f.get(c, "")) for c in columnas]
-                                  for f in filas])
+
+            # Igual que en guardar_tokens: empieza borrando, asi que repetirla
+            # no duplica nada.
+            def escribir():
+                hoja.clear()
+                hoja.append_row(columnas)
+                if filas:
+                    hoja.append_rows([[str(f.get(c, "")) for c in columnas]
+                                      for f in filas])
+
+            _reintentar(escribir)
             return True, ""
         except Exception as e:
             return False, f"No pude reescribir '{titulo}': {e}"
