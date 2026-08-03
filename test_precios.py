@@ -51,6 +51,40 @@ def main():
                  "; ".join(usos[:2]))
 
     print("\n" + "=" * 70)
+    print("1b. El descuento solo alcanza a los SKU de la lista")
+    print("=" * 70)
+    # Un SKU de otro proveedor no tiene el descuento de Suprabond. Aplicarselo
+    # le infla el margen 20% contra nada, y encima no se nota: el numero sale
+    # lindo. Se prueba con dos SKU inventados, uno dentro y uno fuera.
+    import pandas as pd
+
+    costos = pd.DataFrame([{"sku": "EN_LISTA", "costo": 1000.0},
+                           {"sku": "FUERA", "costo": 1000.0}])
+    cargos = pd.DataFrame(columns=["sku", "unidades_vendidas", "ordenes",
+                                   "precio_prom", "comision_prom",
+                                   "envio_prom", "cobertura_envio",
+                                   "envio_base", "items_sin_comision"])
+    # El SKU tiene que ir en el atributo SELLER_SKU: `seller_custom_field`
+    # solo no alcanza, `sku_del_atributo()` no lo mira.
+    def _pub(item_id, sku, precio):
+        return {"id": item_id, "price": precio, "status": "active",
+                "title": sku, "seller_custom_field": sku,
+                "attributes": [{"id": "SELLER_SKU", "value_name": sku}]}
+
+    pubs_falsos = [_pub("MLA1", "EN_LISTA", 5000.0),
+                   _pub("MLA2", "FUERA", 5000.0)]
+    salida = rent.calcular(costos, cargos, pubs_falsos, iva=0.21,
+                           con_descuento=True,
+                           precios_lista={"EN_LISTA": {"sugerido": 2120.0}})
+    por_sku = dict(zip(salida["sku"], salida["costo"]))
+    chequear(abs(por_sku.get("EN_LISTA", 0) - 800.0) < 0.01,
+             "el SKU de la lista recibe el descuento",
+             f"dio {por_sku.get('EN_LISTA')}")
+    chequear(abs(por_sku.get("FUERA", 0) - 1000.0) < 0.01,
+             "el SKU fuera de la lista NO recibe el descuento",
+             f"dio {por_sku.get('FUERA')}")
+
+    print("\n" + "=" * 70)
     print("2. Los helpers del descuento aguantan datos faltantes")
     print("=" * 70)
     nan = float("nan")
@@ -104,6 +138,31 @@ def main():
             mult = (guardada["sugerido"] / guardada["costo"]).median()
             chequear(abs(mult - 2.12) < 0.01,
                      f"el sugerido sigue siendo costo x 2,12 (dio {mult:.3f})")
+
+    print("\n" + "=" * 70)
+    print("3b. El precio de lista es un MINIMO, no un techo")
+    print("=" * 70)
+    # Estar por encima esta permitido: bajar al piso a algo que hoy esta mas
+    # caro seria resignar margen sin que nadie lo pidiera.
+    import pandas as pd
+
+    costos2 = pd.DataFrame([{"sku": "CARO", "costo": 1000.0}])
+    pubs2 = [_pub("MLA9", "CARO", 9000.0)]
+    d = pm.analizar(costos2, cargos, pubs2,
+                    precios_lista={"CARO": {"sugerido": 5000.0}})
+    if len(d):
+        f = d.iloc[0]
+        chequear(f["estado_lista"] == "arriba del mínimo",
+                 "publicado arriba del minimo se marca como tal",
+                 f"dio {f['estado_lista']}")
+        chequear(abs(f["precio_objetivo"] - 9000.0) < 0.01,
+                 "no propone bajar al minimo lo que ya esta mas caro",
+                 f"propuso {f['precio_objetivo']}")
+        sel = pm.seleccionar_a_precio_de_lista(d)
+        chequear(len(sel) == 0,
+                 "lo que esta arriba del minimo no entra en el lote de subas")
+    else:
+        chequear(False, "el caso 'arriba del minimo' produjo una fila")
 
     print("\n" + "=" * 70)
     print("4. Los costos de estructura")

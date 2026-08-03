@@ -589,30 +589,53 @@ eso no es un error del cruce.
    sin asignar**. Un precio equivocado viajaría callado hasta la publicación;
    sin precio, al menos se ve.
 
-#### El descuento del 20% del proveedor — dónde sí y dónde no
+#### Es un MÍNIMO, no un techo
 
-Suprabond descuenta un 20% sobre la lista. **Se mira solo en Rentabilidad.**
+Se puede publicar por encima del número de la lista y **eso no se corrige**:
+estar más caro está permitido. El único estado que pide acción es estar por
+debajo. Por eso `precio_objetivo` es `max(precio_actual, mínimo_de_lista)` y no
+el mínimo a secas — bajar al piso un producto que hoy está más caro sería
+resignar margen sin que nadie lo haya pedido, y `seleccionar_a_precio_de_lista()`
+deja afuera los que están por encima.
+
+Por debajo del mínimo solo se baja con el **descuento permitido** (hasta 15%),
+que es una promoción puntual y no un cambio de precio de lista.
+
+#### El descuento del 20% del proveedor — dos límites duros
+
+Suprabond descuenta un 20% sobre la lista. Dos restricciones, y las dos importan:
+
+**1. Solo en Rentabilidad.**
 
 | Pregunta | Costo que se usa |
 |---|---|
 | ¿cuánta plata gané? (Rentabilidad) | `ListaPrecio × 0,80` |
 | ¿hasta dónde puedo bajar el precio? (Buy Box, Precio óptimo, Competencia) | `ListaPrecio` pleno |
 
-El motivo es concreto: si se baja un precio contando con ese descuento y el mes
-que viene no está, la venta pasa a pérdida y nadie se entera hasta la
-liquidación. Las pantallas que bajan precios usan siempre el costo pleno, que
-es el conservador.
+Si se baja un precio contando con ese descuento y el mes que viene no está, la
+venta pasa a pérdida y nadie se entera hasta la liquidación.
 
-Es la regla más fácil de romper sin querer —alcanza con "unificar" el costo en
-un helper común—, así que hay un test que la verifica: `python test_precios.py`.
+**2. Solo para los SKU que están en la lista.** Es un descuento de Suprabond
+sobre *su* lista: los 270 SKU de otros proveedores no lo tienen. Aplicárselo les
+infla el margen 20% contra nada, y no se nota porque el número sale lindo. La
+columna `en_lista` dice a quién se le aplicó.
+
+Medido: acotarlo a la lista baja el margen mediano del catálogo de 24,3% a
+18,8%. Los de la lista quedan en 10,6% y los de afuera en 32,8% — o sea que los
+productos de Suprabond son los **menos** rentables, y con el descuento mal
+aplicado eso quedaba tapado.
+
+Las dos reglas son fáciles de romper sin querer —alcanza con "unificar" el costo
+en un helper común—, así que hay un test que las verifica:
+`python test_precios.py`.
 
 #### Cobertura
 
 De los 864 SKU activos con costo cargado, **595 tienen precio de lista (69%),
 pero son el 93% de las unidades vendidas**. Los 269 que quedan afuera son de
 otros proveedores (CR001, CR042, CR002…) y venden poco: 549 unidades en 90
-días. Esos siguen guiados por el precio mínimo despejado del costo, y la app lo
-dice.
+días. Esos **no tienen mínimo sugerido ni el descuento del 20%**: siguen guiados solo
+por el precio que despeja el costo, y la app lo dice.
 
 ### Otros conceptos (impuestos, logístico, general)
 

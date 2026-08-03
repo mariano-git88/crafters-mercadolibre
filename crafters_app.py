@@ -337,14 +337,23 @@ def aviso_lista(n, cuando):
     """La línea que explica de dónde sale el precio de publicación."""
     if n:
         st.caption(
-            f"Precio de publicación: **lista de Suprabond**, {n} SKU"
+            f"Precio **mínimo** de publicación: lista de Suprabond, {n} SKU"
             + (f" (actualizada el {cuando})." if cuando else ".")
-            + f" Se puede descontar hasta **{LP.DESCUENTO_PERMITIDO:.0%}** "
-            "en una promoción puntual.")
+            + " Por encima se puede cobrar lo que se quiera; por debajo solo "
+            f"con el descuento permitido, hasta **{LP.DESCUENTO_PERMITIDO:.0%}**.")
     else:
         st.caption(
             "Sin lista de precios cargada: manda el precio mínimo despejado "
             "del costo. Se carga desde **Rentabilidad**.")
+
+
+def aviso_sin_lista(n_sin):
+    """Los SKU de otros proveedores no tienen mínimo ni descuento."""
+    if n_sin:
+        st.caption(
+            f"{n_sin} SKU no están en la lista (otros proveedores): **no "
+            "tienen mínimo sugerido ni el descuento del 20%**, y se guían "
+            "solo por el precio que despeja el costo.")
 
 
 def bloque_lista_precios(clave):
@@ -3465,12 +3474,17 @@ elif seccion == "Rentabilidad":
             con_lista = df[df["vs_sugerido"].notna()]
             if len(con_lista):
                 debajo = int((con_lista["vs_sugerido"] < 0.99).sum())
+                arriba = int((con_lista["vs_sugerido"] > 1.01).sum())
                 if debajo:
                     st.warning(
-                        f"**{debajo} SKU están publicados por debajo del "
-                        f"precio de lista.** Llevarlos al precio de lista es "
-                        "la acción más directa: está en *Precio óptimo*.",
-                        icon="🏷️")
+                        f"**{debajo} SKU están por debajo del precio mínimo "
+                        "de la lista.** Subirlos al mínimo es la acción más "
+                        "directa: está en *Precio óptimo*.", icon="🏷️")
+                if arriba:
+                    st.caption(
+                        f"Otros {arriba} están por encima del mínimo, que "
+                        "**está permitido**: el número de la lista es un "
+                        "piso, no un techo.")
 
         negativos = con_datos[con_datos["margen_pct"] < 0]
         if len(negativos):

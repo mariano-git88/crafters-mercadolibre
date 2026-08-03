@@ -371,10 +371,15 @@ OTROS_CONCEPTOS = {"impuestos": 0.05, "logistico": 0.05, "general": 0.05}
 # practicamente dejo de actuar.
 TOPE_LOGISTICO = 9000.0
 
-# Lo que el proveedor descuenta sobre la lista. **Solo se mira al medir la
-# rentabilidad**, nunca al decidir un precio para ganar catalogo: si se baja
-# el precio contando con este descuento y despues no esta, la venta pasa a
-# perdida. Para pelear el Buy Box manda el costo pleno, que es el conservador.
+# Lo que el proveedor descuenta sobre la lista. Dos limites, los dos duros:
+#
+#   1. **Solo se mira al medir la rentabilidad**, nunca al decidir un precio
+#      para ganar catalogo: si se baja el precio contando con este descuento y
+#      despues no esta, la venta pasa a perdida. Para pelear el Buy Box manda
+#      el costo pleno, que es el conservador.
+#   2. **Solo para los productos que estan en la lista.** Es un descuento de
+#      Suprabond sobre SU lista; los SKU de otros proveedores no lo tienen y
+#      aplicarselo les infla el margen 20% contra nada.
 DESCUENTO_PROVEEDOR = 0.20
 
 
@@ -383,8 +388,9 @@ def costo_efectivo(costo, con_descuento=False,
     """
     El costo a usar segun para que se pregunte.
 
-    `con_descuento=True` solo en rentabilidad (cuanto se gano de verdad).
-    En cualquier calculo de "hasta donde puedo bajar el precio", False.
+    `con_descuento=True` solo en rentabilidad (cuanto se gano de verdad) y
+    solo si el SKU esta en la lista del proveedor que hace el descuento. En
+    cualquier calculo de "hasta donde puedo bajar el precio", False.
     """
     if costo is None:
         return None
@@ -432,6 +438,11 @@ def calcular(costos_df, cargos_df, pubs, iva=0.0, precios_venta=None,
     gano de verdad, y de verdad el costo es el descontado. Las funciones que
     deciden hasta donde bajar un precio usan el costo pleno.
 
+    Ojo que el descuento **solo alcanza a los SKU que estan en
+    `precios_lista`**: es un descuento de ese proveedor sobre su propia lista.
+    Aplicarselo a los de otros proveedores les infla el margen 20% contra
+    nada. La columna `en_lista` dice a quien se le aplico.
+
     `precios_lista`: dict sku -> precio al que hay que publicar, de
     `lista_precios.mapa_precios()`. Si se pasa, se agrega la comparacion
     contra el precio de lista de Suprabond.
@@ -449,7 +460,11 @@ def calcular(costos_df, cargos_df, pubs, iva=0.0, precios_venta=None,
     for _, fila in costos_df.iterrows():
         sku = fila["sku"]
         costo_lista = float(fila["costo"])
-        costo = costo_efectivo(costo_lista, con_descuento)
+        # El descuento es del proveedor de ESTA lista: si el SKU no esta, no
+        # hay descuento que aplicar por mas que se pida.
+        en_lista = sku in precios_lista
+        aplica_desc = bool(con_descuento and en_lista)
+        costo = costo_efectivo(costo_lista, aplica_desc)
 
         res = resolver_precio(sku, indice)
         precio_lista = precio_actual = None
@@ -505,7 +520,8 @@ def calcular(costos_df, cargos_df, pubs, iva=0.0, precios_venta=None,
             "en_promo": en_promo,
             "costo": costo,
             "costo_sin_descuento": costo_lista,
-            "con_descuento": bool(con_descuento),
+            "en_lista": en_lista,
+            "con_descuento": aplica_desc,
             "comision_prom": comision,
             "envio_prom": envio,
             "cargos_totales": comision + envio,
