@@ -256,7 +256,7 @@ def analizar(ml, pubs=None, tope=None, cargos=None, unidades=None,
 # ------------------------------------------------------------------ margen
 
 def con_costos(df, costos_df, cargos_df, iva=0.0, margen_minimo=0.0,
-               otros_conceptos=None):
+               otros_conceptos=None, precios_lista=None):
     """
     Agrega a cada fila el margen que quedaria vendiendo al precio para ganar.
 
@@ -284,6 +284,17 @@ def con_costos(df, costos_df, cargos_df, iva=0.0, margen_minimo=0.0,
        esta pantalla **baja precios de verdad**, y si calculara el margen sin
        los costos de estructura aprobaria bajas que Rentabilidad marca como
        perdida.
+
+    4. **El costo va pleno, sin el descuento del 20% del proveedor.** Es la
+       regla explicita: ganar catalogo no puede apoyarse en ese descuento.
+       Bajar el precio contando con el y despues no tenerlo deja la venta en
+       perdida, y esta pantalla escribe precios de verdad. El descuento se
+       mira en Rentabilidad, que es donde se pregunta cuanto se gano.
+
+    `precios_lista`: dict sku -> {'sugerido': ...}. Con eso se calcula si el
+    precio para ganar cae dentro del **descuento permitido** sobre el precio
+    de publicacion (hasta 15%), que es la palanca que existe de verdad: no se
+    trata de republicar mas barato sino de aplicar una promocion puntual.
     """
     from tramos import cargo_fijo, envio_a_cargo
     from rentabilidad import OTROS_CONCEPTOS, otros_conceptos_monto
@@ -291,6 +302,7 @@ def con_costos(df, costos_df, cargos_df, iva=0.0, margen_minimo=0.0,
     otros = dict(OTROS_CONCEPTOS)
     if otros_conceptos is not None:
         otros.update(otros_conceptos)
+    precios_lista = precios_lista or {}
 
     if not len(df):
         return df
@@ -343,6 +355,18 @@ def con_costos(df, costos_df, cargos_df, iva=0.0, margen_minimo=0.0,
         if (a is not None and b is not None) else False
         for a, b in zip(out["precio_actual"], out["precio_para_ganar"])]
 
+    # ------------------------------------------------- descuento permitido
+    import lista_precios as lp
+
+    out["precio_sugerido"] = out["sku"].map(
+        lambda s: (precios_lista.get(s) or {}).get("sugerido"))
+    out["descuento_necesario"] = [
+        lp.descuento_necesario(sug, p)
+        for sug, p in zip(out["precio_sugerido"], out["precio_para_ganar"])]
+    out["entra_en_descuento"] = [
+        lp.alcanza_con_descuento(sug, p)[0]
+        for sug, p in zip(out["precio_sugerido"], out["precio_para_ganar"])]
+
     def veredicto(f):
         if f["diagnostico"] in ("ganando", "compartiendo", "no compite",
                                 "sin dato"):
@@ -361,6 +385,30 @@ def con_costos(df, costos_df, cargos_df, iva=0.0, margen_minimo=0.0,
 
     out["veredicto"] = out.apply(veredicto, axis=1)
 
+    def como_ganarlo(f):
+        """
+        La frase accionable: que hay que hacer para quedarse con la pagina.
+
+        Solo tiene sentido en las que se pueden ganar y no se estan ganando;
+        en el resto queda vacia para no ensuciar la tabla.
+        """
+        if f["veredicto"] not in ("podés ganar y seguir ganando plata",
+                                  "ganás pero con margen flaco"):
+            return ""
+        d = f["descuento_necesario"]
+        if f["precio_sugerido"] is None or pd.isna(f["precio_sugerido"]):
+            return "sin precio de lista: comparar a mano"
+        # Ojo: al meterlo en una columna, el None de descuento_necesario()
+        # se vuelve NaN, y `d is None` no lo agarra.
+        if d is None or pd.isna(d):
+            return "publicando al precio de lista ya ganás"
+        if d <= lp.DESCUENTO_PERMITIDO + 1e-9:
+            return f"con {d:.0%} de descuento ganás el Buy Box"
+        return (f"haría falta {d:.0%} de descuento, más que el "
+                f"{lp.DESCUENTO_PERMITIDO:.0%} permitido")
+
+    out["como_ganarlo"] = out.apply(como_ganarlo, axis=1)
+
     orden = {"podés ganar y seguir ganando plata": 0,
              "ganás pero con margen flaco": 1,
              "ganar el Buy Box da pérdida": 2, "sin costo cargado": 3,
@@ -376,7 +424,7 @@ def resumen_costos(df):
     if not len(df) or "veredicto" not in df:
         return {}
     ganables = df[df["veredicto"] == "podés ganar y seguir ganando plata"]
-    return {
+    r = {
         "ganables": len(ganables),
         "unidades_ganables": int(ganables["unidades"].sum()),
         "margen_promedio": float(ganables["margen_al_ganar"].mean())
@@ -386,6 +434,16 @@ def resumen_costos(df):
         "sin_costo": int((df["veredicto"] == "sin costo cargado").sum()),
         "cruzan_escalon": int(df["cruza_escalon"].sum()),
     }
+    if "entra_en_descuento" in df:
+        # De las que se pueden ganar, cuantas salen con la promocion que ya
+        # esta autorizada y cuantas necesitarian romper el tope.
+        pos = df[df["veredicto"].isin(["podés ganar y seguir ganando plata",
+                                       "ganás pero con margen flaco"])]
+        r["con_descuento_permitido"] = int(
+            (pos["entra_en_descuento"] == True).sum())  # noqa: E712
+        r["necesitan_mas_descuento"] = int(
+            (pos["entra_en_descuento"] == False).sum())  # noqa: E712
+    return r
 
 
 def resumen(df):

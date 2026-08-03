@@ -140,13 +140,16 @@ for item in ml.items_detalle(ids, atributos=["id", "title", "price",
 | `cambios.py` | Registro de actualizaciones que se muestra en el modal *Novedades* |
 | `correo.py` | Envío de mails para los reportes automáticos (Resend o SMTP) |
 | `reporte_competencia.py` | Reporte semanal de competencia; lo manda un workflow los lunes |
+| `lista_precios.py` | La lista del proveedor: costo y precio al que publicar; cruza los códigos de Suprabond con los de CRAFTERS |
+| `test_precios.py` | Las reglas de precio que no se pueden romper (correr después de tocar los módulos de precio) |
 | `credentials.txt` | App ID + Secret + Redirect URI (**no se sube a git**) |
 | `tokens.json` | Tokens vivos (**no se sube a git**) |
 
 Cada uno corre también suelto desde la Terminal: `python reporte.py`,
 `python alertas_stock.py 60`, `python reclamos.py 90`, `python full.py`,
 `python buybox.py 150`, `python promociones.py 300`,
-`python precio_minimo.py 15`, `python ventana.py 15`.
+`python precio_minimo.py 15`, `python ventana.py 15`,
+`python lista_precios.py lista.xlsx --guardar`, `python test_precios.py`.
 
 ---
 
@@ -531,6 +534,86 @@ sin ventas. Se separó en **"bajar para ganar"**, que queda fuera de la
 selección por defecto: resigna neto por unidad y solo conviene si el volumen lo
 paga, cosa que la API no sabe.
 
+### La lista de precios de Suprabond
+
+Es la que decide **a qué precio se publica**. Antes cada sección despejaba el
+precio desde el costo; ahora ese número viene dado y el sistema lo usa como
+referencia.
+
+Tres columnas del Excel importan:
+
+| Columna | Qué es |
+|---|---|
+| `ListaPrecio` | lo que CRAFTERS paga por el producto |
+| `PRECIO_SUGERIDO_ONLINE` | el precio al que hay que publicar — es `ListaPrecio × 2,12` para los 728, sin excepción |
+| `CodigoBarra` | el EAN, que sirve para cruzar |
+
+`PrecioSugerido` (× 1,609) es el del canal comercio y no se usa acá.
+
+Se toma **con IVA**, o sea comparable directo contra el precio de ML. Lo dicen
+los datos: más de la mitad del catálogo está publicado a exactamente 0,9852
+veces el sugerido, y eso solo cierra si están en la misma base. Si cambiara,
+está `lista_precios.SUGERIDO_CON_IVA`.
+
+**El descuento permitido es 15%** (`DESCUENTO_PERMITIDO`). No es para
+republicar más barato sino para una promoción puntual, y es lo que habilita el
+mensaje *"con 11% de descuento ganás el Buy Box"* en Ganar la venta, Precio
+óptimo y Competencia.
+
+#### Cruzar los códigos: la regla del padeado a 20
+
+La lista trae códigos de Suprabond (`SBD TR PR 100 E`) y MercadoLibre tiene los
+de CRAFTERS (`CR0160000SBDTRPR100E`). Cruzar por `Producto_id` da **cero**
+coincidencias. Mirando los que sí cruzaban por EAN apareció la regla, y es
+exacta:
+
+    CR + grupo(3 dígitos) + ceros de relleno + código sin espacios,
+    todo padeado a 20 caracteres
+
+    SBD TR PR 100 E  ->  CR + 016 + 0000 + SBDTRPR100E  = CR0160000SBDTRPR100E
+    KIT R OP         ->  CR + 016 + 000000000 + KITROP  = CR016000000000KITROP
+
+Con eso cruzan 666 de 728. El EAN levanta 4 más. Los 58 restantes **no están
+publicados en MercadoLibre** —combos, exhibidores y sets del canal comercio— y
+eso no es un error del cruce.
+
+**Dos trampas que costaron números:**
+
+1. **No normalizar los sufijos de pack.** `CR...PBD50 X 3 UNIDADES` y
+   `CR...PBD50` son productos distintos con precios distintos. Colapsarlos
+   convertía 55 cruces buenos en ambigüedades. El match exacto va primero y el
+   sin-sufijos queda como último recurso.
+2. **`LLV 7VA 1/2` y `LLV 7VA 12`** (media pulgada y 12mm) compactan al mismo
+   código porque la barra se cae al sacar la puntuación. Ninguna vía los
+   desempata y se llevan 8% de diferencia de precio, así que **los dos quedan
+   sin asignar**. Un precio equivocado viajaría callado hasta la publicación;
+   sin precio, al menos se ve.
+
+#### El descuento del 20% del proveedor — dónde sí y dónde no
+
+Suprabond descuenta un 20% sobre la lista. **Se mira solo en Rentabilidad.**
+
+| Pregunta | Costo que se usa |
+|---|---|
+| ¿cuánta plata gané? (Rentabilidad) | `ListaPrecio × 0,80` |
+| ¿hasta dónde puedo bajar el precio? (Buy Box, Precio óptimo, Competencia) | `ListaPrecio` pleno |
+
+El motivo es concreto: si se baja un precio contando con ese descuento y el mes
+que viene no está, la venta pasa a pérdida y nadie se entera hasta la
+liquidación. Las pantallas que bajan precios usan siempre el costo pleno, que
+es el conservador.
+
+Es la regla más fácil de romper sin querer —alcanza con "unificar" el costo en
+un helper común—, así que hay un test que la verifica: `python test_precios.py`.
+
+#### Cobertura
+
+De los 864 SKU activos con costo cargado, **595 tienen precio de lista (69%),
+pero son el 93% de las unidades vendidas**. Los 269 que quedan afuera son de
+otros proveedores (CR001, CR042, CR002…) y venden poco: 549 unidades en 90
+días. Esos siguen guiados por el precio mínimo despejado del costo, y la app lo
+dice.
+
 ### Otros conceptos (impuestos, logístico, general)
 
 Además de lo que cobra MercadoLibre, el margen descuenta tres costos de
@@ -539,8 +622,8 @@ que se compara el costo, no el precio de lista:
 
 | Concepto | Por defecto |
 |---|---|
-| Impuestos | 10% |
-| Logístico | 10% |
+| Impuestos | 5% |
+| Logístico | 5% |
 | General | 5% |
 
 Están en `rentabilidad.OTROS_CONCEPTOS` y se pueden cambiar desde la app.
@@ -549,8 +632,16 @@ Están en `rentabilidad.OTROS_CONCEPTOS` y se pueden cambiar desde la app.
 verdad, y si calculara el margen sin los costos de estructura aprobaría bajas
 que Rentabilidad marca como pérdida.
 
-No es un ajuste menor. Sobre una muestra, sumar el 25% movió el margen promedio
-de 33% a 8% y los SKU a pérdida de 1 a 19.
+No es un ajuste menor, y por eso el número importa. **Estaban en 10/10/5 (25%)
+hasta el 3/8/2026.** Con ese 25%, publicar al precio de lista de Suprabond daba
+margen negativo en 661 de 670 SKU: el diagnóstico entero del sistema colgaba de
+ese parámetro. Con 15% quedan 542 al costo pleno y 169 con el descuento del
+proveedor.
+
+Efecto lateral del cambio que conviene tener presente: **el tope de $9.000 del
+logístico prácticamente dejó de actuar.** Con 10% empezaba a jugar desde
+$90.000 de ingreso sin IVA; con 5%, recién desde $180.000 (~$217.800 de precio
+publicado), y solo 4 SKU de la lista llegan ahí.
 
 ### Rentabilidad
 

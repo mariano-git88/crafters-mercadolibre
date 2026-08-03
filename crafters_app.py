@@ -34,6 +34,7 @@ import salud
 import espejos
 import reclamos as rec
 import rentabilidad as rent
+import lista_precios as LP
 import mayoristas
 import preguntas as preg
 import promociones
@@ -202,7 +203,10 @@ seccion = st.segmented_control(
                 "Precios", "Mayoristas", "Stock ML", "Control de stock",
                 "Rentabilidad", "Precio óptimo", "Competencia",
                 "Oportunidades"],
-    default="Plata sobre la mesa", label_visibility="collapsed")
+    default="Plata sobre la mesa", label_visibility="collapsed",
+    # La key ademas de fijar la seccion entre reruns permite recorrerla desde
+    # los tests: sin key, AppTest no puede cambiar de seccion.
+    key="seccion_activa")
 
 # En la nube el disco se borra en cada reinicio: si no hay Sheet configurada,
 # se perderia el refresh_token (habria que reautorizar a mano) y la auditoria.
@@ -304,6 +308,128 @@ def bloque_costos(clave):
                 return nuevos      # al menos sirve para esta corrida
 
     return guardados if len(guardados) else None
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _lista_precios_cache(sello):
+    """`sello` fuerza la relectura cuando se sube una lista nueva."""
+    import lista_precios as lp
+    df, cuando = lp.guardada()
+    return lp.mapa_precios(df), lp.mapa_por_ean(df), cuando, len(df)
+
+
+def precios_de_lista():
+    """
+    (mapa por SKU, mapa por EAN, cuándo, cuántos). Vacíos si no hay lista.
+
+    Se lee una vez y la usan Precio óptimo, Ganar la venta, Competencia y
+    Rentabilidad. Nunca falla: sin lista, cada sección sigue con el criterio
+    de siempre y lo dice.
+    """
+    sello = st.session_state.get("sello_lista", 0)
+    try:
+        return _lista_precios_cache(sello)
+    except Exception:  # noqa: BLE001
+        return {}, {}, "", 0
+
+
+def aviso_lista(n, cuando):
+    """La línea que explica de dónde sale el precio de publicación."""
+    if n:
+        st.caption(
+            f"Precio de publicación: **lista de Suprabond**, {n} SKU"
+            + (f" (actualizada el {cuando})." if cuando else ".")
+            + f" Se puede descontar hasta **{LP.DESCUENTO_PERMITIDO:.0%}** "
+            "en una promoción puntual.")
+    else:
+        st.caption(
+            "Sin lista de precios cargada: manda el precio mínimo despejado "
+            "del costo. Se carga desde **Rentabilidad**.")
+
+
+def bloque_lista_precios(clave):
+    """
+    La lista de precios del proveedor: qué cuesta y a qué precio publicar.
+
+    Va junto a la planilla de costos porque son la misma decisión vista de dos
+    lados, pero se guardan aparte: los costos cubren todo el catálogo y la
+    lista cubre solo lo de Suprabond.
+    """
+    import lista_precios as lp
+
+    sello = st.session_state.get("sello_lista", 0)
+    mapa, _, cuando, n = precios_de_lista()
+
+    if n:
+        c1, c2 = st.columns([3, 1.4])
+        c1.success(
+            f"Lista de precios cargada: **{n} SKU**"
+            + (f", actualizada el {cuando}." if cuando else "."), icon="🏷️")
+        with c2:
+            st.write("")
+            reemplazar = st.toggle("Subir otra", key=f"replp_{clave}")
+    else:
+        st.info(
+            "Todavía no hay lista de precios. Es la que trae el **costo** y el "
+            "**precio al que hay que publicar** (`PRECIO_SUGERIDO_ONLINE`).",
+            icon="🏷️")
+        reemplazar = True
+
+    if not reemplazar:
+        return
+
+    archivo = st.file_uploader(
+        "Lista de precios de Suprabond (.xlsx)", type=["xlsx", "xls"],
+        key=f"uplp_{clave}")
+    if not archivo:
+        return
+
+    try:
+        df = lp.leer(archivo, pubs)
+    except Exception as e:  # noqa: BLE001
+        st.error(f"No pude leer la lista: {e}")
+        return
+
+    r = lp.resumen_cruce(df)
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Filas en la lista", f"{r['filas']:,}".replace(",", "."))
+    m2.metric("Cruzadas con ML", f"{r['resueltos']:,}".replace(",", "."))
+    m3.metric("Sin publicar", f"{r['no_publicados']:,}".replace(",", "."))
+
+    if r["no_publicados"]:
+        st.caption(
+            f"Las {r['no_publicados']} sin publicar son combos, exhibidores y "
+            "sets del canal comercio: no tienen publicación en MercadoLibre, "
+            "así que no hay precio que guiar.")
+    if r["ambiguos"] or r["duplicados"]:
+        st.caption(
+            f"{r['ambiguos'] + r['duplicados']} quedaron sin asignar porque "
+            "dos productos distintos caían en el mismo código. Se dejan sin "
+            "precio a propósito: uno equivocado viajaría callado hasta la "
+            "publicación.")
+
+    with st.expander("Ver el cruce"):
+        st.dataframe(
+            df[["producto_id", "sku", "via", "costo", "sugerido",
+                "descripcion"]],
+            hide_index=True, use_container_width=True,
+            column_config={
+                "producto_id": "Código Suprabond", "sku": "SKU CRAFTERS",
+                "via": "Cruzado por",
+                "costo": st.column_config.NumberColumn("Costo", format="$%.0f"),
+                "sugerido": st.column_config.NumberColumn(
+                    "Publicar a", format="$%.0f"),
+                "descripcion": "Descripción"})
+
+    if st.button("Guardar la lista", key=f"savelp_{clave}", type="primary"):
+        ok, detalle, cuantos = lp.guardar(df)
+        if ok:
+            st.session_state["sello_lista"] = sello + 1
+            st.success(f"Guardados {cuantos} precios. Ya los usan Precio "
+                       "óptimo, Ganar la venta, Competencia y Rentabilidad.")
+            st.rerun()
+        else:
+            st.error(f"No pude guardar: {detalle}")
 
 
 def controles_otros_conceptos(clave):
@@ -558,7 +684,8 @@ if seccion == "Plata sobre la mesa":
                 ml, cat_pl, callback=lambda m: estado.caption(str(m)))
             ven_pl = ventana.analizar(costos_pl, cargos_pl, pubs, iva=0.21,
                                       otros_conceptos=otros_pl, objetivo=0.0,
-                                      ptw_por_item=ptw_pl)
+                                      ptw_por_item=ptw_pl,
+                                      precios_lista=precios_de_lista()[0])
             promos_pl = None
             if con_promos:
                 estado.caption("Buscando promociones...")
@@ -1074,6 +1201,8 @@ elif seccion == "Alertas":
                                    "text/csv")
 
 elif seccion == "Ganar la venta":
+    _, _, _cuando_g, _n_g = precios_de_lista()
+    aviso_lista(_n_g, _cuando_g)
     st.markdown("#### Ganar la venta")
     gv = st.radio("Vista", ["Buy Box", "Promociones"],
                   horizontal=True, label_visibility="collapsed")
@@ -1226,7 +1355,8 @@ elif seccion == "Ganar la venta":
                 with st.spinner("Cruzando con los cargos reales..."):
                     st.session_state["buybox_costos"] = buybox.con_costos(
                         dbb, costos_bb, cargos_cacheados(ml), iva=iva_bb,
-                        otros_conceptos=otros_bb)
+                        otros_conceptos=otros_bb,
+                        precios_lista=precios_de_lista()[0])
 
             dcb = st.session_state.get("buybox_costos")
             if dcb is not None and len(dcb):
@@ -1236,6 +1366,21 @@ elif seccion == "Ganar la venta":
                 w2.metric("Margen flaco", rc["flacas"])
                 w3.metric("Ganar daría pérdida", rc["perdida"])
                 w4.metric("Sin costo cargado", rc["sin_costo"])
+
+                if rc.get("con_descuento_permitido"):
+                    st.success(
+                        f"**{rc['con_descuento_permitido']} publicaciones se "
+                        f"ganan con el descuento permitido** (hasta "
+                        f"{LP.DESCUENTO_PERMITIDO:.0%} sobre el precio de "
+                        "lista). No hace falta republicar más barato: alcanza "
+                        "con una promoción puntual. Mirá la columna *Cómo "
+                        "ganarla*.", icon="🏷️")
+                if rc.get("necesitan_mas_descuento"):
+                    st.caption(
+                        f"Otras {rc['necesitan_mas_descuento']} necesitarían "
+                        f"más del {LP.DESCUENTO_PERMITIDO:.0%} permitido: ahí "
+                        "el competidor está a un precio al que no se llega "
+                        "sin romper la política de precios.")
 
                 if rc["cruzan_escalon"]:
                     st.warning(
@@ -1305,10 +1450,15 @@ elif seccion == "Ganar la venta":
                     st.caption(
                         "**Tildá filas para elegir a mano.** Si no seleccionás "
                         "ninguna se aplican todas las que cumplen el criterio.")
-                    vista_sel = sel_bb[
-                        ["item_id", "sku", "marca", "titulo", "precio_actual",
-                         "precio_para_ganar", "bajar_pct", "margen_hoy",
-                         "margen_al_ganar", "margen_al_ganar_pct", "unidades"]]
+                    cols_sel = ["item_id", "sku", "marca", "titulo",
+                                "precio_actual", "precio_para_ganar",
+                                "bajar_pct", "margen_hoy", "margen_al_ganar",
+                                "margen_al_ganar_pct", "unidades"]
+                    # La lista puede no estar cargada: ahí estas dos no existen.
+                    for extra in ("precio_sugerido", "como_ganarlo"):
+                        if extra in sel_bb.columns:
+                            cols_sel.insert(5, extra)
+                    vista_sel = sel_bb[cols_sel]
                     evento = st.dataframe(
                         vista_sel, use_container_width=True, height=320,
                         hide_index=True, key="tabla_bb",
@@ -1318,6 +1468,11 @@ elif seccion == "Ganar la venta":
                             "marca": "Marca", "titulo": "Título",
                             "precio_actual": st.column_config.NumberColumn(
                                 "Precio hoy", format="%.0f"),
+                            "precio_sugerido": st.column_config.NumberColumn(
+                                "Publicar a", format="%.0f",
+                                help="El precio que dice la lista de Suprabond"),
+                            "como_ganarlo": st.column_config.TextColumn(
+                                "Cómo ganarla", width="medium"),
                             "precio_para_ganar": st.column_config.NumberColumn(
                                 "Precio nuevo", format="%.0f"),
                             "bajar_pct": st.column_config.NumberColumn(
@@ -1955,6 +2110,8 @@ elif seccion == "Control de stock":
 
 elif seccion == "Precio óptimo":
     st.markdown("#### Ventana de precio")
+    _, _, _cuando_lp, _n_lp = precios_de_lista()
+    aviso_lista(_n_lp, _cuando_lp)
     st.caption(
         "Junta las tres cuentas que hasta ahora estaban separadas: el **piso** "
         "(abajo no llegás al margen), el **techo útil** (arriba perdés la "
@@ -2006,7 +2163,7 @@ elif seccion == "Precio óptimo":
             st.session_state["vent"] = ventana.analizar(
                 costos_vt, cargos_cacheados(ml), pubs, iva=iva_vt,
                 otros_conceptos=otros_vt, objetivo=objetivo_vt,
-                ptw_por_item=ptw)
+                ptw_por_item=ptw, precios_lista=precios_de_lista()[0])
         estado.empty()
     st.caption(
         f"La primera corrida consulta el Buy Box de cada publicación de "
@@ -2068,7 +2225,8 @@ elif seccion == "Precio óptimo":
                        "ninguna van todas las que cumplen.")
             ev_vt = st.dataframe(
                 sel_vt[["sku", "marca", "titulo", "caso", "precio_actual",
-                        "piso", "precio_para_ganar", "precio_sugerido",
+                        "precio_publicacion", "piso", "precio_para_ganar",
+                        "precio_sugerido", "como_ganarlo",
                         "cambio_pct", "neto_actual", "neto_sugerido",
                         "impacto_periodo", "unidades", "cruza_escalon"]],
                 use_container_width=True, height=360, hide_index=True,
@@ -2078,6 +2236,11 @@ elif seccion == "Precio óptimo":
                     "caso": "Caso",
                     "precio_actual": st.column_config.NumberColumn(
                         "Precio hoy", format="%.0f"),
+                    "precio_publicacion": st.column_config.NumberColumn(
+                        "Publicar a", format="%.0f",
+                        help="El precio que dice la lista de Suprabond"),
+                    "como_ganarlo": st.column_config.TextColumn(
+                        "Cómo ganar la página", width="medium"),
                     "piso": st.column_config.NumberColumn(
                         "Piso", format="%.0f",
                         help="Abajo de acá no llegás al margen objetivo"),
@@ -2169,6 +2332,8 @@ elif seccion == "Precio óptimo":
             f"ventana_{datetime.now():%Y%m%d}.csv", "text/csv")
 
 elif seccion == "Competencia":
+    _, _, _cuando_c, _n_c = precios_de_lista()
+    aviso_lista(_n_c, _cuando_c)
     st.markdown("#### Mejor precio de la competencia por EAN")
     st.caption(
         "Subí una planilla con los **EAN** (códigos de barras) y te dice quién "
@@ -2210,7 +2375,8 @@ elif seccion == "Competencia":
             st.session_state["comp"] = competencia.analizar(
                 ml, eans_top,
                 callback=lambda i, t_, e: barra.progress(
-                    i / t_, text=f"Consultando {i} de {t_}..."))
+                    i / t_, text=f"Consultando {i} de {t_}..."),
+                precios_lista=precios_de_lista()[1])
             barra.empty()
             st.session_state["comp_detalle"] = detalle
             ok_h, det_h = competencia.guardar_comparacion(
@@ -2241,7 +2407,8 @@ elif seccion == "Competencia":
             st.session_state["comp"] = competencia.analizar(
                 ml, eans,
                 callback=lambda i, t, e: barra.progress(
-                    i / t, text=f"Consultando {i} de {t} ({e})..."))
+                    i / t, text=f"Consultando {i} de {t} ({e})..."),
+                precios_lista=precios_de_lista()[1])
             barra.empty()
             ok_h, det_h = competencia.guardar_comparacion(
                 st.session_state["comp"], origen="planilla")
@@ -2294,6 +2461,15 @@ elif seccion == "Competencia":
                     help="Cuánto estamos por encima del más barato"),
                 "posicion": "Posición",
                 "competidores": "Vendedores",
+                "precio_publicacion": st.column_config.NumberColumn(
+                    "Publicar a", format="%.0f",
+                    help="El precio que dice la lista de Suprabond"),
+                "descuento_para_ganar": st.column_config.NumberColumn(
+                    "Descuento para pasar", format="percent"),
+                "entra_en_descuento": st.column_config.CheckboxColumn(
+                    "Entra en el permitido"),
+                "como_ganarlo": st.column_config.TextColumn(
+                    "Qué hace falta", width="medium"),
                 "estado": "Estado", "detalle": "Detalle",
                 "product_id": "Producto ML"})
 
@@ -3197,6 +3373,12 @@ elif seccion == "Rentabilidad":
 
     costos_rent = bloque_costos("rent")
 
+    st.markdown("###### Lista de precios del proveedor")
+    bloque_lista_precios("rent")
+    mapa_lista_rent, _, cuando_lista_rent, n_lista_rent = precios_de_lista()
+
+    st.divider()
+
     c1, c2, c3 = st.columns(3)
     with c1:
         dias = st.selectbox("Historia a considerar", [30, 60, 90, 180],
@@ -3217,6 +3399,16 @@ elif seccion == "Rentabilidad":
                                 "descontar' solo si cambiás a costos con IVA.")
 
     otros_rent = controles_otros_conceptos("rent")
+
+    # El único lugar donde se mira el descuento del proveedor. En las
+    # secciones que deciden precios va el costo pleno: bajar un precio
+    # contando con un descuento que puede no estar deja la venta en pérdida.
+    usar_desc = st.checkbox(
+        f"Aplicar el descuento del proveedor ({rent.DESCUENTO_PROVEEDOR:.0%} "
+        "sobre el costo)", value=True, key="desc_rent",
+        help="Es el costo real al que se compra, así que corresponde para "
+             "medir cuánta plata se ganó. Las secciones que proponen precios "
+             "usan siempre el costo pleno, y eso no se puede cambiar acá.")
 
     if costos_rent is not None and st.button("Calcular rentabilidad"):
         costos = costos_rent
@@ -3246,11 +3438,20 @@ elif seccion == "Rentabilidad":
         cargos = rent.cargos_por_sku(ordenes, envios)
         st.session_state["rent"] = rent.calcular(
             costos, cargos, pubs, iva=iva, precios_venta=precios_venta,
-            otros_conceptos=otros_rent)
+            otros_conceptos=otros_rent, con_descuento=usar_desc,
+            precios_lista=mapa_lista_rent)
 
     df = st.session_state.get("rent")
     if df is not None and len(df):
         con_datos = df[df["margen_pct"].notna()]
+
+        if bool(df["con_descuento"].iloc[0]) if "con_descuento" in df else False:
+            st.caption(
+                f"Margen calculado con el **descuento del "
+                f"{rent.DESCUENTO_PROVEEDOR:.0%}** sobre el costo de lista.")
+        else:
+            st.caption("Margen calculado con el **costo pleno**, sin el "
+                       "descuento del proveedor.")
 
         m1, m2, m3 = st.columns(3)
         m1.metric("SKU analizados", len(df))
@@ -3258,6 +3459,18 @@ elif seccion == "Rentabilidad":
                   f"{con_datos['margen_pct'].mean():.1%}" if len(con_datos) else "—")
         m3.metric("SKU con margen negativo",
                   int((con_datos["margen_pct"] < 0).sum()) if len(con_datos) else 0)
+
+        # Cuánto se aparta el precio publicado del que dice la lista.
+        if "vs_sugerido" in df:
+            con_lista = df[df["vs_sugerido"].notna()]
+            if len(con_lista):
+                debajo = int((con_lista["vs_sugerido"] < 0.99).sum())
+                if debajo:
+                    st.warning(
+                        f"**{debajo} SKU están publicados por debajo del "
+                        f"precio de lista.** Llevarlos al precio de lista es "
+                        "la acción más directa: está en *Precio óptimo*.",
+                        icon="🏷️")
 
         negativos = con_datos[con_datos["margen_pct"] < 0]
         if len(negativos):

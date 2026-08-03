@@ -113,12 +113,20 @@ def _mejor_con_escalon(precio, pct, envio, costo, iva, otros,
 
 
 def analizar(costos_df, cargos_df, pubs, iva=0.21, otros_conceptos=None,
-             objetivo=0.15, ptw_por_item=None):
+             objetivo=0.15, ptw_por_item=None, precios_lista=None):
     """
     Devuelve una fila por SKU con la ventana y el precio sugerido.
 
     `ptw_por_item` es el cache de `buybox.traer_price_to_win()`: item_id ->
     respuesta. Si no viene, se trabaja solo con el piso.
+
+    `precios_lista`: dict sku -> {'sugerido': ...}. Cambia la forma de la
+    respuesta. Sin lista, esto elige un precio libremente entre el piso y el
+    Buy Box. Con lista, **el precio de publicacion ya esta decidido** y la
+    pregunta pasa a ser otra: alcanza el descuento permitido (hasta 15% sobre
+    ese precio) para llevarse la pagina de catalogo. Se agregan
+    `precio_publicacion`, `descuento_para_ganar` y `como_ganarlo`, y el
+    precio optimo calculado queda como referencia de cuanto se resigna.
     """
     from buybox import marca as marca_de
     from precio_minimo import precio_minimo
@@ -140,6 +148,7 @@ def analizar(costos_df, cargos_df, pubs, iva=0.21, otros_conceptos=None,
         unidades[f["sku"]] = int(f["unidades_vendidas"] or 0)
 
     ptw_por_item = ptw_por_item or {}
+    precios_lista = precios_lista or {}
     indice = indexar_por_sku(pubs)
 
     filas = []
@@ -246,6 +255,32 @@ def analizar(costos_df, cargos_df, pubs, iva=0.21, otros_conceptos=None,
                     if sugerido else None)
         u = unidades.get(sku, 0)
 
+        # ------------------------------------------- contra el precio de lista
+        import lista_precios as lp
+
+        lista = (precios_lista.get(sku) or {}).get("sugerido")
+        piso_desc = lp.precio_con_descuento(lista)
+        entra, desc_nec = lp.alcanza_con_descuento(lista, ptw)
+
+        if lista is None:
+            como = ""
+        elif not en_catalogo or ptw is None:
+            como = "no pelea catálogo: publicar al precio de lista"
+        elif gana_hoy:
+            como = "ya tenés la página publicando al precio de lista"
+        elif desc_nec is None:
+            como = "publicando al precio de lista ya ganás la página"
+        elif entra:
+            como = f"con {desc_nec:.0%} de descuento ganás la página"
+        else:
+            como = (f"haría falta {desc_nec:.0%}, más que el "
+                    f"{lp.DESCUENTO_PERMITIDO:.0%} permitido")
+
+        # El neto que quedaria si se usa el descuento para ganar la pagina.
+        # Va con costo PLENO: es una decision de catalogo.
+        neto_desc = (_neto_por_unidad(ptw, p, e, costo, iva, otros)
+                     if (entra and ptw) else None)
+
         filas.append({
             "sku": sku,
             "item_id": pub["id"],
@@ -256,6 +291,14 @@ def analizar(costos_df, cargos_df, pubs, iva=0.21, otros_conceptos=None,
             "piso": piso,
             "precio_para_ganar": ptw,
             "precio_sugerido": sugerido,
+            # Lo que dice la lista de Suprabond: donde hay que publicar y
+            # hasta donde se puede bajar con la promocion autorizada.
+            "precio_publicacion": lista,
+            "piso_con_descuento": piso_desc,
+            "descuento_para_ganar": desc_nec,
+            "entra_en_descuento": entra,
+            "neto_con_descuento": neto_desc,
+            "como_ganarlo": como,
             "cambio_pct": ((sugerido - actual) / actual
                            if (sugerido and actual) else None),
             "neto_actual": neto_actual,
@@ -291,7 +334,7 @@ def resumen(df):
     if not len(df):
         return {}
     mejoran = df[df["gana_neto"].fillna(0) > 0]
-    return {
+    r = {
         "total": len(df),
         "ventana_amplia": int((df["caso"] == "ventana amplia").sum()),
         "bajar_para_ganar": int((df["caso"] == "bajar para ganar").sum()),
@@ -304,6 +347,17 @@ def resumen(df):
         "impacto": float(mejoran["impacto_periodo"].fillna(0).sum()),
         "cruzan_escalon": int(df["cruza_escalon"].sum()),
     }
+    if "entra_en_descuento" in df:
+        # Solo cuenta donde hay una pagina para ganar y todavia no se gana.
+        pelea = df[df["precio_para_ganar"].notna() & ~df["gana_buybox_hoy"]]
+        r.update({
+            "con_lista": int(df["precio_publicacion"].notna().sum()),
+            "ganables_con_descuento": int(
+                (pelea["entra_en_descuento"] == True).sum()),  # noqa: E712
+            "necesitan_mas_descuento": int(
+                (pelea["entra_en_descuento"] == False).sum()),  # noqa: E712
+        })
+    return r
 
 
 def seleccionar(df, casos=None, cambio_maximo=0.30, unidades_minimas=1,

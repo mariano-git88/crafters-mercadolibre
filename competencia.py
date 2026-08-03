@@ -86,13 +86,22 @@ def competidores(ml, product_id):
     return r.get("results") or []
 
 
-def analizar(ml, eans, callback=None):
+def analizar(ml, eans, callback=None, precios_lista=None):
     """
     Para cada EAN devuelve una fila con el mejor precio, quien lo tiene y
     donde estamos nosotros.
+
+    `precios_lista`: dict ean -> {'sugerido': ...} de
+    `lista_precios.mapa_por_ean()`. Con eso la comparacion deja de ser
+    "estamos caros o baratos" y pasa a ser accionable: dice si para igualar al
+    mas barato alcanza el descuento permitido sobre el precio de publicacion,
+    o si el competidor esta a un precio al que no se puede llegar.
     """
+    import lista_precios as lp
+
     filas = []
     total = len(eans)
+    precios_lista = precios_lista or {}
 
     for i, ean in enumerate(eans, start=1):
         if callback:
@@ -139,6 +148,25 @@ def analizar(ml, eans, callback=None):
                       if nuestro else None)
 
         somos_nosotros = mejor.get("seller_id") == ml.user_id
+
+        # ------------------------------------------- contra la lista propia
+        # Para pasar al mas barato hay que quedar apenas debajo, no igual.
+        lista = (precios_lista.get(str(ean).strip()) or {}).get("sugerido")
+        objetivo = mejor["price"] * 0.99 if not somos_nosotros else None
+        entra, desc_nec = lp.alcanza_con_descuento(lista, objetivo)
+
+        if lista is None:
+            como = ""
+        elif somos_nosotros:
+            como = "ya somos los más baratos"
+        elif desc_nec is None:
+            como = "publicando al precio de lista ya somos los más baratos"
+        elif entra:
+            como = f"con {desc_nec:.0%} de descuento pasamos al más barato"
+        else:
+            como = (f"haría falta {desc_nec:.0%}, más que el "
+                    f"{lp.DESCUENTO_PERMITIDO:.0%} permitido")
+
         filas.append({
             "ean": ean,
             "producto": (nombre or "")[:70],
@@ -150,6 +178,10 @@ def analizar(ml, eans, callback=None):
             "nuestro_precio": nuestro,
             "diferencia": diferencia,
             "posicion": posicion,
+            "precio_publicacion": lista,
+            "descuento_para_ganar": desc_nec,
+            "entra_en_descuento": entra,
+            "como_ganarlo": como,
             "estado": "ok",
             "detalle": ("Somos los más baratos." if somos_nosotros
                         else ("No publicamos este producto en catálogo."
@@ -159,7 +191,8 @@ def analizar(ml, eans, callback=None):
 
     cols = ["ean", "producto", "mejor_precio", "mejor_vendedor", "reputacion",
             "nuestro_precio", "diferencia", "posicion", "competidores",
-            "estado", "detalle", "product_id"]
+            "precio_publicacion", "descuento_para_ganar", "entra_en_descuento",
+            "como_ganarlo", "estado", "detalle", "product_id"]
     return pd.DataFrame(filas, columns=cols)
 
 

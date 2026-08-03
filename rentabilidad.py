@@ -352,13 +352,43 @@ def precios_reales(ml, item_ids, callback=None):
 
 # Costos de estructura que no vienen de MercadoLibre y hay que cargarle a cada
 # venta igual. Se aplican como porcentaje del ingreso **sin IVA**.
-OTROS_CONCEPTOS = {"impuestos": 0.10, "logistico": 0.10, "general": 0.05}
+#
+# Estaban en 10/10/5 (25% total) y pasaron a 5/5/5 (15%) el 3/8/2026. No es un
+# detalle: con el 25%, publicar al precio de lista de Suprabond daba margen
+# negativo en 661 de 670 SKU, y el diagnostico entero del sistema colgaba de
+# ese numero. Con 15% quedan 542 al costo pleno y 169 con el descuento del
+# proveedor, que es un cuadro mucho mas parecido a la realidad.
+OTROS_CONCEPTOS = {"impuestos": 0.05, "logistico": 0.05, "general": 0.05}
 
-# El logistico tiene tope: es 10% **o $9.000, lo que sea menor**. Mover una
-# caja no cuesta el doble porque el producto valga el doble, asi que arriba de
-# cierto precio el porcentaje deja de representar el costo real. El tope
-# empieza a jugar cuando el ingreso sin IVA pasa de $90.000.
+# El logistico tiene tope: es el porcentaje de arriba **o $9.000, lo que sea
+# menor**. Mover una caja no cuesta el doble porque el producto valga el doble,
+# asi que arriba de cierto precio el porcentaje deja de representar el costo
+# real.
+#
+# Ojo con el efecto de haber bajado el porcentaje: con 10% el tope empezaba a
+# jugar desde $90.000 de ingreso sin IVA; con 5% recien desde $180.000, o sea
+# ~$217.800 de precio publicado. Son 4 SKU de la lista, pero el tope
+# practicamente dejo de actuar.
 TOPE_LOGISTICO = 9000.0
+
+# Lo que el proveedor descuenta sobre la lista. **Solo se mira al medir la
+# rentabilidad**, nunca al decidir un precio para ganar catalogo: si se baja
+# el precio contando con este descuento y despues no esta, la venta pasa a
+# perdida. Para pelear el Buy Box manda el costo pleno, que es el conservador.
+DESCUENTO_PROVEEDOR = 0.20
+
+
+def costo_efectivo(costo, con_descuento=False,
+                   descuento=DESCUENTO_PROVEEDOR):
+    """
+    El costo a usar segun para que se pregunte.
+
+    `con_descuento=True` solo en rentabilidad (cuanto se gano de verdad).
+    En cualquier calculo de "hasta donde puedo bajar el precio", False.
+    """
+    if costo is None:
+        return None
+    return float(costo) * (1 - descuento) if con_descuento else float(costo)
 
 
 def otros_conceptos_monto(ingreso, otros=None, tope_logistico=TOPE_LOGISTICO):
@@ -379,7 +409,7 @@ def otros_conceptos_monto(ingreso, otros=None, tope_logistico=TOPE_LOGISTICO):
 
 
 def calcular(costos_df, cargos_df, pubs, iva=0.0, precios_venta=None,
-             otros_conceptos=None):
+             otros_conceptos=None, con_descuento=True, precios_lista=None):
     """
     Cruza costos + cargos + precio actual y devuelve la rentabilidad por SKU.
 
@@ -396,18 +426,30 @@ def calcular(costos_df, cargos_df, pubs, iva=0.0, precios_venta=None,
     (impuestos, logistico, general). Por defecto los de `OTROS_CONCEPTOS`.
     Se calculan sobre el **ingreso ya sin IVA**, o sea la misma base contra la
     que se compara el costo, no sobre el precio de lista.
+
+    `con_descuento`: si se le aplica al costo el descuento del proveedor
+    (20%). **Va en True aca y solo aca**: esta funcion mide cuanta plata se
+    gano de verdad, y de verdad el costo es el descontado. Las funciones que
+    deciden hasta donde bajar un precio usan el costo pleno.
+
+    `precios_lista`: dict sku -> precio al que hay que publicar, de
+    `lista_precios.mapa_precios()`. Si se pasa, se agrega la comparacion
+    contra el precio de lista de Suprabond.
     """
     from resolver import indexar_por_sku, resolver_precio
 
     indice = indexar_por_sku(pubs)
     precios_venta = precios_venta or {}
+    precios_lista = precios_lista or {}
     otros = dict(OTROS_CONCEPTOS)
     if otros_conceptos is not None:
         otros.update(otros_conceptos)
 
     filas = []
     for _, fila in costos_df.iterrows():
-        sku, costo = fila["sku"], float(fila["costo"])
+        sku = fila["sku"]
+        costo_lista = float(fila["costo"])
+        costo = costo_efectivo(costo_lista, con_descuento)
 
         res = resolver_precio(sku, indice)
         precio_lista = precio_actual = None
@@ -447,14 +489,23 @@ def calcular(costos_df, cargos_df, pubs, iva=0.0, precios_venta=None,
         en_promo = (precio_lista is not None and precio_actual is not None
                     and abs(precio_lista - precio_actual) > 0.01)
 
+        # Contra el precio al que Suprabond dice que hay que publicar.
+        sugerido = (precios_lista.get(sku) or {}).get("sugerido")
+        vs_sugerido = (float(precio_actual) / sugerido
+                       if (sugerido and precio_actual) else None)
+
         filas.append({
             "sku": sku,
             "item_id": item_id,
             "tipo": tipo,
             "precio_ml": precio_actual,
             "precio_lista": precio_lista,
+            "precio_sugerido": sugerido,
+            "vs_sugerido": vs_sugerido,
             "en_promo": en_promo,
             "costo": costo,
+            "costo_sin_descuento": costo_lista,
+            "con_descuento": bool(con_descuento),
             "comision_prom": comision,
             "envio_prom": envio,
             "cargos_totales": comision + envio,

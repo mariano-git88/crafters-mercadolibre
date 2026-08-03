@@ -150,13 +150,25 @@ def cargo_fijo_de(precio):
 
 
 def analizar(costos_df, cargos_df, pubs, iva=0.21, otros_conceptos=None,
-             objetivo=0.15):
+             objetivo=0.15, precios_lista=None):
     """
     Por SKU: precio actual, precio minimo viable y cuanto habria que subir.
 
     Usa el porcentaje de comision **real** de cada SKU, despejado de lo que ML
     cobro (asi vale igual para Clasica que para Premium), y el envio promedio
     medido de las ventas.
+
+    **El costo va pleno, sin el descuento del proveedor**, y es a proposito:
+    esta funcion decide a que precio estar, y un precio calculado contando con
+    un descuento que puede no estar convierte la venta en perdida. El descuento
+    se mira en rentabilidad, que es donde se pregunta cuanto se gano.
+
+    `precios_lista`: dict sku -> {'sugerido': ...} de `lista_precios`. Cambia
+    la pregunta de fondo. Sin la lista, esto despejaba el precio desde el costo
+    y proponia subir hasta ahi. Con la lista, **el precio de publicacion ya
+    esta decidido por Suprabond** y lo que hay que hacer es llevar el precio
+    ahi; el minimo viable pasa a ser un control: dice si ese precio de lista
+    alcanza para el margen o si el problema esta en el costo.
     """
     from rentabilidad import OTROS_CONCEPTOS, otros_conceptos_monto
     from resolver import indexar_por_sku, resolver_precio
@@ -165,6 +177,7 @@ def analizar(costos_df, cargos_df, pubs, iva=0.21, otros_conceptos=None,
     otros = dict(OTROS_CONCEPTOS)
     if otros_conceptos:
         otros.update(otros_conceptos)
+    precios_lista = precios_lista or {}
 
     pct, envio, unidades = {}, {}, {}
     for _, f in cargos_df.iterrows():
@@ -214,6 +227,24 @@ def analizar(costos_df, cargos_df, pubs, iva=0.21, otros_conceptos=None,
         else:
             diag = "hay que subir"
 
+        # ---------------------------------------------- contra la lista
+        sugerido = (precios_lista.get(sku) or {}).get("sugerido")
+        m_sug = margen_a(sugerido) if sugerido else None
+
+        if not sugerido:
+            estado_lista = "sin lista"
+        elif abs(actual - sugerido) <= 0.01 * sugerido:
+            estado_lista = "al precio de lista"
+        elif actual < sugerido:
+            estado_lista = "por debajo de la lista"
+        else:
+            estado_lista = "arriba de la lista"
+
+        # El precio a publicar: manda la lista cuando existe. Para los SKU sin
+        # lista (otros proveedores) sigue valiendo el minimo despejado, que es
+        # el unico criterio que hay.
+        objetivo_precio = sugerido or minimo
+
         from buybox import marca as marca_de
         filas.append({
             "sku": sku,
@@ -223,6 +254,18 @@ def analizar(costos_df, cargos_df, pubs, iva=0.21, otros_conceptos=None,
             "diagnostico": diag,
             "precio_actual": actual,
             "precio_minimo": minimo,
+            "precio_sugerido": sugerido,
+            "precio_objetivo": objetivo_precio,
+            "estado_lista": estado_lista,
+            # Si el precio de lista no llega al margen objetivo, el problema
+            # no es el precio sino el costo: subirlo mas no esta permitido.
+            "lista_cubre_margen": (bool(m_sug is not None
+                                        and m_sug >= objetivo * sugerido)
+                                   if sugerido else None),
+            "margen_al_sugerido": m_sug,
+            "mover_a_lista": ((sugerido - actual) if sugerido else 0.0),
+            "mover_a_lista_pct": (((sugerido - actual) / actual)
+                                  if (sugerido and actual) else 0.0),
             "subir": (minimo - actual) if (minimo and minimo > actual) else 0.0,
             "subir_pct": ((minimo - actual) / actual
                           if (minimo and minimo > actual) else 0.0),
@@ -254,7 +297,7 @@ def resumen(df):
     if not len(df):
         return {}
     subir = df[df["diagnostico"] == "hay que subir"]
-    return {
+    r = {
         "total": len(df),
         "ok": int((df["diagnostico"] == "ok").sum()),
         "a_subir": len(subir),
@@ -264,6 +307,22 @@ def resumen(df):
         "suba_mediana": float(subir["subir_pct"].median()) if len(subir) else 0.0,
         "cruzan_escalon": int(subir["cruza_escalon"].sum()) if len(subir) else 0,
     }
+    if "estado_lista" in df:
+        con = df[df["estado_lista"].ne("sin lista")]
+        r.update({
+            "con_lista": len(con),
+            "sin_lista": int((df["estado_lista"] == "sin lista").sum()),
+            "al_precio_de_lista": int(
+                (df["estado_lista"] == "al precio de lista").sum()),
+            "debajo_de_lista": int(
+                (df["estado_lista"] == "por debajo de la lista").sum()),
+            "arriba_de_lista": int(
+                (df["estado_lista"] == "arriba de la lista").sum()),
+            # Los que aunque se publiquen al precio de lista no llegan al
+            # margen: ahi el problema es el costo, no el precio.
+            "lista_no_alcanza": int((con["lista_cubre_margen"] == False).sum()),  # noqa: E712
+        })
+    return r
 
 
 # Tope duro de suba, aunque el criterio pida mas. Con la estructura completa
@@ -300,18 +359,52 @@ def seleccionar(df, suba_maxima=0.30, unidades_minimas=1, marcas=None,
     return sel.sort_values("perdida_periodo")
 
 
-def planilla_de_precios(seleccion):
+def planilla_de_precios(seleccion, columna="precio_objetivo"):
     """
     Convierte la seleccion en la planilla que consume `actualizador.simular()`.
 
     Se reusa ese motor a proposito: ya tiene el resolver de SKU, el aviso de
     cambios mayores al 50% y la auditoria. No hace falta otra ruta de
     escritura.
+
+    Por defecto usa `precio_objetivo`, que es el precio de lista cuando el SKU
+    esta en la lista de Suprabond y el minimo despejado cuando no. Pasar
+    `columna="precio_minimo"` para el comportamiento viejo.
     """
+    col = columna if columna in seleccion else "precio_minimo"
     return pd.DataFrame({
         "sku": seleccion["sku"],
-        "precio": seleccion["precio_minimo"].round(2),
+        "precio": seleccion[col].round(2),
     })
+
+
+def seleccionar_a_precio_de_lista(df, unidades_minimas=0, marcas=None,
+                                  items=None, solo_subas=True):
+    """
+    Las publicaciones que no estan al precio que dice la lista de Suprabond.
+
+    Es la accion mas directa que habilita la lista: no hay que despejar nada,
+    el precio ya esta decidido y lo unico que falta es llevarlo ahi.
+
+    `solo_subas` deja afuera las que estan por encima del precio de lista. Son
+    un caso distinto —puede haber un motivo para estar mas caro— y bajarlas en
+    lote es mas riesgoso que subir las que estan baratas.
+    """
+    if not len(df) or "estado_lista" not in df:
+        return df.iloc[0:0] if len(df) else df
+
+    sel = df[df["estado_lista"].isin(
+        ["por debajo de la lista"] if solo_subas
+        else ["por debajo de la lista", "arriba de la lista"])].copy()
+
+    if unidades_minimas:
+        sel = sel[sel["unidades"] >= unidades_minimas]
+    if marcas:
+        sel = sel[sel["marca"].isin(marcas)]
+    if items is not None:
+        sel = sel[sel["item_id"].isin(list(items))]
+
+    return sel.sort_values("mover_a_lista_pct", ascending=False)
 
 
 def main():
@@ -331,7 +424,18 @@ def main():
     cargos = rent.cargos_por_sku(ordenes, envios)
     pubs = json.loads((DIR / "catalogo.json").read_text(encoding="utf-8"))
 
-    df = analizar(costos, cargos, pubs, objetivo=objetivo)
+    import lista_precios as lp
+    mapa, cuando_lista = lp.mapa_precios(), ""
+    try:
+        _, cuando_lista = lp.guardada()
+    except Exception:  # noqa: BLE001
+        pass
+    if mapa:
+        print(f"Lista de precios: {len(mapa)} SKU")
+    else:
+        print("Sin lista de precios cargada: manda el minimo despejado.")
+
+    df = analizar(costos, cargos, pubs, objetivo=objetivo, precios_lista=mapa)
     r = resumen(df)
     pes = lambda v: "—" if v is None or pd.isna(v) else f"${v:,.0f}".replace(",", ".")
 
@@ -346,6 +450,19 @@ def main():
     print(f"  Plata perdida en el periodo  {pes(r['perdida_periodo']):>14}")
     print(f"  Suba mediana necesaria       {r['suba_mediana']:>13.0%}")
     print(f"  De esas, cruzan escalon   {r['cruzan_escalon']:>6}")
+
+    if r.get("con_lista"):
+        print("\n" + "-" * 72)
+        print("  CONTRA LA LISTA DE SUPRABOND")
+        print("-" * 72)
+        print(f"  Con precio de lista       {r['con_lista']:>6}")
+        print(f"    ya al precio de lista   {r['al_precio_de_lista']:>6}")
+        print(f"    por debajo (hay que subir){r['debajo_de_lista']:>4}")
+        print(f"    por encima              {r['arriba_de_lista']:>6}")
+        print(f"  Sin lista (otro proveedor){r['sin_lista']:>6}")
+        print(f"\n  El precio de lista NO alcanza para el margen: "
+              f"{r['lista_no_alcanza']:>4}")
+        print(f"    (ahi el problema es el costo, no el precio)")
 
     subir = df[df["diagnostico"] == "hay que subir"]
     if len(subir):
