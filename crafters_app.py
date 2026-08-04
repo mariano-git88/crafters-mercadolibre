@@ -2987,6 +2987,138 @@ elif seccion == "Oportunidades":
                 "comprador. Bajar no baja la conversión, así que se pueden "
                 "aplicar con más tranquilidad que una suba.", icon="💡")
 
+            # ------------------------------------------------ aplicar
+            st.divider()
+            st.markdown("##### Aplicar los cambios en MercadoLibre")
+
+            cruzan_df = dft[dft["envio_actual"] > 0]
+            solo_cruzan = st.checkbox(
+                f"Solo las {len(cruzan_df)} que cruzan el umbral de envío",
+                value=True, key="tr_solo",
+                help="Son las que hoy pagan el envío y dejan de pagarlo al "
+                     "bajar de $33.000. Las demás solo bajan de escalón de "
+                     "cargo fijo y ganan centavos.")
+            objetivo = cruzan_df if solo_cruzan else dft
+
+            st.caption(
+                f"Alcance: **{len(objetivo)} publicaciones**. No se toca el "
+                "envío: se escribe solo el precio. MercadoLibre apaga el envío "
+                "gratis obligatorio solo, en el momento, porque lo deriva del "
+                "precio — está medido. Aun así **cada publicación que cruza el "
+                "umbral se verifica después de escribirla**, y si el envío "
+                "quedó prendido se le devuelve el precio anterior.")
+
+            st.warning(
+                "**Esto cambia precios en MercadoLibre de verdad.** Los "
+                "precios se releen antes de escribir, así que las que se "
+                "hayan movido desde el último análisis quedan afuera. Todo "
+                "queda en la auditoría con el precio anterior.", icon="⚠️")
+
+            if st.button("Revisar contra los precios de hoy", key="tr_plan"):
+                # El resultado de una corrida anterior no puede quedar colgado
+                # abajo de un plan nuevo: se lee como si fuera de este.
+                st.session_state.pop("tramos_res", None)
+                paso = st.empty()
+                try:
+                    with st.spinner("Leyendo el estado actual..."):
+                        st.session_state["tramos_plan"] = tramos.plan(
+                            ml, objetivo,
+                            callback=lambda m: paso.caption(str(m)))
+                except Exception as e:
+                    paso.empty()
+                    st.error(f"No pude leer el estado actual: "
+                             f"{type(e).__name__}: {e}")
+                    st.stop()
+                paso.empty()
+
+            plan_tr = st.session_state.get("tramos_plan")
+            if plan_tr is not None and len(plan_tr):
+                van = plan_tr[plan_tr["accion"] == "aplicar"]
+                fuera = plan_tr[plan_tr["accion"] == "omitir"]
+
+                p1, p2, p3 = st.columns(3)
+                p1.metric("Se van a aplicar", len(van))
+                p2.metric("Quedan afuera", len(fuera))
+                p3.metric("Ganan por unidad",
+                          pesos(van["gana_por_unidad"].sum()) if len(van)
+                          else "$0")
+
+                if len(fuera):
+                    with st.expander(f"Por qué quedan afuera {len(fuera)}"):
+                        st.dataframe(
+                            fuera[["sku", "titulo", "precio_actual", "motivo"]],
+                            use_container_width=True, hide_index=True)
+
+                if not len(van):
+                    st.info("No quedó ninguna para aplicar.")
+                else:
+                    st.dataframe(
+                        van[["sku", "titulo", "precio_actual", "precio_nuevo",
+                             "cambia_precio", "gana_por_unidad",
+                             "cruza_umbral"]],
+                        use_container_width=True, height=260, hide_index=True,
+                        column_config={
+                            "sku": "SKU", "titulo": "Título",
+                            "precio_actual": st.column_config.NumberColumn(
+                                "Precio hoy", format="%.0f"),
+                            "precio_nuevo": st.column_config.NumberColumn(
+                                "Precio nuevo", format="%.0f"),
+                            "cambia_precio": st.column_config.NumberColumn(
+                                "Cambia", format="percent"),
+                            "gana_por_unidad": st.column_config.NumberColumn(
+                                "Ganás por unidad", format="%.0f"),
+                            "cruza_umbral": st.column_config.CheckboxColumn(
+                                "Saca el envío")})
+
+                    op_tr = st.text_input("Tu nombre (queda en el registro)",
+                                          key="tr_op")
+                    conf_tr = st.checkbox(
+                        f"Confirmo que quiero cambiar estos {len(van)} precios "
+                        "en MercadoLibre", key="tr_conf")
+                    if st.button("Aplicar en MercadoLibre", key="tr_go",
+                                 disabled=not (conf_tr and op_tr.strip())):
+                        barra = st.progress(0.0, text="Aplicando...")
+                        try:
+                            res_tr = tramos.aplicar(
+                                ml, plan_tr, operador=op_tr.strip(),
+                                callback=lambda i, t, f: barra.progress(
+                                    i / t, text=f"Aplicando {i} de {t}..."))
+                        except Exception as e:
+                            barra.empty()
+                            st.error(f"La corrida se cortó: "
+                                     f"{type(e).__name__}: {e}")
+                            st.stop()
+                        barra.empty()
+                        st.session_state["tramos_res"] = res_tr
+
+            res_tr = st.session_state.get("tramos_res")
+            if res_tr is not None and len(res_tr):
+                ok = int((res_tr["resultado"] == "OK").sum())
+                rev = int((res_tr["resultado"] == "REVERTIDA").sum())
+                mal = len(res_tr) - ok - rev
+
+                if ok == len(res_tr):
+                    st.success(f"{ok} precios actualizados.")
+                else:
+                    st.error(f"{ok} aplicados · {rev} revertidos · "
+                             f"{mal} con error.")
+                if rev:
+                    st.warning(
+                        f"En **{rev}** MercadoLibre no apagó el envío gratis "
+                        "al bajar el precio, así que se les devolvió el precio "
+                        "anterior: con el envío prendido el cambio perdía "
+                        "plata en vez de ganarla.", icon="↩️")
+
+                st.dataframe(res_tr, use_container_width=True,
+                             hide_index=True)
+                st.download_button(
+                    "Descargar el resultado",
+                    res_tr.to_csv(index=False).encode("utf-8"),
+                    f"tramos_aplicados_{datetime.now():%Y%m%d_%H%M}.csv",
+                    "text/csv", key="tr_dl")
+                st.caption("Los precios cambiaron: volvé a apretar **Analizar "
+                           "el catálogo** para ver el estado nuevo.")
+
     else:
         st.caption(
             "Cruza cuántas veces vieron cada publicación contra cuánto vendió. "

@@ -1,6 +1,19 @@
 [
   {
     "fecha": "2026-08-04",
+    "hora": "17:40",
+    "tipo": "nuevo",
+    "titulo": "Tramos de comisión ahora aplica los precios solo",
+    "puntos": [
+      "Antes había que bajar el CSV y subirlo en la sección Precios. Ahora hay un botón que los escribe directo.",
+      "**No hay que tocar el envío.** Está medido: al bajar una publicación debajo de \\$33.000, MercadoLibre le apaga el envío gratis obligatorio solo, en el momento. Es una regla suya que sale del precio.",
+      "Igual **cada publicación que cruza el umbral se verifica** después de escribirla. Si en alguna el envío quedara prendido, se le devuelve el precio anterior sola: con el envío prendido el cambio pierde ~\\$6.200 por unidad en vez de ganar.",
+      "Antes de escribir se releen los precios de verdad. En la primera corrida, 13 de 68 publicaciones habían cambiado de precio desde el último análisis y quedaron afuera.",
+      "Por defecto solo toca las que cruzan el umbral de envío, que son las que dejan plata. Las otras ganan centavos."
+    ]
+  },
+  {
+    "fecha": "2026-08-04",
     "hora": "15:23",
     "tipo": "arreglo",
     "titulo": "La fecha del encabezado mostraba el dato equivocado",

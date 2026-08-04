@@ -220,6 +220,190 @@ def analizar(pubs=None):
     return df
 
 
+# ----------------------------------------------------------------- ejecucion
+#
+# Hasta aca el modulo es solo lectura. De aca abajo escribe precios en la
+# cuenta de verdad.
+#
+# **Por que el envio no se toca.** Medido el 2026-08-04 sobre MLA1599754027:
+# a $33.324 la publicacion tenia `free_shipping: true` y la etiqueta
+# `mandatory_free_shipping`; al bajarla a $32.999, en menos de 3 segundos ML
+# dejo `free_shipping: false` y saco la etiqueta solo; al devolverle el precio
+# volvieron las dos cosas. O sea que el envio gratis obligatorio lo deriva ML
+# del precio y **no hay que escribirlo** — de hecho es suyo, no nuestro.
+#
+# Igual se verifica publicacion por publicacion, porque la regla no es un
+# corte limpio en $33.000: hay publicaciones arriba del umbral sin la etiqueta
+# (depende tambien de categoria y dimensiones). Si en alguna el envio NO se
+# apaga, bajar el precio pasa de ganar ~$1.500 por unidad a perder ~$6.200, y
+# por eso esa se revierte sola.
+
+TECHO_DE_CAMBIO = 0.15     # tope duro: no se ejecuta un cambio mas grande
+
+CAMPOS_VIVO = ["id", "price", "status", "shipping"]
+
+
+def _estado_vivo(pub):
+    envio = pub.get("shipping") or {}
+    return {
+        "item_id": pub.get("id"),
+        "precio_vivo": float(pub.get("price") or 0),
+        "status": pub.get("status"),
+        "envio_gratis": bool(envio.get("free_shipping")),
+    }
+
+
+def plan(ml, seleccion, callback=None):
+    """
+    Rearma la sugerencia contra el precio que la publicacion tiene **ahora**.
+
+    El analisis sale de `catalogo.json`, que puede tener dias: si el precio se
+    movio desde entonces, el precio sugerido que se ve en pantalla ya no es el
+    que corresponde. Escribirlo igual seria fijar un precio calculado sobre un
+    dato viejo, que es justo el error caro en esta pantalla.
+
+    Devuelve un DataFrame con una fila por publicacion y la columna `accion`:
+    'aplicar' o 'omitir' (con `motivo` explicando cual).
+    """
+    ids = [str(i) for i in seleccion["item_id"]]
+    if not ids:
+        return pd.DataFrame()
+
+    vivos = {}
+    for i, pub in enumerate(ml.items_detalle(ids, atributos=CAMPOS_VIVO), 1):
+        vivos[pub.get("id")] = _estado_vivo(pub)
+        if callback and i % 20 == 0:
+            callback(f"Leyendo precios actuales... {i}/{len(ids)}")
+
+    filas = []
+    for _, r in seleccion.iterrows():
+        item = str(r["item_id"])
+        base = {"item_id": item, "sku": r.get("sku", ""),
+                "titulo": r.get("titulo", ""),
+                "vendidos": r.get("vendidos", 0),
+                "precio_pantalla": float(r.get("precio_actual") or 0)}
+
+        v = vivos.get(item)
+        if v is None:
+            filas.append({**base, "accion": "omitir",
+                          "motivo": "no pude leer la publicación"})
+            continue
+
+        precio = v["precio_vivo"]
+        base.update({"precio_actual": precio, "envio_gratis": v["envio_gratis"]})
+
+        if v["status"] != "active":
+            filas.append({**base, "accion": "omitir",
+                          "motivo": f"no está activa ({v['status']})"})
+            continue
+
+        # La sugerencia se recalcula: la de pantalla puede ser de otro precio.
+        nuevo, mejor, motivo = None, neto(precio), ""
+        for cand, razon in _candidatos(precio):
+            n = neto(cand)
+            if n > mejor:
+                nuevo, mejor, motivo = cand, n, razon
+
+        if nuevo is None:
+            filas.append({**base, "accion": "omitir",
+                          "motivo": "al precio de hoy ya no conviene cambiarla"})
+            continue
+
+        cambio = (nuevo - precio) / precio
+        if abs(cambio) > TECHO_DE_CAMBIO:
+            filas.append({**base, "accion": "omitir",
+                          "motivo": f"el cambio sería de {cambio:+.0%}, "
+                                    f"más que el tope de {TECHO_DE_CAMBIO:.0%}"})
+            continue
+
+        # Nunca empujar una publicacion POR ENCIMA del umbral desde aca: ahi
+        # aparece el envio a cargo del vendedor y el analisis no lo pidio.
+        if precio < UMBRAL_ENVIO_GRATIS <= nuevo:
+            filas.append({**base, "accion": "omitir",
+                          "motivo": "la subiría por encima del umbral de envío"})
+            continue
+
+        filas.append({
+            **base, "accion": "aplicar", "motivo": motivo,
+            "precio_nuevo": nuevo,
+            "cambia_precio": round(cambio, 4),
+            "gana_por_unidad": round(mejor - neto(precio), 2),
+            # Solo estas hay que verificarlas: son las que dependen de que ML
+            # apague el envio gratis.
+            "cruza_umbral": bool(precio >= UMBRAL_ENVIO_GRATIS > nuevo),
+        })
+
+    return pd.DataFrame(filas)
+
+
+def aplicar(ml, plan_df, operador="", callback=None):
+    """
+    Escribe los precios de las filas con accion 'aplicar'.
+
+    Dos cosas que no son opcionales en una escritura masiva sobre plata real:
+
+    - **Una falla no puede matar el lote.** Cada publicacion va en su propio
+      try: si una revienta, se registra y se sigue con la siguiente.
+    - **Las que cruzan el umbral se verifican.** Despues de bajar el precio se
+      relee el envio. Si quedo prendido, el cambio deja de convenir y se
+      revierte esa publicacion al precio anterior.
+    """
+    if plan_df is None or not len(plan_df):
+        return pd.DataFrame()
+
+    pendientes = plan_df[plan_df["accion"] == "aplicar"]
+    nota = f"tramos de comisión {pd.Timestamp.now():%Y-%m-%d %H:%M}"
+    salida, total = [], len(pendientes)
+
+    for i, (_, f) in enumerate(pendientes.iterrows(), start=1):
+        if callback:
+            callback(i, total, f)
+
+        item, antes, nuevo = f["item_id"], f["precio_actual"], f["precio_nuevo"]
+        fila = {"item_id": item, "sku": f.get("sku", ""),
+                "titulo": f.get("titulo", ""), "precio_antes": antes,
+                "precio_nuevo": nuevo,
+                "gana_por_unidad": f.get("gana_por_unidad", 0)}
+
+        try:
+            ok, detalle = ml.actualizar_publicacion(
+                item, {"price": nuevo}, {"price": antes},
+                operador=operador, nota=nota)
+            if not ok:
+                salida.append({**fila, "resultado": "ERROR",
+                               "detalle": str(detalle)[:200]})
+                continue
+
+            if not f.get("cruza_umbral"):
+                salida.append({**fila, "resultado": "OK", "detalle": ""})
+                continue
+
+            # Cruzo el umbral: ML tiene que haber apagado el envio gratis.
+            estado = _estado_vivo(ml.get(f"/items/{item}",
+                                         attributes=",".join(CAMPOS_VIVO)))
+            if not estado["envio_gratis"]:
+                salida.append({**fila, "resultado": "OK",
+                               "detalle": "envío gratis apagado"})
+                continue
+
+            # No se apago: el cambio pasa a perder plata. Se revierte.
+            vok, vdet = ml.actualizar_publicacion(
+                item, {"price": antes}, {"price": nuevo},
+                operador=operador, nota=f"{nota} - revierte, envío seguía gratis")
+            salida.append({
+                **fila, "resultado": "REVERTIDA" if vok else "REVERTIR FALLÓ",
+                "detalle": ("ML no apagó el envío gratis; se volvió al precio "
+                            "anterior" if vok else
+                            f"ML no apagó el envío gratis y la vuelta atrás "
+                            f"falló: {str(vdet)[:120]}")})
+
+        except Exception as e:
+            salida.append({**fila, "resultado": "ERROR",
+                           "detalle": f"{type(e).__name__}: {str(e)[:180]}"})
+
+    return pd.DataFrame(salida)
+
+
 def main():
     if "--umbrales" in sys.argv:
         ml = Meli(verbose=False)
