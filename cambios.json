@@ -1,5 +1,17 @@
 [
   {
+    "fecha": "2026-08-04",
+    "hora": "15:23",
+    "tipo": "arreglo",
+    "titulo": "La fecha del encabezado mostraba el dato equivocado",
+    "puntos": [
+      "«Última actualización» mostraba **cuándo se actualizó la app**, no cuándo se bajó el catálogo. Por eso apretabas «Actualizar catálogo», se bajaba todo de nuevo, y la fecha no se movía.",
+      "El botón siempre funcionó: el que mentía era el cartel. Ahora son dos líneas separadas, **Catálogo bajado** y **Versión de la app**.",
+      "La hora se muestra en horario argentino. El servidor corre en otro huso, así que antes habría mostrado 3 horas de más.",
+      "Ojo: en una sesión nueva la app usa el catálogo que tenga guardado **sin importar qué tan viejo sea**. Ahora esa fecha se ve de verdad, y si está vieja el botón sirve."
+    ]
+  },
+  {
     "fecha": "2026-08-01",
     "hora": "12:05",
     "tipo": "arreglo",

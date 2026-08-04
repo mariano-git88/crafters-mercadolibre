@@ -43,7 +43,8 @@ import stock_control
 import tramos
 import tutorial_crafters
 import ventana
-from catalogo import CACHE as CACHE_CATALOGO, bajar_catalogo
+from catalogo import (CACHE as CACHE_CATALOGO, actualizado_en as catalogo_al,
+                      bajar_catalogo)
 from meli import Meli, MeliError, es_error_de_api
 
 _ASSETS = Path(__file__).resolve().parent / "_assets"
@@ -185,7 +186,12 @@ with enc_info:
     st.markdown("##### Herramientas de MercadoLibre")
     st.caption(f"{len(pubs):,} publicaciones · {len(activas):,} activas"
                .replace(",", "."))
-    st.caption(f"Última actualización: **{cambios.ultima_actualizacion()}**")
+    # Dos fechas distintas: cuando se bajo el catalogo (lo que cambia el boton
+    # de al lado) y cuando se actualizo la app (lo que cuenta Novedades). El
+    # encabezado mostraba la segunda con el rotulo de la primera, asi que
+    # apretar "Actualizar catalogo" bajaba todo de nuevo y la fecha no se movia.
+    st.caption(f"Catálogo bajado: **{catalogo_al() or 'todavía no'}**")
+    st.caption(f"Versión de la app: {cambios.ultima_actualizacion()}")
 with enc_btn:
     bt1, bt2 = st.columns(2)
     if bt1.button("📖 Tutorial", use_container_width=True):

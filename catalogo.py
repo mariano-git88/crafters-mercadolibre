@@ -14,11 +14,37 @@ Por eso se cachea. Cualquier herramienta que necesite el catalogo usa:
 
 import json
 import sys
+from datetime import datetime
 from pathlib import Path
 
 from meli import Meli, MeliError
 
 CACHE = Path(__file__).resolve().parent / "catalogo.json"
+
+# En Streamlit Cloud el contenedor corre en UTC, asi que formatear la fecha
+# con la hora local mostraria 3 horas de mas. La zona va fija.
+ZONA = "America/Argentina/Buenos_Aires"
+
+
+def actualizado_en():
+    """
+    Cuando se bajo el catalogo por ultima vez, sacado de la fecha del archivo
+    de cache. Devuelve '' si todavia no se bajo nunca.
+
+    OJO: esto mide **el catalogo**, no la version de la app. Son dos fechas
+    distintas y el encabezado llego a mostrar la equivocada.
+    """
+    try:
+        marca = CACHE.stat().st_mtime
+    except OSError:
+        return ""
+    try:
+        from zoneinfo import ZoneInfo
+        cuando = datetime.fromtimestamp(marca, ZoneInfo(ZONA))
+    except Exception:
+        # Sin base de zonas horarias, mejor la hora local que nada.
+        cuando = datetime.fromtimestamp(marca)
+    return cuando.strftime("%d/%m/%Y %H:%M")
 
 CAMPOS = ["id", "title", "price", "base_price", "original_price",
           "available_quantity", "sold_quantity", "status", "sub_status",
