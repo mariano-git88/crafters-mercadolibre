@@ -67,3 +67,6 @@ duplicados.csv
 publicidad.csv
 
 publicidad_a_pausar.csv
+
+# Capturas de red del navegador: traen cookies de sesion enteras
+*.har
