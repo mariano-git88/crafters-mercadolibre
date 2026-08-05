@@ -159,9 +159,15 @@ def sacar(sesion, ad_group_ids, advertiser_id, campaign_id):
     """
     Saca ad_groups de su campana: quedan en IDLE, campaign 0.
 
-    **De a 5 como mucho.** Medido: lotes de 5 entran siempre; de 10 en
-    adelante devuelven 400 para todos los del lote. Es el limite del endpoint,
-    no un problema de permisos — el que llama tiene que trocear.
+    **De a 5 como mucho.** Medido: lotes de 10 en adelante devuelven 400 para
+    todos los del lote. Es el limite del endpoint, no un problema de permisos
+    — el que llama tiene que trocear.
+
+    **Muchas fallas son benignas y hay que leerlas asi.** Un anuncio en `hold`
+    no se puede sacar de la campana (lo deshabilito ML), uno ya en `idle` no
+    tiene de donde salir, y el listado de `ads/search` devuelve ad_groups que
+    ya no existen. En una corrida de 600 fallaron 360 y casi todas eran de
+    esas tres clases: el listado estaba viejo, no habia nada roto.
     """
     import requests
     try:

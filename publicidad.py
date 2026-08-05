@@ -252,6 +252,17 @@ def _sin_repetidos(df):
 # mas dura (no se puede vender) a la mas discutible (rinde poco).
 SIN_DATOS = "pocos datos todavía"
 
+# **El estado que trae `ads/search` esta atrasado.** No es solo el item: el
+# propio estado del anuncio viene viejo. Sacando una tanda de anuncios de sus
+# campanas, el listado decia `delegated` para 594 y al preguntarle a
+# `ad_groups/{id}` uno por uno aparecian IDLE, HOLD y hasta ad_groups que ya
+# no existen (`ad_group_not_found_exception`). Sirve para analizar; para
+# decidir sobre uno en particular hay que preguntarle a `ad_groups/{id}`.
+#
+# Consecuencia practica: un lote de acciones **siempre va a tener fallas
+# benignas** (anuncios que ya estaban idle, o en hold, que no se pueden mover).
+# No son errores del lote: son el listado desactualizado.
+#
 # Estados de anuncio vistos en la cuenta: active, paused, idle, hold, deleted
 # y **delegated**.
 #
