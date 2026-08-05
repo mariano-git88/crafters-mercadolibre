@@ -558,7 +558,7 @@ def candidatos(df_conv, pubs, df_ads, advs=None, camps_por_adv=None,
     return pd.DataFrame(filas)
 
 
-def resolver_candidatos(ml, cand, callback=None):
+def resolver_candidatos(ml, cand, estados_camp=None, callback=None):
     """
     Completa cada candidato con su anuncio **en vivo** y decide que hacer.
 
@@ -591,11 +591,19 @@ def resolver_candidatos(ml, cand, callback=None):
         if estado == "idle":
             f["accion"] = "agregar"
         elif estado == "paused":
-            # Ya esta en una campana: prenderlo alcanza, y ademas respeta
-            # donde lo puso ML en vez de mudarlo.
-            f["accion"] = "activar"
-            f["campaign_id"] = ad.get("campaign_id") or f.get("campaign_id")
-            f["advertiser_id"] = ad.get("advertiser_id") or f.get("advertiser_id")
+            suya = ad.get("campaign_id")
+            viva = (estados_camp or {}).get(suya) == "active"
+            if suya and viva:
+                # Ya esta donde va: prenderlo alcanza, y ademas respeta la
+                # campana que le asigno ML en vez de mudarlo.
+                f["accion"] = "activar"
+                f["campaign_id"] = suya
+                f["advertiser_id"] = ad.get("advertiser_id") or f["advertiser_id"]
+            else:
+                # Esta apagado dentro de una campana **dormida**: prenderlo
+                # ahi no lo hace correr. Se muda al destino, que ya viene
+                # elegido y esta activo.
+                f["accion"] = "agregar"
         else:
             f.update(accion="ninguna",
                      motivo=f"el anuncio está {estado}, no se puede sumar")

@@ -205,9 +205,12 @@ def candidatos_a_sumar(ml, df_ads, pubs, log):
     if not len(c):
         return c
     c = c[c["accion"] == "agregar"].sort_values("visitas", ascending=False)
+    # Los estados de campana hacen falta para no "activar" un anuncio dentro
+    # de una campana pausada, que no lo hace correr.
+    estados = {x["id"]: x.get("status") for cs in camps.values() for x in cs}
     # Una llamada por candidato, asi que primero se recorta al tope.
     c = publicidad.resolver_candidatos(ml, c.head(TOPE_SUMAR * 2),
-                                       callback=log)
+                                       estados_camp=estados, callback=log)
     return c[c["accion"].isin(("agregar", "activar"))
              & c["ad_group_id"].notna()]
 
