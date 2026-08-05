@@ -32,6 +32,7 @@ import duplicados
 import envios
 import panel_ads
 import publicidad
+import publicidad_cron
 import full
 import salud
 import espejos
@@ -3836,7 +3837,7 @@ elif seccion == "Publicidad":
     # visualmente mientras recalcula. Se elige con un selector para que en el
     # DOM exista solo la vista activa.
     _VISTAS_PUB = ["Cómo va", "Qué haría con los anuncios",
-                   "Topes y estratégicos"]
+                   "Correr el proceso", "Topes y estratégicos"]
     vista_pub = st.segmented_control(
         "Vista", _VISTAS_PUB, default=_VISTAS_PUB[0],
         key="pub_vista", label_visibility="collapsed") or _VISTAS_PUB[0]
@@ -4128,6 +4129,65 @@ elif seccion == "Publicidad":
                             icon="🔒")
                 st.dataframe(res_pub, use_container_width=True,
                              hide_index=True)
+
+    elif vista_pub == "Correr el proceso":
+        st.caption(
+            "Lo mismo que corre solo los martes a las 9: mide, apaga lo que "
+            "pasa el ACOS objetivo y suma lo que convierte y no se publicita. "
+            "**Sin topes**: hace todo lo que califica.")
+
+        conv_ya = st.session_state.get("conv")
+        if conv_ya is not None and len(conv_ya):
+            st.caption(f"Va a reusar el análisis de *Visitas vs ventas* que "
+                       f"ya está en memoria ({len(conv_ya)} publicaciones), "
+                       "así que tarda unos 2 minutos.")
+        else:
+            st.warning(
+                "No hay análisis de *Visitas vs ventas* en memoria, así que "
+                "lo va a medir: es **una llamada por publicación** y tarda "
+                "unos 15 minutos. No cierres la pestaña. Si primero corrés "
+                "esa sección (en Oportunidades), esto baja a 2 minutos.",
+                icon="⏳")
+
+        aplicar_pub = st.checkbox(
+            "Aplicar de verdad (sin tildar, solo muestra qué haría)",
+            key="cron_aplicar")
+        if aplicar_pub:
+            st.error(
+                "Va a **apagar y encender anuncios de verdad**, sin tope de "
+                "cantidad. Encender gasta desde el momento; el único límite "
+                "es el presupuesto de cada campaña.", icon="🚨")
+
+        if st.button("Correr el proceso ahora", key="cron_go",
+                     type="primary" if aplicar_pub else "secondary",
+                     disabled=aplicar_pub and not panel_ads.hay_sesion()):
+            caja = st.empty()
+            lineas = []
+
+            def _log(m):
+                lineas.append(str(m))
+                # Solo el final: el log entero son cientos de líneas y
+                # repintarlo completo en cada paso vuelve la app un plomo.
+                caja.code("\n".join(lineas[-18:]), language=None)
+
+            try:
+                with st.spinner("Corriendo..."):
+                    publicidad_cron.correr(aplicar=aplicar_pub, log=_log,
+                                           conv=conv_ya, ml=ml)
+            except Exception as e:
+                _log(f"\nSE CORTÓ: {type(e).__name__}: {e}")
+                st.error(f"La corrida se cortó: {type(e).__name__}: {e}")
+            st.session_state["cron_log"] = "\n".join(lineas)
+            if aplicar_pub:
+                # Los estados cambiaron: lo que estaba en pantalla quedó viejo.
+                st.session_state.pop("pub_plan", None)
+
+        if st.session_state.get("cron_log"):
+            st.download_button(
+                "Descargar el log completo",
+                st.session_state["cron_log"].encode("utf-8"),
+                f"publicidad_{datetime.now():%Y%m%d_%H%M}.txt", "text/plain",
+                key="cron_dl")
 
     elif vista_pub == "Topes y estratégicos":
         st.caption(

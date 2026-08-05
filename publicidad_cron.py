@@ -18,13 +18,16 @@ Las que le tocarian una campana **pausada** van a una campana propia
 activas pero la campana no corre— y prender la general de Crafters
 encenderia sus 4.557 anuncios de una.
 
-**Apagar no tiene tope y sumar si.** No es una inconsistencia: si un anuncio
-pasa el ACOS objetivo se apaga en la misma corrida, porque la regla es
-"siempre que este por arriba, se da de baja". Agregar, en cambio, deja el
-anuncio ACTIVO y gastando desde ese momento — apagar de mas cuesta ventas,
-prender de mas cuesta plata directa. Lo aprendimos por las malas: durante las
-pruebas, capturar esa accion reactivo un anuncio de $182.000 al mes sin que
-nadie lo pidiera.
+**No hay topes por corrida**: se hace todo lo que califica, de una.
+
+El unico freno que queda del lado nuestro es `GASTO_MINIMO`, que no posterga
+nada — evita juzgar un anuncio con poca plata medida. Del lado de gastar, el
+freno real es el **tope de presupuesto de cada campana**: por mas anuncios
+que entren, no se puede gastar mas que eso.
+
+Vale tenerlo presente porque agregar deja el anuncio ACTIVO y gastando desde
+ese momento. Lo aprendimos por las malas: durante las pruebas, capturar esa
+accion reactivo un anuncio de $182.000 al mes sin que nadie lo pidiera.
 
 Todo queda en la auditoria con el estado anterior.
 
@@ -58,11 +61,14 @@ DIR = Path(__file__).resolve().parent
 # medida, asi que un anuncio nuevo o con ruido no entra igual.
 TOPE_APAGAR = None
 
-# **Sumar si tiene tope**, y a proposito: agregar un anuncio a una campana lo
-# deja ACTIVO, o sea gastando desde ese momento. Apagar de mas cuesta ventas;
-# prender de mas cuesta plata directa, y esa asimetria justifica tratarlos
-# distinto.
-TOPE_SUMAR = 25
+# Sumar tampoco tiene tope: se hace todo lo que califica en la misma corrida.
+#
+# Vale saber que esto no es simetrico con apagar. Agregar deja el anuncio
+# ACTIVO y gastando desde ese momento, asi que una corrida con muchos
+# candidatos sube el gasto de golpe. El freno real pasa a ser el **tope de
+# presupuesto de cada campana**, que es lo unico que limita cuanto se puede
+# gastar por mas anuncios que entren.
+TOPE_SUMAR = None
 
 # Debajo de este gasto en el periodo no vale la pena tocar nada: son
 # centavos y el anuncio puede estar recien arrancando.
@@ -71,14 +77,21 @@ GASTO_MINIMO = 3000.0
 DIAS = 30
 
 
-def correr(aplicar=False, verbose=True):
-    ml = Meli(verbose=False)
+def correr(aplicar=False, verbose=True, log=None, conv=None, ml=None):
+    """
+    `log` recibe cada linea; sirve para mostrarlo en la app en vez de la
+    consola. `conv` es el analisis de Visitas vs ventas ya hecho: medirlo son
+    ~10 minutos (una llamada por publicacion), asi que si la app ya lo tiene
+    en memoria no se vuelve a medir.
+    """
+    ml = ml or Meli(verbose=False)
     hasta = date.today() - timedelta(days=1)
     desde = hasta - timedelta(days=DIAS - 1)
 
-    def log(m):
-        if verbose:
-            print(m, flush=True)
+    if log is None:
+        def log(m):
+            if verbose:
+                print(m, flush=True)
 
     log(f"Publicidad del {desde} al {hasta}")
     df, advs, camps = publicidad.traer_todo(
@@ -101,9 +114,11 @@ def correr(aplicar=False, verbose=True):
                   & (plan["ad_group_id"].notna())].copy()
     apagar = apagar.sort_values("gasto", ascending=False)
 
+    # OJO: aca antes se cortaba con `return` cuando no habia nada que apagar,
+    # y eso se saltaba la parte de sumar. Una corrida donde ya esta todo
+    # dentro del ACOS objetivo es justo cuando conviene sumar.
     if not len(apagar):
-        log("Nada para apagar: todo dentro de los topes.")
-        return 0
+        log("Nada para apagar: todo dentro del ACOS objetivo.")
 
     if TOPE_APAGAR and len(apagar) > TOPE_APAGAR:
         log(f"\n*** {len(apagar)} superan el tope de {TOPE_APAGAR} por "
@@ -111,14 +126,15 @@ def correr(aplicar=False, verbose=True):
             "próxima. ***")
         apagar = apagar.head(TOPE_APAGAR)
 
-    log(f"\nA apagar: {len(apagar)} · gasto {pes(apagar['gasto'].sum())}")
+    if len(apagar):
+        log(f"\nA apagar: {len(apagar)} · gasto {pes(apagar['gasto'].sum())}")
     for _, r in apagar.iterrows():
         log(f"  {r['item_id']:<15} {pes(r['gasto']):>12}  "
             f"ACOS {r['acos']:>3.0f}%  {r['motivo'][:52]}")
 
     # ------------------------------------------------ que sumar
-    sumar = candidatos_a_sumar(ml, df, pubs, log)
-    if len(sumar) > TOPE_SUMAR:
+    sumar = candidatos_a_sumar(ml, df, pubs, log, conv=conv)
+    if TOPE_SUMAR and len(sumar) > TOPE_SUMAR:
         log(f"\n*** {len(sumar)} candidatos superan el tope de {TOPE_SUMAR}. "
             "Entran los de más visitas; el resto queda para la próxima. ***")
         sumar = sumar.head(TOPE_SUMAR)
@@ -141,15 +157,21 @@ def correr(aplicar=False, verbose=True):
     sesion = panel_ads.leer_sesion()
     auditoria = []
 
-    res = panel_ads.aplicar(sesion, ml, apagar, accion="pausar",
-                            callback=lambda i, t, d: log(f"  {i}/{t} {d}"))
-    ok = int((res["resultado"] == "OK").sum())
-    log(f"\nApagados {ok} de {len(res)}.")
-    auditoria += _auditar(res, "active", "paused")
+    ok, res = 0, pd.DataFrame()
+    if len(apagar):
+        res = panel_ads.aplicar(sesion, ml, apagar, accion="pausar",
+                                callback=lambda i, t, d: log(f"  {i}/{t} {d}"))
+        ok = int((res["resultado"] == "OK").sum())
+        log(f"\nApagados {ok} de {len(res)}.")
+        auditoria += _auditar(res, "active", "paused")
 
     # Los que estan fuera de campana se agregan; los que ya estan adentro
     # pero apagados solo se prenden, para no mudarlos de donde ML los puso.
     for acc, antes in (("agregar", "idle"), ("activar", "paused")):
+        # `sumar` viene vacio y **sin columnas** cuando el analisis de
+        # conversion falla, asi que filtrar por 'accion' explotaria.
+        if not len(sumar) or "accion" not in sumar:
+            break
         filas = sumar[sumar["accion"] == acc]
         if not len(filas):
             continue
@@ -179,7 +201,7 @@ def _auditar(res, antes, despues):
     } for _, r in res.iterrows()]
 
 
-def candidatos_a_sumar(ml, df_ads, pubs, log):
+def candidatos_a_sumar(ml, df_ads, pubs, log, conv=None):
     """
     Las publicaciones que convierten y no se publicitan.
 
@@ -190,9 +212,13 @@ def candidatos_a_sumar(ml, df_ads, pubs, log):
     """
     import conversion
     try:
-        log("\nMidiendo visitas y ventas (tarda unos minutos)...")
-        conv = conversion.analizar(ml, dias=DIAS,
-                                   callback=lambda m: log(f"  {m}"))
+        if conv is None or not len(conv):
+            log("\nMidiendo visitas y ventas (tarda unos minutos)...")
+            conv = conversion.analizar(ml, dias=DIAS,
+                                       callback=lambda m: log(f"  {m}"))
+        else:
+            log(f"\nUsando el análisis de visitas ya hecho ({len(conv)} "
+                "publicaciones).")
     except Exception as e:
         log(f"AVISO: no pude medir conversión ({type(e).__name__}: "
             f"{str(e)[:120]}). Esta corrida solo apaga.")
@@ -209,7 +235,7 @@ def candidatos_a_sumar(ml, df_ads, pubs, log):
     # de una campana pausada, que no lo hace correr.
     estados = {x["id"]: x.get("status") for cs in camps.values() for x in cs}
     # Una llamada por candidato, asi que primero se recorta al tope.
-    c = publicidad.resolver_candidatos(ml, c.head(TOPE_SUMAR * 2),
+    c = publicidad.resolver_candidatos(ml, c if TOPE_SUMAR is None else c.head(TOPE_SUMAR * 2),
                                        estados_camp=estados, callback=log)
     return c[c["accion"].isin(("agregar", "activar"))
              & c["ad_group_id"].notna()]

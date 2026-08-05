@@ -1,6 +1,19 @@
 [
   {
     "fecha": "2026-08-05",
+    "hora": "23:15",
+    "tipo": "mejora",
+    "titulo": "Botón para correr el proceso de publicidad cuando quieras",
+    "puntos": [
+      "En **Publicidad → Correr el proceso** está el mismo proceso que corre solo los martes, para dispararlo a mano.",
+      "Sin tildar «Aplicar de verdad» solo te muestra qué haría, sin tocar nada.",
+      "**Se sacaron los topes por corrida**: apaga y suma todo lo que califica, de una. Antes iba de a 25.",
+      "Si ya corriste *Visitas vs ventas*, tarda unos 2 minutos porque reusa esa medición. Si no, la mide y tarda unos 15.",
+      "Ojo: el único límite de gasto que queda es el **presupuesto de cada campaña**. Encender un anuncio gasta desde ese momento."
+    ]
+  },
+  {
+    "fecha": "2026-08-05",
     "hora": "21:40",
     "tipo": "mejora",
     "titulo": "La publicidad se maneja sola",
