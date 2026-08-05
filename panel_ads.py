@@ -57,9 +57,13 @@ BASE_PANEL = "https://pa.mercadolibre.com.ar"
 URL = f"{BASE_PANEL}/pa/api/admin-pads/ajax/ads/actions/status"
 URL_SACAR = f"{BASE_PANEL}/pa/api/admin-pads/ajax/ads/actions/remove-from-campaign"
 COOKIE_ADV = "_ma_dsp_account-structure"
+SITIO = "MLA"
 
 # El endpoint de sacar de campana no aguanta lotes grandes: 5 entra, 10 no.
 LOTE_SACAR = 5
+
+# Cuantos ad_groups por llamada segun la accion.
+LOTES = {"sacar": LOTE_SACAR, "agregar": 5, "pausar": 50, "activar": 50}
 
 
 def leer_sesion():
@@ -180,6 +184,34 @@ def sacar(sesion, ad_group_ids, advertiser_id, campaign_id):
     return _resultado(r)
 
 
+def agregar(sesion, ad_group_ids, advertiser_id, campaign_id):
+    """
+    Suma ad_groups a una campana. **Entran activos**: empiezan a gastar.
+
+    OJO: esta accion va por **otro servicio** que las demas
+    (`admin-growth-campaigns` en vez de `admin-pads`), es **POST** en vez de
+    PUT, lleva el **anunciante en el path**, y el campo se llama `adGroups`
+    en camelCase — no `ids` como las otras tres. Nada de eso se deduce: sale
+    de mirar la llamada que hace el panel.
+    """
+    import requests
+    url = (f"{BASE_PANEL}/pa/api/admin-growth-campaigns/rest/campaigns/"
+           f"{SITIO}/{advertiser_id}/ad-groups")
+    try:
+        r = requests.post(
+            url, headers=_headers(sesion, advertiser_id, campaign_id),
+            json={"campaignId": int(campaign_id),
+                  "adGroups": [str(i) for i in ad_group_ids]}, timeout=120)
+    except Exception as e:
+        return [], [{"error": f"{type(e).__name__}: {e}"}]
+    if r.status_code in (401, 403):
+        return [], [{"error": "la sesión venció: volvé a copiar el ssid"}]
+    if r.status_code >= 400:
+        return [], [{"error": f"HTTP {r.status_code}: {r.text[:150]}"}]
+    # Este servicio no devuelve succeededIds: si contesta 2xx, entraron.
+    return [str(i) for i in ad_group_ids], []
+
+
 def campana(sesion, advertiser_id, campaign_id, cambios):
     """
     Modifica una campana: `{"status": "paused"}` o
@@ -227,11 +259,13 @@ def aplicar(sesion, ml, plan, accion="pausar", callback=None, verificar=True):
 
     for (adv, camp), g in faltan.groupby(["advertiser_id", "campaign_id"]):
         ids = [int(x) for x in g["ad_group_id"]]
-        por_lote = LOTE_SACAR if accion == "sacar" else 50
+        por_lote = LOTES.get(accion, 50)
         for i in range(0, len(ids), por_lote):
             lote = ids[i:i + por_lote]
             if accion == "sacar":
                 ok, fallidos = sacar(sesion, lote, adv, camp)
+            elif accion == "agregar":
+                ok, fallidos = agregar(sesion, lote, adv, camp)
             else:
                 estado = "paused" if accion == "pausar" else "active"
                 ok, fallidos = cambiar(sesion, lote, adv, camp, estado)
