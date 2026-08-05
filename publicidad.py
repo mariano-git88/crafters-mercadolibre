@@ -183,14 +183,18 @@ def anuncios(ml, advertiser_id, desde, hasta, callback=None, tope=None):
 
 
 def traer_todo(ml, desde, hasta, callback=None, tope=None):
-    """Anuncios de los tres anunciantes, con el nombre de cada campana."""
+    """
+    Anuncios de los tres anunciantes.
+
+    Devuelve (df, advs, camps_por_adv). Los dos ultimos hacen falta para
+    saber a que campana mandar una publicacion nueva: ver `mapa_de_campanas`.
+    """
     advs = anunciantes(ml)
-    nombres, filas = {}, []
+    nombres, camps_por_adv, filas = {}, {}, []
     for a in advs:
         aid = a["advertiser_id"]
         nombres[aid] = a.get("advertiser_name") or str(aid)
-        for c in campanas(ml, aid):
-            nombres[(aid, c["id"])] = c
+        camps_por_adv[aid] = campanas(ml, aid)
 
         if callback:
             callback(f"Leyendo {nombres[aid]}...")
@@ -201,7 +205,7 @@ def traer_todo(ml, desde, hasta, callback=None, tope=None):
     if len(df):
         df["anunciante"] = df["advertiser_id"].map(
             lambda i: nombres.get(i, str(i)))
-    return df, advs, nombres
+    return df, advs, camps_por_adv
 
 
 # ------------------------------------------------------------------ reglas
@@ -333,27 +337,189 @@ def analizar(df_ads, pubs, cfg=None, estrat=None, df_rent=None):
     return df.sort_values("gasto", ascending=False).reset_index(drop=True)
 
 
+# ------------------------------------------------- candidatos a publicitar
+
+# Diagnosticos de `conversion.py` que significan "esto convierte y le falta
+# gente que lo vea". Es el caso de manual para publicidad: no se empuja lo que
+# tiene visitas y no vende —ahi el problema es el precio o las fotos, y pagar
+# clics no lo arregla— sino lo que **ya demostro que convierte**.
+CON_POTENCIAL = ("escalar", "falta_exposicion")
+
+# Los anuncios en estos estados no estan gastando, asi que la publicacion
+# cuenta como no publicitada.
+NO_PUBLICITA = ("idle", "paused", "deleted")
+
+
+def marca_de(pub):
+    for a in pub.get("attributes") or []:
+        if a.get("id") == "BRAND":
+            return a.get("value_name") or ""
+    return ""
+
+
+def mapa_de_campanas(advs, camps_por_adv):
+    """
+    marca -> (advertiser_id, campaign_id), armado desde el **nombre del
+    anunciante**, no desde los anuncios que ya existen.
+
+    Aprenderlo de los anuncios parece mas elegante y esta mal: una campana
+    contiene publicaciones de varias marcas, asi que "la campana mas frecuente
+    para la marca X" termina mandando productos Suprabond a la campana de
+    Bulit. Con presupuestos separados por marca, eso es gastar del bolsillo
+    equivocado. Se vio en la primera prueba.
+
+    La marca sin anunciante propio (La Gauchita, Sica, Ferrum...) cae en la
+    campana **general**, que es la que se llama asi.
+    """
+    mapa, general = {}, None
+    for a in advs or []:
+        aid = a["advertiser_id"]
+        cs = [c for c in (camps_por_adv.get(aid) or [])
+              if c.get("status") != "deleted"]
+        if not cs:
+            continue
+        destino = (aid, cs[0]["id"])
+        mapa[(a.get("advertiser_name") or "").strip().lower()] = destino
+        if "general" in (cs[0].get("name") or "").lower():
+            general = destino
+    if general is None and mapa:
+        general = list(mapa.values())[0]
+    return mapa, general
+
+
+def candidatos(df_conv, pubs, df_ads, advs=None, camps_por_adv=None,
+               cfg=None, estrat=None):
+    """
+    Publicaciones **con potencial de conversion que hoy no se publicitan**.
+
+    Sale de `conversion.py`: son las que ya convierten por encima del promedio
+    de la cuenta o que venden con muy pocas visitas. La regla es la misma que
+    se usa en Visitas vs ventas, aplicada a publicidad.
+
+    Devuelve filas con `accion='agregar'` listas para sumarse al plan.
+    """
+    cfg = cfg or config()
+    estrat = estrat if estrat is not None else estrategicos()
+    if df_conv is None or not len(df_conv):
+        return pd.DataFrame()
+
+    por_id = {p["id"]: p for p in pubs}
+    mapa, general = mapa_de_campanas(advs, camps_por_adv or {})
+    estados_camp = {c["id"]: c.get("status")
+                    for cs in (camps_por_adv or {}).values() for c in cs}
+    if not mapa and general is None:
+        # Sin el mapa no se sabe a que campana mandarlas, y mandarlas a la
+        # equivocada gasta del presupuesto de otra marca.
+        return pd.DataFrame()
+
+    # Publicaciones que YA estan gastando: esas no son candidatas.
+    publicitadas = set()
+    if df_ads is not None and len(df_ads):
+        publicitadas = set(df_ads[~df_ads["estado_ad"].isin(NO_PUBLICITA)]
+                           ["item_id"])
+        # `hold` lo deshabilito ML: no se puede agregar a ninguna campana.
+        bloqueados = set(df_ads[df_ads["estado_ad"] == "hold"]["item_id"])
+    else:
+        bloqueados = set()
+
+    filas = []
+    for _, r in df_conv.iterrows():
+        if r.get("diagnostico") not in CON_POTENCIAL:
+            continue
+        item = r["item_id"]
+        if item in publicitadas or item in bloqueados:
+            continue
+        pub = por_id.get(item)
+        if pub is None or pub.get("status") != "active":
+            continue
+        if not (pub.get("available_quantity") or 0):
+            continue
+
+        sku = str(r.get("sku") or "").strip().upper()
+        marca = marca_de(pub)
+        m = marca.strip().lower()
+        destino = mapa.get(m)
+        if destino is None:
+            # "Suprabond Somerset" es Suprabond. Sin esto caeria en la
+            # campana general y gastaria del presupuesto equivocado.
+            for nombre, d in mapa.items():
+                if m.startswith(nombre + " "):
+                    destino = d
+                    break
+        destino = destino or general
+        if not destino:
+            continue
+        estado_camp = estados_camp.get(destino[1], "")
+
+        filas.append({
+            "item_id": item, "sku": sku,
+            "titulo": (r.get("titulo") or "")[:60],
+            "marca": marca,
+            "advertiser_id": destino[0], "campaign_id": destino[1],
+            "campana_activa": estado_camp == "active",
+            "estado_ad": "sin anuncio",
+            "visitas": r.get("visitas", 0),
+            "unidades": r.get("unidades", 0),
+            "conversion": r.get("conversion", 0),
+            "gasto": 0.0, "facturado": 0.0, "acos": 0.0, "roas": 0.0,
+            "accion": "ninguna" if sku in estrat else "agregar",
+            "motivo": (f"SKU estratégico — {estrat[sku]}" if sku in estrat else
+                       f"{r.get('diagnostico')}: convierte "
+                       f"{float(r.get('conversion') or 0):.1%} con solo "
+                       f"{int(r.get('visitas') or 0)} visitas"),
+        })
+
+    return pd.DataFrame(filas)
+
+
 # ---------------------------------------------------------------- escritura
 
-# El alta/baja/cambio de un anuncio NO va por la ruta del anunciante: es un
-# PUT a /marketplace/advertising/{site}/product_ads/ad con el item en el
-# cuerpo. Las rutas con /advertisers/{id}/... adentro contestan 404.
-RUTA_AD = f"/marketplace/advertising/{SITE_ID}/product_ads/ad"
+# Los recursos de Product Ads van **sin el anunciante en el path**: la forma
+# es /marketplace/advertising/{site}/product_ads/{recurso}/{id}. Cualquier
+# variante con /advertisers/{id}/ adentro contesta 404, y el singular `ad`
+# tambien. Encontrarlo costo: `ads` en plural y sin anunciante era la unica
+# combinacion que faltaba probar.
+def _ruta_ad(item_id):
+    return f"/marketplace/advertising/{SITE_ID}/product_ads/ads/{item_id}"
 
 
-def cambiar_estado(ml, item_id, estado, campaign_id=None):
+def _ruta_campana(campaign_id):
+    return (f"/marketplace/advertising/{SITE_ID}/product_ads/campaigns/"
+            f"{campaign_id}")
+
+
+def estado_ad(ml, item_id):
+    """El anuncio como lo ve ML ahora. Devuelve None si no existe."""
+    try:
+        return ml.get(_ruta_ad(item_id), _headers=CABECERA)
+    except Exception:
+        return None
+
+
+def cambiar_estado(ml, item_id, estado):
     """
     Prende o apaga un anuncio. `estado` es 'active' o 'paused'.
 
     Devuelve (ok, detalle). No lanza: en un lote de cientos, una falla no
     puede llevarse la corrida.
     """
-    cuerpo = {"item_id": item_id, "status": estado}
-    if campaign_id:
-        cuerpo["campaign_id"] = int(campaign_id)
     try:
-        r = ml.put(RUTA_AD, cuerpo, _headers=CABECERA)
+        r = ml.put(_ruta_ad(item_id), {"status": estado}, _headers=CABECERA)
         return True, (r or {}).get("status", estado)
+    except Exception as e:
+        return False, f"{type(e).__name__}: {str(e)[:180]}"
+
+
+def agregar_a_campana(ml, item_id, campaign_id):
+    """
+    Suma la publicacion a una campana. Queda **activa por defecto**, o sea
+    que empieza a gastar en cuanto entra.
+    """
+    try:
+        r = ml.put(_ruta_ad(item_id),
+                   {"campaign_id": int(campaign_id), "status": "active"},
+                   _headers=CABECERA)
+        return True, (r or {}).get("status", "active")
     except Exception as e:
         return False, f"{type(e).__name__}: {str(e)[:180]}"
 
@@ -363,12 +529,11 @@ def sacar_de_campana(ml, item_id):
     Saca el anuncio de su campana. Queda en `idle`: sigue disponible para
     publicitar pero no gasta.
 
-    **No se puede mandar `status` en la misma llamada** — al salir de la
-    campana el anuncio queda en idle solo, y mandar los dos campos falla.
+    **No se manda `status` en la misma llamada**: al salir de la campana el
+    anuncio pasa a idle solo, y mandar los dos campos juntos falla.
     """
     try:
-        r = ml.put(RUTA_AD, {"item_id": item_id, "campaign_id": 0},
-                   _headers=CABECERA)
+        r = ml.put(_ruta_ad(item_id), {"campaign_id": 0}, _headers=CABECERA)
         return True, (r or {}).get("status", "idle")
     except Exception as e:
         return False, f"{type(e).__name__}: {str(e)[:180]}"
@@ -382,15 +547,18 @@ def aplicar(ml, plan, operador="", callback=None, acciones=("pausar",)):
 
     Cada anuncio va en su propio try. Todo queda en la auditoria.
 
-    **OJO — hoy esto no funciona y la pantalla no lo ofrece.** Al 2026-08-04
-    no hay endpoint de escritura accesible: la ruta documentada
-    (`PUT /marketplace/advertising/{site}/product_ads/ad`) contesta 404 en
-    todas sus variantes probadas —con y sin advertiser en el path, PUT y
-    POST, Api-Version 1, 2 y sin header— y la unica que existe,
-    `/marketplace/advertising/{site}/product_ads/items/{item_id}`, devuelve
-    **503 de forma constante** (nueve intentos, tres cuerpos distintos). La
-    lectura y el analisis andan perfecto; queda pendiente resolver esto con
-    el soporte de ML o encontrar la ruta vigente.
+    **La ruta es correcta pero la cuenta no puede escribir.** Verificado el
+    2026-08-05: `PUT /marketplace/advertising/MLA/product_ads/campaigns/{id}`
+    contesta
+
+        401 {"message": "User does not have permission to write.",
+             "error": "mclics.campaigns.exceptions.UnauthorizedException"}
+
+    y el mismo PUT sobre `/ads/{item_id}` devuelve 503 con cuerpo vacio, que
+    es el mismo rechazo mal expresado. El motivo esta a la vista en
+    `/advertising/advertisers`: los tres anunciantes pertenecen a la cuenta
+    **ERPA**, y el token es de **CRAFTERSARG** — puede leerlos, no
+    administrarlos. Se arregla del lado de MercadoLibre, no del codigo.
     """
     if plan is None or not len(plan):
         return pd.DataFrame()
@@ -403,7 +571,9 @@ def aplicar(ml, plan, operador="", callback=None, acciones=("pausar",)):
         if callback:
             callback(i, total, a)
 
-        nuevo = "paused" if a["accion"] == "pausar" else "active"
+        accion = a["accion"]
+        nuevo = {"pausar": "paused", "activar": "active",
+                 "agregar": "active", "sacar": "idle"}.get(accion, "")
         fila = {"item_id": a["item_id"], "sku": a.get("sku", ""),
                 "titulo": a.get("titulo", ""),
                 "anunciante": a.get("anunciante", ""),
@@ -411,8 +581,13 @@ def aplicar(ml, plan, operador="", callback=None, acciones=("pausar",)):
                 "gasto": a.get("gasto", 0), "acos": a.get("acos", 0),
                 "motivo": a.get("motivo", "")}
 
-        ok, detalle = cambiar_estado(ml, a["item_id"], nuevo,
-                                     a.get("campaign_id"))
+        if accion == "agregar":
+            ok, detalle = agregar_a_campana(ml, a["item_id"],
+                                            a.get("campaign_id"))
+        elif accion == "sacar":
+            ok, detalle = sacar_de_campana(ml, a["item_id"])
+        else:
+            ok, detalle = cambiar_estado(ml, a["item_id"], nuevo)
         # El anuncio no es una publicacion, pero la auditoria es el unico
         # lugar donde queda como estaba antes.
         from meli import registrar_auditoria

@@ -1,5 +1,18 @@
 [
   {
+    "fecha": "2026-08-05",
+    "hora": "12:30",
+    "tipo": "mejora",
+    "titulo": "Publicidad: pausar, sacar de campaña y sumar lo que convierte",
+    "puntos": [
+      "Aparecieron los botones para **pausar**, **sacar de la campaña** y **sumar** publicaciones, más el detalle de por qué en cada una.",
+      "Regla nueva: las publicaciones que **ya convierten y casi no reciben visitas** se proponen para entrar en la campaña de su marca. Salen del mismo análisis de *Visitas vs ventas*. Hoy son 214.",
+      "No entran las que tienen visitas y no venden: ahí el problema es el precio o las fotos, y pagar clics no lo arregla.",
+      "Cada marca va a la campaña de su anunciante. Las marcas sin anunciante propio caen en la general — que **está pausada**, así que la app te avisa cuáles no van a correr.",
+      "**Falta un permiso de MercadoLibre para que los botones escriban.** Los anunciantes son de la cuenta ERPA y la app entra como CRAFTERSARG: puede leer, no administrar. Hay que darle permiso a CRAFTERSARG o conectar la app con ERPA."
+    ]
+  },
+  {
     "fecha": "2026-08-04",
     "hora": "23:10",
     "tipo": "nuevo",

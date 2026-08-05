@@ -3875,15 +3875,32 @@ elif seccion == "Publicidad":
                     .format(cfg["acos_max"], cfg["roas_min"],
                             cfg["clicks_minimos"]))
 
+        # Los candidatos a entrar en campana salen del mismo analisis de
+        # Visitas vs ventas, que tarda varios minutos: se reusa el que ya
+        # este en memoria en vez de recalcularlo.
+        conv_pub = st.session_state.get("conv")
+        if conv_pub is None and (Path(__file__).parent / "conversion.csv").exists():
+            conv_pub = pd.read_csv(Path(__file__).parent / "conversion.csv")
+        if conv_pub is None:
+            st.caption(
+                "Para proponer **qué sumar a las campañas** hace falta el "
+                "análisis de *Visitas vs ventas* (Oportunidades). Sin eso, "
+                "acá solo se evalúan los anuncios que ya existen.")
+
         if st.button("Analizar los anuncios"):
             paso = st.empty()
             try:
                 with st.spinner("Bajando anuncios y métricas..."):
-                    df_ads, _, _ = publicidad.traer_todo(
+                    df_ads, advs_pub, camps_pub = publicidad.traer_todo(
                         ml, desde_pub.isoformat(), hasta_pub.isoformat(),
                         callback=lambda m: paso.caption(str(m)))
-                    st.session_state["pub_plan"] = publicidad.analizar(
-                        df_ads, pubs)
+                    plan_ads = publicidad.analizar(df_ads, pubs)
+                    nuevos = publicidad.candidatos(
+                        conv_pub, pubs, df_ads, advs_pub, camps_pub)
+                    if len(nuevos):
+                        plan_ads = pd.concat([plan_ads, nuevos],
+                                             ignore_index=True)
+                    st.session_state["pub_plan"] = plan_ads
             except Exception as e:
                 paso.empty()
                 st.error(f"No pude analizar: {type(e).__name__}: {e}")
@@ -3920,8 +3937,28 @@ elif seccion == "Publicidad":
                     f"{pesos(apagar['gasto'].sum())} y facturaron "
                     f"{pesos(apagar['facturado'].sum())}.", icon="🔥")
 
-            ver = st.selectbox("Ver", ["pausar", "activar", "revisar",
-                                       "ninguna"], index=0, key="pub_ver")
+            sumar = pl[pl["accion"] == "agregar"]
+            if len(sumar) and "campana_activa" in sumar:
+                dormidas = int((~sumar["campana_activa"].fillna(False)).sum())
+                if dormidas:
+                    st.warning(
+                        f"**{dormidas} de las {len(sumar)} irían a una "
+                        "campaña pausada** y ahí no van a gastar ni a "
+                        "mostrarse. La campaña general (Crafters) está en "
+                        "pausa: si querés que corran, hay que activarla.",
+                        icon="😴")
+            if len(sumar):
+                st.info(
+                    f"**{len(sumar)} publicaciones convierten y no se "
+                    "publicitan.** Salen de *Visitas vs ventas*: ya "
+                    "demostraron que venden, les falta gente que las vea. No "
+                    "entran las que tienen visitas y no venden — ahí el "
+                    "problema es el precio o las fotos, y pagar clics no lo "
+                    "arregla.", icon="🎯")
+
+            ver = st.selectbox("Ver", ["pausar", "agregar", "activar",
+                                       "revisar", "ninguna"], index=0,
+                               key="pub_ver")
             v = pl[pl["accion"] == ver]
             st.dataframe(
                 v[["sku", "titulo", "anunciante", "estado_ad", "gasto",
@@ -3948,14 +3985,97 @@ elif seccion == "Publicidad":
                 f"publicidad_{datetime.now():%Y%m%d}.csv", "text/csv",
                 key="pub_dl")
 
+            st.divider()
+            st.markdown("##### Aplicar en MercadoLibre")
             st.error(
-                "**Todavía no se puede ejecutar desde acá.** El endpoint de "
-                "MercadoLibre para prender y apagar un anuncio contesta 404 "
-                "en todas sus rutas documentadas, y la única que existe "
-                "devuelve 503 de forma constante. Hasta que se resuelva, "
-                "esta pantalla dice **qué** tocar y el cambio se hace en el "
-                "panel de MercadoLibre. El CSV de arriba trae la lista.",
-                icon="🚧")
+                "**Hoy MercadoLibre rechaza la escritura y no es un problema "
+                "del código.** Los tres anunciantes pertenecen a la cuenta "
+                "**ERPA** y la app está conectada como **CRAFTERSARG**: puede "
+                "leerlos, no administrarlos. La API contesta *«User does not "
+                "have permission to write»*. Se arregla dándole permiso de "
+                "administración a CRAFTERSARG sobre los anunciantes, o "
+                "conectando la app con la cuenta ERPA. En cuanto eso pase, "
+                "los botones de acá abajo funcionan sin tocar nada.",
+                icon="🔒")
+
+            n_apagar = int((pl["accion"] == "pausar").sum())
+            n_sumar = int((pl["accion"] == "agregar").sum())
+            n_prender = int((pl["accion"] == "activar").sum())
+
+            como_apagar = st.radio(
+                f"A los {n_apagar} que hay que apagar",
+                ["Pausarlos (quedan en la campaña)",
+                 "Sacarlos de la campaña (quedan en idle)",
+                 "No tocarlos"],
+                key="pub_apagar", horizontal=False)
+
+            ejecutar = pl.copy()
+            elegidas = []
+            if como_apagar.startswith("Pausar"):
+                elegidas.append("pausar")
+            elif como_apagar.startswith("Sacar"):
+                # Las reglas marcan 'pausar'; sacarlas de la campaña es la
+                # misma decision con otra intensidad.
+                ejecutar.loc[ejecutar["accion"] == "pausar", "accion"] = "sacar"
+                elegidas.append("sacar")
+
+            if n_sumar and st.checkbox(
+                    f"Sumar las {n_sumar} que convierten y no se publicitan",
+                    key="pub_sumar"):
+                elegidas.append("agregar")
+            if n_prender and st.checkbox(
+                    f"Encender las {n_prender} apagadas que rinden",
+                    key="pub_prender"):
+                elegidas.append("activar")
+
+            elegidas = tuple(elegidas)
+            cuantas = (int(ejecutar["accion"].isin(elegidas).sum())
+                       if elegidas else 0)
+
+            if any(a in elegidas for a in ("agregar", "activar")):
+                st.warning(
+                    "Estás incluyendo acciones que **empiezan a gastar**. Un "
+                    "anuncio que entra a una campaña arranca activo.",
+                    icon="💸")
+
+            op_pub = st.text_input("Tu nombre (queda en el registro)",
+                                   key="pub_op")
+            conf_pub = st.checkbox(
+                f"Confirmo que quiero aplicar {cuantas} cambios en la "
+                "publicidad de MercadoLibre", key="pub_conf")
+            if st.button(f"Aplicar {cuantas} cambios", key="pub_go",
+                         disabled=not (conf_pub and op_pub.strip()
+                                       and cuantas)):
+                barra = st.progress(0.0, text="Aplicando...")
+                try:
+                    res_pub = publicidad.aplicar(
+                        ml, ejecutar, operador=op_pub.strip(),
+                        acciones=elegidas,
+                        callback=lambda i, t, f: barra.progress(
+                            i / t, text=f"Aplicando {i} de {t}..."))
+                except Exception as e:
+                    barra.empty()
+                    st.error(f"La corrida se cortó: {type(e).__name__}: {e}")
+                    st.stop()
+                barra.empty()
+                st.session_state["pub_res"] = res_pub
+
+            res_pub = st.session_state.get("pub_res")
+            if res_pub is not None and len(res_pub):
+                ok_pub = int((res_pub["resultado"] == "OK").sum())
+                if ok_pub == len(res_pub):
+                    st.success(f"{ok_pub} anuncios actualizados.")
+                else:
+                    st.error(f"{ok_pub} aplicados, "
+                             f"{len(res_pub) - ok_pub} con error.")
+                    if res_pub["detalle"].astype(str).str.contains(
+                            "permission|401|503", case=False).any():
+                        st.info(
+                            "Los errores dicen que falta permiso: es lo de "
+                            "arriba, no un problema de esta pantalla.",
+                            icon="🔒")
+                st.dataframe(res_pub, use_container_width=True,
+                             hide_index=True)
 
     elif vista_pub == "Topes y estratégicos":
         st.caption(
