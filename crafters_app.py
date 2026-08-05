@@ -30,6 +30,7 @@ import conciliacion
 import conversion
 import duplicados
 import envios
+import panel_ads
 import publicidad
 import full
 import salud
@@ -3987,17 +3988,23 @@ elif seccion == "Publicidad":
 
             st.divider()
             st.markdown("##### Aplicar en MercadoLibre")
-            st.error(
-                "**Hoy MercadoLibre rechaza la escritura y no es un problema "
-                "del código.** La API contesta *«User does not have "
-                "permission to write»* tanto en campañas como en anuncios. No "
-                "es la cuenta ni los permisos que le diste: falla igual con "
-                "el token de CRAFTERSARG y con el de **ERPA SA**, que es la "
-                "dueña de los tres anunciantes, y la app tiene todo aprobado "
-                "en el devcenter. Falta que **MercadoLibre habilite la "
-                "escritura de Product Ads para la aplicación**, que es un "
-                "permiso aparte. En cuanto lo hagan, los botones de acá abajo "
-                "funcionan sin tocar una línea.", icon="🔒")
+
+            if panel_ads.hay_sesion():
+                st.info(
+                    "Los cambios se aplican por el **panel de publicidad**, "
+                    "no por la API: MercadoLibre no habilitó la escritura de "
+                    "Product Ads para esta aplicación. Funciona con la cookie "
+                    "`ssid` guardada en los secrets.", icon="🔑")
+            else:
+                st.error(
+                    "**No hay forma de aplicar los cambios ahora mismo.** La "
+                    "API de MercadoLibre rechaza toda escritura de publicidad "
+                    "para esta aplicación —*«User does not have permission to "
+                    "write»*, y falla igual con la cuenta dueña de los "
+                    "anunciantes— y tampoco está cargada la sesión del panel, "
+                    "que es la vía alternativa. Para habilitarla hay que "
+                    "poner la cookie `ssid` en los secrets, bajo "
+                    "`[ads]`.", icon="🔒")
 
             n_apagar = int((pl["accion"] == "pausar").sum())
             n_sumar = int((pl["accion"] == "agregar").sum())
@@ -4045,15 +4052,25 @@ elif seccion == "Publicidad":
                 f"Confirmo que quiero aplicar {cuantas} cambios en la "
                 "publicidad de MercadoLibre", key="pub_conf")
             if st.button(f"Aplicar {cuantas} cambios", key="pub_go",
-                         disabled=not (conf_pub and op_pub.strip()
-                                       and cuantas)):
+                         disabled=not (conf_pub and op_pub.strip() and cuantas
+                                       and panel_ads.hay_sesion())):
                 barra = st.progress(0.0, text="Aplicando...")
                 try:
-                    res_pub = publicidad.aplicar(
-                        ml, ejecutar, operador=op_pub.strip(),
-                        acciones=elegidas,
-                        callback=lambda i, t, f: barra.progress(
-                            i / t, text=f"Aplicando {i} de {t}..."))
+                    sesion_ads = panel_ads.leer_sesion()
+                    partes = []
+                    # Cada acción va por separado: el endpoint de sacar de
+                    # campaña es otro y acepta lotes mucho más chicos.
+                    for acc in elegidas:
+                        filas = ejecutar[ejecutar["accion"] == acc]
+                        if not len(filas):
+                            continue
+                        partes.append(panel_ads.aplicar(
+                            sesion_ads, ml, filas, accion=acc,
+                            callback=lambda i, t, d: barra.progress(
+                                min(i / max(t, 1), 1.0),
+                                text=f"{acc}: {i} de {t} ({d})")))
+                    res_pub = (pd.concat(partes, ignore_index=True)
+                               if partes else pd.DataFrame())
                 except Exception as e:
                     barra.empty()
                     st.error(f"La corrida se cortó: {type(e).__name__}: {e}")

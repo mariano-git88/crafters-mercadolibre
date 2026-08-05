@@ -53,71 +53,143 @@ from meli import Meli
 DIR = Path(__file__).resolve().parent
 SESION = DIR / "sesion_ads.json"
 
-URL = ("https://pa.mercadolibre.com.ar/pa/api/admin-pads/ajax/ads/actions/"
-       "status")
+BASE_PANEL = "https://pa.mercadolibre.com.ar"
+URL = f"{BASE_PANEL}/pa/api/admin-pads/ajax/ads/actions/status"
+URL_SACAR = f"{BASE_PANEL}/pa/api/admin-pads/ajax/ads/actions/remove-from-campaign"
 COOKIE_ADV = "_ma_dsp_account-structure"
+
+# El endpoint de sacar de campana no aguanta lotes grandes: 5 entra, 10 no.
+LOTE_SACAR = 5
 
 
 def leer_sesion():
-    if not SESION.exists():
-        raise SystemExit(
-            f"Falta {SESION.name}. Sacá `cookie` y `x-csrf-token` del panel "
-            "(F12 → Network → pausar un anuncio → Copy as cURL) y guardalos "
-            'así: {"cookie": "...", "csrf": "..."}')
-    return json.loads(SESION.read_text(encoding="utf-8"))
+    """
+    La sesion del panel. Sale de los secrets si estan (asi corre en la nube) y
+    si no del archivo local.
+
+    **Alcanza con la cookie `ssid`.** Medido el 2026-08-05: sin `_csrf`, sin
+    `nsa_rotok`, sin el header `x-csrf-token` y sin `x-requested-with`
+    funciona igual. Y el `ssid` trae fecha 2029, asi que se pega una vez y
+    dura — que es lo que permite correr esto desde Streamlit Cloud en vez de
+    depender de una sesion de navegador abierta.
+
+    En secrets va como:
+
+        [ads]
+        ssid = "ghy-073112-...-__-422682314-__-..."
+    """
+    import almacen
+    desde_secrets = almacen._seccion("ads")
+    if desde_secrets.get("ssid"):
+        return {"ssid": desde_secrets["ssid"]}
+
+    if SESION.exists():
+        d = json.loads(SESION.read_text(encoding="utf-8"))
+        if d.get("ssid"):
+            return {"ssid": d["ssid"]}
+        # Compatibilidad: si guardaron la cookie entera, se extrae el ssid.
+        for trozo in (d.get("cookie") or "").split("; "):
+            if trozo.startswith("ssid="):
+                return {"ssid": trozo[5:]}
+
+    raise SystemExit(
+        "Falta la sesión del panel. Sacá la cookie `ssid` (F12 → Application "
+        "→ Cookies en ads.mercadolibre.com.ar) y ponela en los secrets bajo "
+        f'[ads] ssid = "..." o en {SESION.name} como {{"ssid": "..."}}')
 
 
-def _cookie_para(cookie, advertiser_id):
-    """Reescribe el anunciante de la sesion."""
-    nuevo = urllib.parse.quote(
+def hay_sesion():
+    """Si se puede escribir por el panel, sin lanzar."""
+    try:
+        return bool(leer_sesion().get("ssid"))
+    except SystemExit:
+        return False
+
+
+def _cookies(sesion, advertiser_id):
+    """
+    El anunciante viaja en su propia cookie y **la sesion queda fijada al que
+    estabas mirando en el panel**: con la de Bulit, todo lo de Suprabond
+    contesta 400. Se arma a mano para poder tocar cualquiera.
+    """
+    adv = urllib.parse.quote(
         json.dumps({"advertiserId": str(advertiser_id), "accountId": "645"},
                    separators=(",", ":")), safe="")
-    partes = []
-    for trozo in cookie.split("; "):
-        if trozo.startswith(COOKIE_ADV + "="):
-            partes.append(f"{COOKIE_ADV}={nuevo}")
-        else:
-            partes.append(trozo)
-    if not any(p.startswith(COOKIE_ADV) for p in partes):
-        partes.append(f"{COOKIE_ADV}={nuevo}")
-    return "; ".join(partes)
+    return f"ssid={sesion['ssid']}; {COOKIE_ADV}={adv}"
 
 
-def cambiar(sesion, ad_group_ids, advertiser_id, campaign_id, estado):
-    """
-    Cambia el estado de uno o varios ad_groups **de la misma campana**.
-
-    Devuelve (ok_ids, fallidos). No lanza.
-    """
-    import requests
+def _headers(sesion, advertiser_id, campaign_id):
     ref = ("https://ads.mercadolibre.com.ar/product-ads/admin/campaigns/"
            f"{campaign_id}/dashboard")
-    try:
-        r = requests.put(
-            URL,
-            headers={"accept": "application/json",
-                     "content-type": "application/json",
-                     "cookie": _cookie_para(sesion["cookie"], advertiser_id),
-                     "x-csrf-token": sesion["csrf"],
-                     "x-requested-with": "XMLHttpRequest",
-                     "origin": "https://ads.mercadolibre.com.ar",
-                     "referer": ref, "x-pads-page-href": ref,
-                     "user-agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; "
-                                    "x64) AppleWebKit/537.36 Chrome/150.0 "
-                                    "Safari/537.36")},
-            json={"ids": [str(i) for i in ad_group_ids],
-                  "allSelected": False, "status": estado},
-            timeout=90)
-    except Exception as e:
-        return [], [{"error": f"{type(e).__name__}: {e}"}]
+    return {"accept": "application/json",
+            "content-type": "application/json",
+            "cookie": _cookies(sesion, advertiser_id),
+            "origin": "https://ads.mercadolibre.com.ar",
+            "referer": ref, "x-pads-page-href": ref,
+            "user-agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                           "AppleWebKit/537.36 Chrome/150.0 Safari/537.36")}
 
-    if r.status_code == 403:
-        return [], [{"error": "la sesión venció: volvé a copiarla del panel"}]
+
+def _resultado(r):
+    if r.status_code in (401, 403):
+        return [], [{"error": "la sesión venció: volvé a copiar el ssid"}]
     try:
         j = r.json()
     except ValueError:
         return [], [{"error": f"HTTP {r.status_code}: {r.text[:150]}"}]
     return j.get("succeededIds") or [], j.get("failed") or []
+
+
+def cambiar(sesion, ad_group_ids, advertiser_id, campaign_id, estado):
+    """
+    Prende o apaga ad_groups **de la misma campana**. (ok_ids, fallidos).
+    """
+    import requests
+    try:
+        r = requests.put(
+            URL, headers=_headers(sesion, advertiser_id, campaign_id),
+            json={"ids": [str(i) for i in ad_group_ids],
+                  "allSelected": False, "status": estado}, timeout=90)
+    except Exception as e:
+        return [], [{"error": f"{type(e).__name__}: {e}"}]
+    return _resultado(r)
+
+
+def sacar(sesion, ad_group_ids, advertiser_id, campaign_id):
+    """
+    Saca ad_groups de su campana: quedan en IDLE, campaign 0.
+
+    **De a 5 como mucho.** Medido: lotes de 5 entran siempre; de 10 en
+    adelante devuelven 400 para todos los del lote. Es el limite del endpoint,
+    no un problema de permisos — el que llama tiene que trocear.
+    """
+    import requests
+    try:
+        r = requests.put(
+            URL_SACAR, headers=_headers(sesion, advertiser_id, campaign_id),
+            json={"ids": [str(i) for i in ad_group_ids],
+                  "campaignId": int(campaign_id)}, timeout=120)
+    except Exception as e:
+        return [], [{"error": f"{type(e).__name__}: {e}"}]
+    return _resultado(r)
+
+
+def campana(sesion, advertiser_id, campaign_id, cambios):
+    """
+    Modifica una campana: `{"status": "paused"}` o
+    `{"budget": 110000, "automaticBudget": False}`. Va por PATCH.
+    """
+    import requests
+    try:
+        r = requests.patch(
+            f"{BASE_PANEL}/pa/api/admin-pads/ajax/campaigns/{campaign_id}",
+            headers=_headers(sesion, advertiser_id, campaign_id),
+            json=cambios, timeout=90)
+    except Exception as e:
+        return False, f"{type(e).__name__}: {e}"
+    if r.status_code >= 400:
+        return False, f"HTTP {r.status_code}: {r.text[:150]}"
+    return True, r.text[:200]
 
 
 def estado_real(ml, ad_group_id):
@@ -134,28 +206,48 @@ def estado_real(ml, ad_group_id):
         return None
 
 
-def aplicar(sesion, ml, plan, estado="paused", callback=None):
+def aplicar(sesion, ml, plan, accion="pausar", callback=None, verificar=True):
     """
-    Agrupa por (anunciante, campana) y manda un lote por grupo — mezclarlos
-    devuelve 400 para todos — y despues verifica contra `ad_groups`.
+    Aplica `accion` ('pausar' / 'activar' / 'sacar') sobre el plan.
+
+    **Agrupa por (anunciante, campana) y trocea.** Mezclar campanas o
+    anunciantes en un mismo lote devuelve 400 para todos, no solo para los
+    que no corresponden.
     """
     salida = []
     faltan = plan[plan["ad_group_id"].notna()]
+    total = len(faltan)
+    hechos = 0
+
     for (adv, camp), g in faltan.groupby(["advertiser_id", "campaign_id"]):
         ids = [int(x) for x in g["ad_group_id"]]
-        if callback:
-            callback(f"Anunciante {adv}, campaña {camp}: {len(ids)}...")
-        ok, fallidos = cambiar(sesion, ids, adv, camp, estado)
-        for _, r in g.iterrows():
-            ag = int(r["ad_group_id"])
-            salida.append({
-                "item_id": r.get("item_id"), "ad_group_id": ag,
-                "titulo": r.get("titulo", ""), "gasto": r.get("gasto", 0),
-                "motivo": r.get("motivo", ""),
-                "enviado": "OK" if str(ag) in ok else "ERROR",
-                "estado_real": estado_real(ml, ag),
-            })
-        time.sleep(1)
+        por_lote = LOTE_SACAR if accion == "sacar" else 50
+        for i in range(0, len(ids), por_lote):
+            lote = ids[i:i + por_lote]
+            if accion == "sacar":
+                ok, fallidos = sacar(sesion, lote, adv, camp)
+            else:
+                estado = "paused" if accion == "pausar" else "active"
+                ok, fallidos = cambiar(sesion, lote, adv, camp, estado)
+
+            detalle = ((fallidos or [{}])[0].get("message")
+                       or (fallidos or [{}])[0].get("error") or "")
+            for ag in lote:
+                fila = g[g["ad_group_id"] == ag].iloc[0]
+                salida.append({
+                    "item_id": fila.get("item_id"), "ad_group_id": ag,
+                    "titulo": fila.get("titulo", ""),
+                    "gasto": fila.get("gasto", 0),
+                    "motivo": fila.get("motivo", ""),
+                    "resultado": "OK" if str(ag) in ok else "ERROR",
+                    "detalle": "" if str(ag) in ok else str(detalle)[:150],
+                    "estado_real": (estado_real(ml, ag)
+                                    if verificar and str(ag) in ok else ""),
+                })
+            hechos += len(lote)
+            if callback:
+                callback(hechos, total, f"anunciante {adv}, campaña {camp}")
+            time.sleep(1.5)
     return pd.DataFrame(salida)
 
 
