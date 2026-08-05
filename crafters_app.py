@@ -3866,6 +3866,37 @@ elif seccion == "Publicidad":
                     m4.metric("ACOS objetivo", f"{c.get('acos_target', 0):.0f}%")
                 st.divider()
 
+            with st.expander("Crear una campaña"):
+                if not panel_ads.hay_sesion():
+                    st.caption("Hace falta la sesión del panel (`[ads] ssid` "
+                               "en los secrets).")
+                else:
+                    nom = st.text_input("Nombre", key="nc_nombre")
+                    d1, d2, d3 = st.columns(3)
+                    adv_nc = d1.selectbox(
+                        "Anunciante", [a["advertiser_id"] for a, _ in camps],
+                        format_func=lambda i: next(
+                            a["advertiser_name"] for a, _ in camps
+                            if a["advertiser_id"] == i), key="nc_adv")
+                    pres_nc = d2.number_input("Presupuesto", 1000, 999999,
+                                              20000, 1000, key="nc_pres")
+                    acos_nc = d3.number_input("ACOS objetivo %", 1, 100, 15,
+                                              key="nc_acos")
+                    st.caption(
+                        "**Nace pausada.** Una campaña con presupuesto "
+                        "empieza a gastar apenas se activa, así que "
+                        "encenderla es un paso aparte.")
+                    if st.button("Crear", key="nc_go",
+                                 disabled=not nom.strip()):
+                        ok, det = panel_ads.crear_campana(
+                            panel_ads.leer_sesion(), adv_nc, nom.strip(),
+                            pres_nc, acos_nc)
+                        if ok:
+                            st.success(f"Creada con id {det}. Está pausada.")
+                            st.session_state.pop("pub_camp", None)
+                        else:
+                            st.error(str(det))
+
     elif vista_pub == "Qué haría con los anuncios":
         st.caption(
             f"Mide del {desde_pub:%d/%m} al {hasta_pub:%d/%m}. Son ~1.500 "
