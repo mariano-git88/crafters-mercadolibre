@@ -73,3 +73,6 @@ publicidad_a_pausar.csv
 
 # Sesion del panel de publicidad: cookies vivas, NUNCA al repo
 sesion_ads.json
+
+# Bloque de secrets para el cron: NO subir
+secrets_para_github_actions.txt
