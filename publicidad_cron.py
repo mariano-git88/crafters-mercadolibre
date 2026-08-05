@@ -18,10 +18,15 @@ Las que le tocarian una campana **pausada** van a una campana propia
 activas pero la campana no corre— y prender la general de Crafters
 encenderia sus 4.557 anuncios de una.
 
-**Agregar prende y gasta desde el momento.** Lo aprendimos por las malas:
-durante las pruebas, capturar esa accion reactivo un anuncio de $182.000 al
-mes sin que nadie lo pidiera. Por eso hay tope por corrida y todo queda en la
-auditoria.
+**Apagar no tiene tope y sumar si.** No es una inconsistencia: si un anuncio
+pasa el ACOS objetivo se apaga en la misma corrida, porque la regla es
+"siempre que este por arriba, se da de baja". Agregar, en cambio, deja el
+anuncio ACTIVO y gastando desde ese momento — apagar de mas cuesta ventas,
+prender de mas cuesta plata directa. Lo aprendimos por las malas: durante las
+pruebas, capturar esa accion reactivo un anuncio de $182.000 al mes sin que
+nadie lo pidiera.
+
+Todo queda en la auditoria con el estado anterior.
 
 **Escribe por el panel, no por la API.** MercadoLibre no habilito la
 escritura de Product Ads para la aplicacion (ver `publicidad.py`), asi que
@@ -43,11 +48,21 @@ from meli import Meli, MeliError
 
 DIR = Path(__file__).resolve().parent
 
-# Cuantos anuncios como maximo apaga una corrida. No es por rendimiento: es
-# para que un error de datos —un catalogo viejo, una metrica rara— no pueda
-# apagar la cuenta entera de una. Si la lista da mas, apaga los de mayor
-# gasto y el resto queda para la corrida siguiente, con el aviso en el log.
-TOPE_POR_CORRIDA = 25
+# **Apagar no tiene tope.** Si un anuncio pasa el ACOS objetivo, se apaga en
+# la misma corrida: la regla es "siempre que este por arriba, se da de baja".
+# Se penso un tope para que un error de datos no pudiera apagar la cuenta
+# entera de una, pero eso convertia la regla en "se apaga dentro de algunas
+# semanas", que no es lo mismo.
+#
+# Lo que queda como freno es `GASTO_MINIMO`: nada se juzga con poca plata
+# medida, asi que un anuncio nuevo o con ruido no entra igual.
+TOPE_APAGAR = None
+
+# **Sumar si tiene tope**, y a proposito: agregar un anuncio a una campana lo
+# deja ACTIVO, o sea gastando desde ese momento. Apagar de mas cuesta ventas;
+# prender de mas cuesta plata directa, y esa asimetria justifica tratarlos
+# distinto.
+TOPE_SUMAR = 25
 
 # Debajo de este gasto en el periodo no vale la pena tocar nada: son
 # centavos y el anuncio puede estar recien arrancando.
@@ -90,11 +105,11 @@ def correr(aplicar=False, verbose=True):
         log("Nada para apagar: todo dentro de los topes.")
         return 0
 
-    if len(apagar) > TOPE_POR_CORRIDA:
-        log(f"\n*** {len(apagar)} superan el tope de {TOPE_POR_CORRIDA} por "
-            f"corrida. Se apagan los {TOPE_POR_CORRIDA} de mayor gasto; el "
-            "resto queda para la próxima. ***")
-        apagar = apagar.head(TOPE_POR_CORRIDA)
+    if TOPE_APAGAR and len(apagar) > TOPE_APAGAR:
+        log(f"\n*** {len(apagar)} superan el tope de {TOPE_APAGAR} por "
+            "corrida. Se apagan los de mayor gasto; el resto queda para la "
+            "próxima. ***")
+        apagar = apagar.head(TOPE_APAGAR)
 
     log(f"\nA apagar: {len(apagar)} · gasto {pes(apagar['gasto'].sum())}")
     for _, r in apagar.iterrows():
@@ -103,11 +118,10 @@ def correr(aplicar=False, verbose=True):
 
     # ------------------------------------------------ que sumar
     sumar = candidatos_a_sumar(ml, df, pubs, log)
-    if len(sumar) > TOPE_POR_CORRIDA:
-        log(f"\n*** {len(sumar)} candidatos superan el tope de "
-            f"{TOPE_POR_CORRIDA}. Entran los {TOPE_POR_CORRIDA} de más "
-            "visitas; el resto queda para la próxima. ***")
-        sumar = sumar.head(TOPE_POR_CORRIDA)
+    if len(sumar) > TOPE_SUMAR:
+        log(f"\n*** {len(sumar)} candidatos superan el tope de {TOPE_SUMAR}. "
+            "Entran los de más visitas; el resto queda para la próxima. ***")
+        sumar = sumar.head(TOPE_SUMAR)
     if len(sumar):
         log(f"\nA sumar: {len(sumar)} publicaciones que convierten y no se "
             "publicitan")
@@ -192,7 +206,7 @@ def candidatos_a_sumar(ml, df_ads, pubs, log):
         return c
     c = c[c["accion"] == "agregar"].sort_values("visitas", ascending=False)
     # Una llamada por candidato, asi que primero se recorta al tope.
-    c = publicidad.resolver_candidatos(ml, c.head(TOPE_POR_CORRIDA * 2),
+    c = publicidad.resolver_candidatos(ml, c.head(TOPE_SUMAR * 2),
                                        callback=log)
     return c[c["accion"].isin(("agregar", "activar"))
              & c["ad_group_id"].notna()]
