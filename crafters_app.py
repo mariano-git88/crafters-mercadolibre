@@ -4046,6 +4046,21 @@ elif seccion == "Publicidad":
                     "anuncio que entra a una campaña arranca activo.",
                     icon="💸")
 
+            if "agregar" in elegidas and len(sumar):
+                dormidas_g = sumar[~sumar.get(
+                    "campana_activa", pd.Series(True, index=sumar.index))
+                    .fillna(False)]
+                if len(dormidas_g):
+                    st.error(
+                        f"**{len(dormidas_g)} de las que vas a sumar van a "
+                        "una campaña pausada, así que se va a prender.** Y "
+                        "prender una campaña enciende **todo lo que ya tiene "
+                        "adentro**, no solo lo que estás agregando: la "
+                        "general de Crafters tiene 4.557 anuncios, ~1.550 en "
+                        "estado corrible, con un tope de \\$78.859. Eso es "
+                        "empezar a gastar en mil quinientos anuncios que "
+                        "nadie revisó, no sumar 24.", icon="🚨")
+
             op_pub = st.text_input("Tu nombre (queda en el registro)",
                                    key="pub_op")
             conf_pub = st.checkbox(
@@ -4058,6 +4073,15 @@ elif seccion == "Publicidad":
                 try:
                     sesion_ads = panel_ads.leer_sesion()
                     partes = []
+                    # Sumar a una campaña pausada no sirve: el anuncio entra
+                    # activo pero la campaña no corre.
+                    if "agregar" in elegidas:
+                        st.session_state["pub_prendidas"] = (
+                            panel_ads.despertar_campanas(
+                                sesion_ads, ml,
+                                ejecutar[ejecutar["accion"] == "agregar"],
+                                callback=lambda m: barra.progress(
+                                    0.0, text=str(m))))
                     # Cada acción va por separado: el endpoint de sacar de
                     # campaña es otro y acepta lotes mucho más chicos.
                     for acc in elegidas:
@@ -4077,6 +4101,16 @@ elif seccion == "Publicidad":
                     st.stop()
                 barra.empty()
                 st.session_state["pub_res"] = res_pub
+
+            prendidas = st.session_state.get("pub_prendidas")
+            if prendidas:
+                st.warning(
+                    "Se prendieron campañas para que los anuncios nuevos "
+                    "corran: " + ", ".join(
+                        f"**{c['nombre']}** (tope {pesos(c['presupuesto'] or 0)})"
+                        for c in prendidas)
+                    + ". Con eso también arrancó todo lo que ya tenían "
+                      "adentro.", icon="🔛")
 
             res_pub = st.session_state.get("pub_res")
             if res_pub is not None and len(res_pub):

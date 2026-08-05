@@ -244,6 +244,38 @@ def estado_real(ml, ad_group_id):
         return None
 
 
+def despertar_campanas(sesion, ml, plan, callback=None):
+    """
+    Prende las campanas pausadas a las que el plan va a sumar anuncios.
+
+    Sumar una publicacion a una campana pausada no sirve de nada: el anuncio
+    entra activo pero la campana no corre, asi que no se muestra ni gasta.
+
+    **Prender una campana enciende TODO lo que ya tiene adentro**, no solo lo
+    que estas por agregar. La General AON de Crafters tiene 4.557 anuncios,
+    ~1.550 en estado corrible: prenderla es empezar a gastar en todos ellos
+    con un tope de $78.859, no sumar 24. Por eso devuelve el detalle de lo que
+    prendio y quien llama tiene que mostrarlo.
+    """
+    prendidas = []
+    for (adv, camp), _ in plan.groupby(["advertiser_id", "campaign_id"]):
+        try:
+            c = ml.get(publicidad._ruta_campana(int(camp)),
+                       _headers=publicidad.CABECERA)
+        except Exception:
+            continue
+        if (c or {}).get("status") == "active":
+            continue
+        if callback:
+            callback(f"Prendiendo la campaña «{c.get('name')}»...")
+        ok, detalle = campana(sesion, adv, int(camp), {"status": "active"})
+        prendidas.append({"campaign_id": int(camp),
+                          "nombre": c.get("name"),
+                          "presupuesto": c.get("budget"),
+                          "resultado": "OK" if ok else str(detalle)[:150]})
+    return prendidas
+
+
 def aplicar(sesion, ml, plan, accion="pausar", callback=None, verificar=True):
     """
     Aplica `accion` ('pausar' / 'activar' / 'sacar') sobre el plan.
