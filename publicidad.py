@@ -205,7 +205,42 @@ def traer_todo(ml, desde, hasta, callback=None, tope=None):
     if len(df):
         df["anunciante"] = df["advertiser_id"].map(
             lambda i: nombres.get(i, str(i)))
+        df = _sin_repetidos(df)
     return df, advs, camps_por_adv
+
+
+# Prioridad para elegir con que fila quedarse cuando un anuncio aparece en
+# varios anunciantes: manda donde realmente esta corriendo.
+_PRIORIDAD = {"active": 0, "delegated": 1, "paused": 2, "idle": 3,
+              "hold": 4, "deleted": 5}
+
+
+def _sin_repetidos(df):
+    """
+    **Un mismo anuncio aparece bajo varios anunciantes, con las MISMAS
+    metricas**, y sumarlas infla el gasto.
+
+    Medido el 2026-08-05: 7.093 filas para 5.707 anuncios unicos —1.386
+    aparecian dos veces— y el gasto de 30 dias daba $10.426.194 sumando filas
+    contra **$6.281.373 real**. Un 66% de mas, y en un tablero que se usa para
+    decidir donde recortar.
+
+    Las metricas son **por publicacion, no por campana**: ML devuelve el mismo
+    gasto y la misma facturacion en cada fila. Por eso no se suman ni se
+    reparten: se conserva una sola fila, la del anunciante donde el anuncio
+    esta corriendo de verdad.
+    """
+    if "item_id" not in df or not len(df):
+        return df
+    df = df.copy()
+    df["_orden"] = df["estado_ad"].map(lambda e: _PRIORIDAD.get(e, 9))
+    # Cuantos anunciantes lo tienen: sirve para entender un anuncio raro sin
+    # tener que volver a la API.
+    df["anunciantes"] = df.groupby("item_id")["item_id"].transform("size")
+    df = (df.sort_values("_orden")
+            .drop_duplicates(subset=["item_id"], keep="first")
+            .drop(columns=["_orden"]))
+    return df.reset_index(drop=True)
 
 
 # ------------------------------------------------------------------ reglas
@@ -213,6 +248,20 @@ def traer_todo(ml, desde, hasta, callback=None, tope=None):
 # El orden importa: la primera regla que matchea es la que manda. Van de la
 # mas dura (no se puede vender) a la mas discutible (rinde poco).
 SIN_DATOS = "pocos datos todavía"
+
+# Estados de anuncio vistos en la cuenta: active, paused, idle, hold, deleted
+# y **delegated**.
+#
+# `delegated` es un anuncio que gestiona MercadoLibre solo, y **esta
+# corriendo y gastando**: 13 de esos llevaban $989.000 en 30 dias con ACOS
+# 9-15%. Tratar "todo lo que no es active" como apagado hacia que el modulo
+# propusiera *encender* anuncios que ya funcionan — y peor, los mostraba como
+# plata dormida cuando eran de lo mejor que tiene la cuenta.
+CORRIENDO = ("active", "delegated")
+
+# Solo estos se pueden proponer para encender. `hold` lo deshabilito ML,
+# `deleted` no existe mas, y `delegated` ya corre.
+APAGADOS = ("paused", "idle")
 
 
 def _vendible(pub):
@@ -257,7 +306,7 @@ def analizar(df_ads, pubs, cfg=None, estrat=None, df_rent=None):
     acciones, motivos = [], []
     for _, a in df.iterrows():
         sku = a["sku"]
-        activo = a["estado_ad"] == "active"
+        activo = a["estado_ad"] in CORRIENDO
 
         # 1. Estrategico: no se toca, gane o pierda.
         if sku and sku in estrat:
@@ -307,8 +356,9 @@ def analizar(df_ads, pubs, cfg=None, estrat=None, df_rent=None):
                 motivos.append("el SKU pierde plata de caja")
                 continue
 
-        # 4. Apagado pero rinde: candidato a volver a encender.
-        if not activo and not flaco:
+        # 4. Apagado pero rinde: candidato a volver a encender. Solo cuenta
+        #    lo que esta realmente apagado y se puede prender.
+        if a["estado_ad"] in APAGADOS and not flaco:
             if a["acos"] and a["acos"] < cfg["acos_bueno"] and a["unidades"]:
                 acciones.append("activar")
                 motivos.append(f"ACOS {a['acos']:.0f}%, mejor que "
