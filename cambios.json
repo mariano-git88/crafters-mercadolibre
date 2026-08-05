@@ -1,6 +1,19 @@
 [
   {
     "fecha": "2026-08-05",
+    "hora": "21:40",
+    "tipo": "mejora",
+    "titulo": "La publicidad se maneja sola",
+    "puntos": [
+      "El proceso de los martes ahora **apaga y también enciende**. Antes solo apagaba.",
+      "Enciende las publicaciones que *Visitas vs ventas* marca como **escalar** o **falta de exposición**: ya convierten y les falta gente que las vea.",
+      "El **ACOS máximo pasa de 35% a 15%**. Ojo con esto: son 40 anuncios que gastan \\$4,35M pero facturan \\$18,16M. Se van a ir apagando de a 25 por semana.",
+      "Las publicaciones que irían a la campaña general de Crafters —que está pausada— van a una campaña nueva, **«Crafters - Potencial de conversión»**, con tope de \\$20.000 y ACOS objetivo 15%.",
+      "Todo queda en la auditoría con el estado anterior."
+    ]
+  },
+  {
+    "fecha": "2026-08-05",
     "hora": "19:20",
     "tipo": "nuevo",
     "titulo": "La publicidad ya se puede tocar desde la app",

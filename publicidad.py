@@ -53,12 +53,20 @@ COLUMNAS_ESTRATEGICOS = ["sku", "nota"]
 # Los topes viven en la Sheet, no en un archivo: en Streamlit Cloud el disco
 # es efimero y cualquier cambio se perderia en el proximo deploy.
 POR_DEFECTO = {
-    "acos_max": 35.0,        # arriba de esto el anuncio no se banca
+    "acos_max": 15.0,        # arriba de esto el anuncio no se banca
     "roas_min": 2.5,         # abajo de esto tampoco
     "acos_bueno": 15.0,      # candidato a empujar
     "roas_bueno": 6.0,
     "clicks_minimos": 30,    # menos que esto es ruido, no una senal
     "gasto_minimo": 5000.0,  # idem, en pesos
+
+    # Campana a la que van los candidatos cuya campana natural esta pausada.
+    # Sumar un anuncio a una campana pausada no sirve —entra activo pero la
+    # campana no corre— y prender la general de Crafters encenderia sus 4.557
+    # anuncios de una. Por eso van a una campana propia. 0 = sin destino, y
+    # ahi los candidatos de campanas dormidas quedan afuera.
+    "campana_nuevos": 358677871.0,
+    "anunciante_nuevos": 872.0,
 }
 
 
@@ -477,14 +485,19 @@ def candidatos(df_conv, pubs, df_ads, advs=None, camps_por_adv=None,
         return pd.DataFrame()
 
     # Publicaciones que YA estan gastando: esas no son candidatas.
-    publicitadas = set()
+    publicitadas, bloqueados, grupo_de = set(), set(), {}
     if df_ads is not None and len(df_ads):
         publicitadas = set(df_ads[~df_ads["estado_ad"].isin(NO_PUBLICITA)]
                            ["item_id"])
         # `hold` lo deshabilito ML: no se puede agregar a ninguna campana.
         bloqueados = set(df_ads[df_ads["estado_ad"] == "hold"]["item_id"])
-    else:
-        bloqueados = set()
+        # **Se agrega por ad_group_id, no por item_id.** Una publicacion que
+        # nunca estuvo en una campana no tiene ad_group y no se puede sumar
+        # por esta via: queda afuera en vez de fallar en la escritura.
+        if "ad_group_id" in df_ads:
+            grupo_de = {r["item_id"]: r["ad_group_id"]
+                        for _, r in df_ads.iterrows()
+                        if pd.notna(r.get("ad_group_id"))}
 
     filas = []
     for _, r in df_conv.iterrows():
@@ -513,13 +526,22 @@ def candidatos(df_conv, pubs, df_ads, advs=None, camps_por_adv=None,
         destino = destino or general
         if not destino:
             continue
+
+        # Si la campana que le toca esta dormida, va a la campana propia:
+        # sumarle anuncios a una pausada no los hace correr, y prenderla
+        # encenderia todo lo que ya tiene adentro.
         estado_camp = estados_camp.get(destino[1], "")
+        if estado_camp != "active" and cfg.get("campana_nuevos"):
+            destino = (int(cfg.get("anunciante_nuevos") or destino[0]),
+                       int(cfg["campana_nuevos"]))
+            estado_camp = estados_camp.get(destino[1], "active")
 
         filas.append({
             "item_id": item, "sku": sku,
             "titulo": (r.get("titulo") or "")[:60],
             "marca": marca,
             "advertiser_id": destino[0], "campaign_id": destino[1],
+            "ad_group_id": grupo_de.get(item),
             "campana_activa": estado_camp == "active",
             "estado_ad": "sin anuncio",
             "visitas": r.get("visitas", 0),
@@ -533,6 +555,51 @@ def candidatos(df_conv, pubs, df_ads, advs=None, camps_por_adv=None,
                        f"{int(r.get('visitas') or 0)} visitas"),
         })
 
+    return pd.DataFrame(filas)
+
+
+def resolver_candidatos(ml, cand, callback=None):
+    """
+    Completa cada candidato con su anuncio **en vivo** y decide que hacer.
+
+    Hace falta porque `ads/search` **no devuelve los anuncios sin actividad en
+    la ventana**: los 51 candidatos aparecian sin `ad_group_id` como si nunca
+    hubieran tenido anuncio, y `ads/{item_id}` los devuelve a todos. Sin este
+    paso no se podria sumar ninguno — el endpoint de alta exige el id numerico
+    del ad_group y rechaza el de la publicacion.
+
+    Segun como este el anuncio, la accion cambia:
+
+      - `idle` (fuera de toda campana) -> **agregar** a la campana destino
+      - `paused` dentro de una campana -> **activar**, que ya esta donde va
+      - cualquier otra cosa            -> se descarta con el motivo
+    """
+    if cand is None or not len(cand):
+        return cand
+    filas = []
+    for i, (_, r) in enumerate(cand.iterrows(), start=1):
+        if callback and i % 10 == 0:
+            callback(f"Resolviendo anuncios... {i}/{len(cand)}")
+        ad = leer_ad(ml, r["item_id"])
+        f = dict(r)
+        if not ad or not ad.get("ad_group_id"):
+            f.update(accion="ninguna", motivo="no tiene anuncio en ML")
+            filas.append(f)
+            continue
+        estado = (ad.get("status") or "").lower()
+        f["ad_group_id"] = ad["ad_group_id"]
+        if estado == "idle":
+            f["accion"] = "agregar"
+        elif estado == "paused":
+            # Ya esta en una campana: prenderlo alcanza, y ademas respeta
+            # donde lo puso ML en vez de mudarlo.
+            f["accion"] = "activar"
+            f["campaign_id"] = ad.get("campaign_id") or f.get("campaign_id")
+            f["advertiser_id"] = ad.get("advertiser_id") or f.get("advertiser_id")
+        else:
+            f.update(accion="ninguna",
+                     motivo=f"el anuncio está {estado}, no se puede sumar")
+        filas.append(f)
     return pd.DataFrame(filas)
 
 

@@ -6,13 +6,22 @@ Actions.
     python publicidad_cron.py            -> dice que haria, no toca nada
     python publicidad_cron.py --aplicar  -> apaga
 
-**Solo apaga. Nunca prende, nunca agrega a una campana.** Encender gasta
-plata y esa decision se toma mirando; apagar deja de gastarla. Si algo de
-esto falla o se desmadra, que se desmadre en la direccion de gastar menos.
+Hace dos cosas, las dos automaticas:
 
-Se vio por que hace falta esa regla: durante las pruebas, una accion
-aparentemente inocente reactivo un anuncio de $182.000 al mes sin que nadie
-lo pidiera.
+  - **apaga** lo que pasa el tope de ACOS o gasta sin vender;
+  - **suma** a una campana las publicaciones que el analisis de Visitas vs
+    ventas marca como `escalar` o `falta_exposicion`: ya convierten y les
+    falta gente que las vea.
+
+Las que le tocarian una campana **pausada** van a una campana propia
+(`campana_nuevos` en la config). Sumarlas a una pausada no sirve —entran
+activas pero la campana no corre— y prender la general de Crafters
+encenderia sus 4.557 anuncios de una.
+
+**Agregar prende y gasta desde el momento.** Lo aprendimos por las malas:
+durante las pruebas, capturar esa accion reactivo un anuncio de $182.000 al
+mes sin que nadie lo pidiera. Por eso hay tope por corrida y todo queda en la
+auditoria.
 
 **Escribe por el panel, no por la API.** MercadoLibre no habilito la
 escritura de Product Ads para la aplicacion (ver `publicidad.py`), asi que
@@ -92,8 +101,22 @@ def correr(aplicar=False, verbose=True):
         log(f"  {r['item_id']:<15} {pes(r['gasto']):>12}  "
             f"ACOS {r['acos']:>3.0f}%  {r['motivo'][:52]}")
 
+    # ------------------------------------------------ que sumar
+    sumar = candidatos_a_sumar(ml, df, pubs, log)
+    if len(sumar) > TOPE_POR_CORRIDA:
+        log(f"\n*** {len(sumar)} candidatos superan el tope de "
+            f"{TOPE_POR_CORRIDA}. Entran los {TOPE_POR_CORRIDA} de más "
+            "visitas; el resto queda para la próxima. ***")
+        sumar = sumar.head(TOPE_POR_CORRIDA)
+    if len(sumar):
+        log(f"\nA sumar: {len(sumar)} publicaciones que convierten y no se "
+            "publicitan")
+        for _, r in sumar.head(10).iterrows():
+            log(f"  {r['item_id']:<15} campaña {int(r['campaign_id']):<11} "
+                f"{r['motivo'][:55]}")
+
     if not aplicar:
-        log("\n(simulación: corré con --aplicar para apagarlos)")
+        log("\n(simulación: corré con --aplicar para ejecutarlo)")
         return 0
 
     if not panel_ads.hay_sesion():
@@ -101,21 +124,28 @@ def correr(aplicar=False, verbose=True):
             "los secrets — sin eso no se puede escribir.")
         return 1
 
-    res = panel_ads.aplicar(panel_ads.leer_sesion(), ml, apagar,
-                            accion="pausar",
+    sesion = panel_ads.leer_sesion()
+    auditoria = []
+
+    res = panel_ads.aplicar(sesion, ml, apagar, accion="pausar",
                             callback=lambda i, t, d: log(f"  {i}/{t} {d}"))
     ok = int((res["resultado"] == "OK").sum())
     log(f"\nApagados {ok} de {len(res)}.")
+    auditoria += _auditar(res, "active", "paused")
 
-    # A la auditoria, que es donde queda como estaba antes.
-    filas = [{
-        "fecha": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "item_id": r["item_id"], "campo": "ad_status",
-        "valor_anterior": "active", "valor_nuevo": "paused",
-        "resultado": r["resultado"], "operador": "cron",
-        "nota": str(r.get("motivo", ""))[:180],
-    } for _, r in res.iterrows()]
-    guardado, detalle = almacen.append_auditoria(filas)
+    # Los que estan fuera de campana se agregan; los que ya estan adentro
+    # pero apagados solo se prenden, para no mudarlos de donde ML los puso.
+    for acc, antes in (("agregar", "idle"), ("activar", "paused")):
+        filas = sumar[sumar["accion"] == acc]
+        if not len(filas):
+            continue
+        res2 = panel_ads.aplicar(sesion, ml, filas, accion=acc,
+                                 callback=lambda i, t, d: log(f"  {i}/{t} {d}"))
+        ok2 = int((res2["resultado"] == "OK").sum())
+        log(f"{acc.capitalize()}: {ok2} de {len(res2)}.")
+        auditoria += _auditar(res2, antes, "active")
+
+    guardado, detalle = almacen.append_auditoria(auditoria)
     if not guardado:
         log(f"AVISO: no se pudo escribir la auditoría: {detalle}")
 
@@ -123,6 +153,49 @@ def correr(aplicar=False, verbose=True):
         log("\nLos que fallaron suelen ser benignos: anuncios en `hold` que "
             "ML deshabilitó, o que el listado trae desactualizados.")
     return 0
+
+
+def _auditar(res, antes, despues):
+    return [{
+        "fecha": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "item_id": r["item_id"], "campo": "ad_status",
+        "valor_anterior": antes, "valor_nuevo": despues,
+        "resultado": r["resultado"], "operador": "cron",
+        "nota": str(r.get("motivo", ""))[:180],
+    } for _, r in res.iterrows()]
+
+
+def candidatos_a_sumar(ml, df_ads, pubs, log):
+    """
+    Las publicaciones que convierten y no se publicitan.
+
+    El analisis de visitas es **una llamada por publicacion** (ML no acepta
+    mas de un id en `/items/visits`), o sea ~10 minutos para el catalogo. Es
+    lo mas caro de la corrida y por eso va al final: si algo falla antes, al
+    menos se apago lo que habia que apagar.
+    """
+    import conversion
+    try:
+        log("\nMidiendo visitas y ventas (tarda unos minutos)...")
+        conv = conversion.analizar(ml, dias=DIAS,
+                                   callback=lambda m: log(f"  {m}"))
+    except Exception as e:
+        log(f"AVISO: no pude medir conversión ({type(e).__name__}: "
+            f"{str(e)[:120]}). Esta corrida solo apaga.")
+        return pd.DataFrame()
+
+    advs = publicidad.anunciantes(ml)
+    camps = {a["advertiser_id"]: publicidad.campanas(ml, a["advertiser_id"])
+             for a in advs}
+    c = publicidad.candidatos(conv, pubs, df_ads, advs, camps)
+    if not len(c):
+        return c
+    c = c[c["accion"] == "agregar"].sort_values("visitas", ascending=False)
+    # Una llamada por candidato, asi que primero se recorta al tope.
+    c = publicidad.resolver_candidatos(ml, c.head(TOPE_POR_CORRIDA * 2),
+                                       callback=log)
+    return c[c["accion"].isin(("agregar", "activar"))
+             & c["ad_group_id"].notna()]
 
 
 def publicidad_catalogo(ml):
