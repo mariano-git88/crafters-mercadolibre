@@ -152,6 +152,9 @@ def anuncios(ml, advertiser_id, desde, hasta, callback=None, tope=None):
                 "item_id": item,
                 "advertiser_id": advertiser_id,
                 "campaign_id": a.get("campaign_id"),
+                # La escritura NO va por item_id: va por ad_group_id. Sin
+                # esta columna no se puede aplicar nada.
+                "ad_group_id": a.get("ad_group_id"),
                 "titulo": (a.get("title") or "")[:60],
                 "marca": a.get("brand_value_name") or "",
                 "estado_ad": a.get("status"),
@@ -524,57 +527,72 @@ def candidatos(df_conv, pubs, df_ads, advs=None, camps_por_adv=None,
 
 # ---------------------------------------------------------------- escritura
 
-# Los recursos de Product Ads van **sin el anunciante en el path**: la forma
-# es /marketplace/advertising/{site}/product_ads/{recurso}/{id}. Cualquier
-# variante con /advertisers/{id}/ adentro contesta 404, y el singular `ad`
-# tambien. Encontrarlo costo: `ads` en plural y sin anunciante era la unica
-# combinacion que faltaba probar.
-def _ruta_ad(item_id):
-    return f"/marketplace/advertising/{SITE_ID}/product_ads/ads/{item_id}"
+# Los recursos van **sin el anunciante en el path**:
+# /marketplace/advertising/{site}/product_ads/{recurso}/{id}.
+#
+# **La escritura de un anuncio va por `ad_groups/{ad_group_id}`, no por
+# `ads/{item_id}`.** `ads/{item}` sirve para LEER y no tiene handler de
+# escritura: el PUT ahi devuelve un 503 con `Content-Length: 0`, que parece
+# un servicio caido y en realidad es el gateway sin nada atras. Se perdio
+# bastante tiempo persiguiendo ese 503 como si fuera un problema de permisos.
+# La ruta correcta contesta un 401 limpio cuando falta permiso.
+def _ruta_ad_group(ad_group_id):
+    return (f"/marketplace/advertising/{SITE_ID}/product_ads/ad_groups/"
+            f"{ad_group_id}")
 
 
-def _ruta_campana(campaign_id):
-    return (f"/marketplace/advertising/{SITE_ID}/product_ads/campaigns/"
-            f"{campaign_id}")
+def _ruta_campana(campaign_id=None):
+    base = f"/marketplace/advertising/{SITE_ID}/product_ads/campaigns"
+    return f"{base}/{campaign_id}" if campaign_id else base
 
 
-def estado_ad(ml, item_id):
-    """El anuncio como lo ve ML ahora. Devuelve None si no existe."""
+def leer_ad(ml, item_id):
+    """El anuncio como lo ve ML ahora — de aca sale el `ad_group_id`."""
     try:
-        return ml.get(_ruta_ad(item_id), _headers=CABECERA)
+        return ml.get(
+            f"/marketplace/advertising/{SITE_ID}/product_ads/ads/{item_id}",
+            _headers=CABECERA)
     except Exception:
         return None
 
 
-def cambiar_estado(ml, item_id, estado):
+def _ad_group_de(ml, item_id, ad_group_id=None):
+    """El ad_group del anuncio; si no vino en la tabla, se pregunta."""
+    if ad_group_id:
+        return int(ad_group_id)
+    ad = leer_ad(ml, item_id)
+    return int(ad["ad_group_id"]) if ad and ad.get("ad_group_id") else None
+
+
+def cambiar_estado(ml, item_id, estado, ad_group_id=None, campaign_id=None):
     """
     Prende o apaga un anuncio. `estado` es 'active' o 'paused'.
 
     Devuelve (ok, detalle). No lanza: en un lote de cientos, una falla no
     puede llevarse la corrida.
     """
+    ag = _ad_group_de(ml, item_id, ad_group_id)
+    if not ag:
+        return False, "no pude resolver el ad_group_id"
+    cuerpo = {"status": estado}
+    if campaign_id:
+        cuerpo["campaign_id"] = int(campaign_id)
     try:
-        r = ml.put(_ruta_ad(item_id), {"status": estado}, _headers=CABECERA)
+        r = ml.put(_ruta_ad_group(ag), cuerpo, _headers=CABECERA)
         return True, (r or {}).get("status", estado)
     except Exception as e:
         return False, f"{type(e).__name__}: {str(e)[:180]}"
 
 
-def agregar_a_campana(ml, item_id, campaign_id):
+def agregar_a_campana(ml, item_id, campaign_id, ad_group_id=None):
     """
     Suma la publicacion a una campana. Queda **activa por defecto**, o sea
     que empieza a gastar en cuanto entra.
     """
-    try:
-        r = ml.put(_ruta_ad(item_id),
-                   {"campaign_id": int(campaign_id), "status": "active"},
-                   _headers=CABECERA)
-        return True, (r or {}).get("status", "active")
-    except Exception as e:
-        return False, f"{type(e).__name__}: {str(e)[:180]}"
+    return cambiar_estado(ml, item_id, "active", ad_group_id, campaign_id)
 
 
-def sacar_de_campana(ml, item_id):
+def sacar_de_campana(ml, item_id, ad_group_id=None):
     """
     Saca el anuncio de su campana. Queda en `idle`: sigue disponible para
     publicitar pero no gasta.
@@ -582,8 +600,11 @@ def sacar_de_campana(ml, item_id):
     **No se manda `status` en la misma llamada**: al salir de la campana el
     anuncio pasa a idle solo, y mandar los dos campos juntos falla.
     """
+    ag = _ad_group_de(ml, item_id, ad_group_id)
+    if not ag:
+        return False, "no pude resolver el ad_group_id"
     try:
-        r = ml.put(_ruta_ad(item_id), {"campaign_id": 0}, _headers=CABECERA)
+        r = ml.put(_ruta_ad_group(ag), {"campaign_id": 0}, _headers=CABECERA)
         return True, (r or {}).get("status", "idle")
     except Exception as e:
         return False, f"{type(e).__name__}: {str(e)[:180]}"
@@ -597,18 +618,17 @@ def aplicar(ml, plan, operador="", callback=None, acciones=("pausar",)):
 
     Cada anuncio va en su propio try. Todo queda en la auditoria.
 
-    **La ruta es correcta pero la cuenta no puede escribir.** Verificado el
-    2026-08-05: `PUT /marketplace/advertising/MLA/product_ads/campaigns/{id}`
-    contesta
+    **Las rutas son las correctas y aun asi la cuenta no puede escribir.**
+    Verificado el 2026-08-05, las dos contestan lo mismo:
 
-        401 {"message": "User does not have permission to write.",
-             "error": "mclics.campaigns.exceptions.UnauthorizedException"}
+        PUT .../product_ads/campaigns/{id}      -> 401 "User does not have
+        PUT .../product_ads/ad_groups/{id}         permission to write."
 
-    y el mismo PUT sobre `/ads/{item_id}` devuelve 503 con cuerpo vacio, que
-    es el mismo rechazo mal expresado. El motivo esta a la vista en
-    `/advertising/advertisers`: los tres anunciantes pertenecen a la cuenta
-    **ERPA**, y el token es de **CRAFTERSARG** — puede leerlos, no
-    administrarlos. Se arregla del lado de MercadoLibre, no del codigo.
+    No es de la cuenta ni de los scopes: falla igual con el token de
+    CRAFTERSARG y con el de **ERPA SA**, que es la duena de los tres
+    anunciantes, los dos con `urn:ml:mktp:ads:/read-write` concedido y con la
+    app aprobada entera en el devcenter. Falta que ML habilite la escritura de
+    Product Ads para la aplicacion. Se arregla del lado de ML, no del codigo.
     """
     if plan is None or not len(plan):
         return pd.DataFrame()
@@ -631,13 +651,14 @@ def aplicar(ml, plan, operador="", callback=None, acciones=("pausar",)):
                 "gasto": a.get("gasto", 0), "acos": a.get("acos", 0),
                 "motivo": a.get("motivo", "")}
 
+        ag = a.get("ad_group_id")
         if accion == "agregar":
             ok, detalle = agregar_a_campana(ml, a["item_id"],
-                                            a.get("campaign_id"))
+                                            a.get("campaign_id"), ag)
         elif accion == "sacar":
-            ok, detalle = sacar_de_campana(ml, a["item_id"])
+            ok, detalle = sacar_de_campana(ml, a["item_id"], ag)
         else:
-            ok, detalle = cambiar_estado(ml, a["item_id"], nuevo)
+            ok, detalle = cambiar_estado(ml, a["item_id"], nuevo, ag)
         # El anuncio no es una publicacion, pero la auditoria es el unico
         # lugar donde queda como estaba antes.
         from meli import registrar_auditoria
@@ -655,18 +676,53 @@ def aplicar(ml, plan, operador="", callback=None, acciones=("pausar",)):
 
 # ------------------------------------------------------------------ campanas
 
-def cambiar_campana(ml, advertiser_id, campaign_id, cambios):
+def acos_a_roas(acos_pct):
+    """
+    **Desde diciembre de 2025 el objetivo se escribe como `roas_target`, no
+    como `acos_target`.** Son la misma cosa dada vuelta: ACOS = 100 / ROAS.
+
+    Un ACOS objetivo de 23% es un ROAS de 4,35 — que es exactamente lo que
+    tienen configuradas Bulit y Suprabond, y por eso los dos numeros que
+    devuelve la API coinciden.
+    """
+    return round(100.0 / float(acos_pct), 4) if acos_pct else 0.0
+
+
+def cambiar_campana(ml, campaign_id, cambios):
     """
     Modifica una campana: `status` ('active'/'paused'), `budget`,
-    `acos_target`. Son tres campanas en total, asi que esto se usa poco y a
-    mano — pero el presupuesto es lo unico que topea el gasto de todo lo
-    demas, y tenerlo aca evita entrar al panel.
+    `roas_target`, `strategy`, `name`.
+
+    Son tres campanas, asi que se usa poco y a mano — pero **el presupuesto es
+    lo unico que topea el gasto de todo lo demas**, y tenerlo aca evita entrar
+    al panel.
+
+    Si viene `acos_target` se traduce: la API vieja lo aceptaba y la nueva no.
     """
-    base = BASE.format(site=SITE_ID, adv=advertiser_id)
+    cuerpo = dict(cambios)
+    if "acos_target" in cuerpo and "roas_target" not in cuerpo:
+        cuerpo["roas_target"] = acos_a_roas(cuerpo.pop("acos_target"))
+    if "strategy" in cuerpo:
+        cuerpo["strategy"] = str(cuerpo["strategy"]).lower()
     try:
-        r = ml.put(f"{base}/campaigns/{campaign_id}", cambios,
-                   _headers=CABECERA)
-        return True, r
+        return True, ml.put(_ruta_campana(campaign_id), cuerpo,
+                            _headers=CABECERA)
+    except Exception as e:
+        return False, f"{type(e).__name__}: {str(e)[:200]}"
+
+
+def crear_campana(ml, nombre, presupuesto, roas_target,
+                  strategy="profitability", estado="paused"):
+    """
+    Crea una campana. **Nace pausada a proposito**: una campana nueva con
+    presupuesto empieza a gastar en cuanto se activa, y esa es una decision
+    aparte de crearla.
+    """
+    cuerpo = {"name": nombre, "budget": float(presupuesto),
+              "roas_target": float(roas_target),
+              "strategy": str(strategy).lower(), "status": estado}
+    try:
+        return True, ml.post(_ruta_campana(), cuerpo, _headers=CABECERA)
     except Exception as e:
         return False, f"{type(e).__name__}: {str(e)[:200]}"
 

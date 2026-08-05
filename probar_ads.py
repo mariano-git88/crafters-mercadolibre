@@ -40,11 +40,16 @@ BASE = "https://api.mercadolibre.com"
 CAMPANA = 344790967
 ANUNCIO = "MLA1546165612"
 
+# El ad_group del anuncio de arriba. La escritura de un anuncio va por
+# `ad_groups/{id}`: `ads/{item}` es solo lectura y su PUT devuelve un 503 con
+# cuerpo vacio que parece un servicio caido y es el gateway sin handler.
+AD_GROUP = 991091959
+
 PRUEBAS = [
     ("campaña", f"/marketplace/advertising/MLA/product_ads/campaigns/{CAMPANA}",
      {"status": "paused"}),
-    ("anuncio", f"/marketplace/advertising/MLA/product_ads/ads/{ANUNCIO}",
-     {"status": "active"}),
+    ("ad_group", f"/marketplace/advertising/MLA/product_ads/ad_groups/"
+                 f"{AD_GROUP}", {"status": "active"}),
 ]
 
 

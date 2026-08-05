@@ -3989,14 +3989,15 @@ elif seccion == "Publicidad":
             st.markdown("##### Aplicar en MercadoLibre")
             st.error(
                 "**Hoy MercadoLibre rechaza la escritura y no es un problema "
-                "del código.** Los tres anunciantes pertenecen a la cuenta "
-                "**ERPA** y la app está conectada como **CRAFTERSARG**: puede "
-                "leerlos, no administrarlos. La API contesta *«User does not "
-                "have permission to write»*. Se arregla dándole permiso de "
-                "administración a CRAFTERSARG sobre los anunciantes, o "
-                "conectando la app con la cuenta ERPA. En cuanto eso pase, "
-                "los botones de acá abajo funcionan sin tocar nada.",
-                icon="🔒")
+                "del código.** La API contesta *«User does not have "
+                "permission to write»* tanto en campañas como en anuncios. No "
+                "es la cuenta ni los permisos que le diste: falla igual con "
+                "el token de CRAFTERSARG y con el de **ERPA SA**, que es la "
+                "dueña de los tres anunciantes, y la app tiene todo aprobado "
+                "en el devcenter. Falta que **MercadoLibre habilite la "
+                "escritura de Product Ads para la aplicación**, que es un "
+                "permiso aparte. En cuanto lo hagan, los botones de acá abajo "
+                "funcionan sin tocar una línea.", icon="🔒")
 
             n_apagar = int((pl["accion"] == "pausar").sum())
             n_sumar = int((pl["accion"] == "agregar").sum())
