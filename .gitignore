@@ -70,3 +70,6 @@ publicidad_a_pausar.csv
 
 # Capturas de red del navegador: traen cookies de sesion enteras
 *.har
+
+# Sesion del panel de publicidad: cookies vivas, NUNCA al repo
+sesion_ads.json
