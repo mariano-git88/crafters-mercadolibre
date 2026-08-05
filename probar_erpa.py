@@ -68,7 +68,12 @@ def main():
                       headers={"Authorization": f"Bearer {token}"},
                       timeout=30).json()
     print(f"  token de {yo.get('nickname')} (user_id {uid})")
-    print(f"  scopes: {datos.get('scope', '')[:200]}\n")
+    # Entero, no cortado: si faltara el scope de publicidad la prueba no
+    # valdria, y con el string truncado no habia forma de saberlo.
+    scopes = datos.get("scope", "")
+    print(f"  scopes: {scopes}")
+    print(f"  ¿tiene el de publicidad?: "
+          f"{'SÍ' if 'mktp:ads' in scopes else 'NO — la prueba no vale'}\n")
 
     print("Probando la escritura (no-op: le manda el estado que ya tiene)...")
     r = requests.put(
