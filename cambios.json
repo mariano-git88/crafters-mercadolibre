@@ -1,6 +1,20 @@
 [
   {
     "fecha": "2026-08-04",
+    "hora": "23:10",
+    "tipo": "nuevo",
+    "titulo": "Publicidad y Duplicados",
+    "puntos": [
+      "**Publicidad** (sección nueva): muestra las tres campañas, mide cada anuncio y dice cuál conviene apagar. En Bulit, 5 anuncios se comen \\$694.000 de los \\$3,2M con un ACOS de 57% contra un objetivo de 23%.",
+      "Los topes (ACOS máximo, ROAS mínimo) y la lista de **SKU estratégicos** —los que ninguna regla toca— se editan desde la app y viven en la planilla.",
+      "**Todavía no se pueden apagar los anuncios desde la app**: el endpoint de MercadoLibre para eso no responde. La pantalla dice cuáles tocar y el cambio se hace en el panel de ML.",
+      "**Duplicados** (dentro de Oportunidades): de 720 SKU con publicación repetida, solo 33 grupos son duplicados de verdad. El resto son de catálogo o mezclan Premium con Clásica, y borrarlos sería un desastre.",
+      "Deja la que más vendió en 30 días y borra la otra; si la segunda vende parecido, **se quedan las dos**. Hoy marca 13 para borrar.",
+      "Ojo: **cerrar una publicación no se puede deshacer**. Antes de borrar, cada una se guarda entera en la planilla, que alcanza para republicar el producto pero no para recuperar la publicación."
+    ]
+  },
+  {
+    "fecha": "2026-08-04",
     "hora": "17:40",
     "tipo": "nuevo",
     "titulo": "Tramos de comisión ahora aplica los precios solo",

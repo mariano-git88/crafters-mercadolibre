@@ -13,7 +13,7 @@ por la simulacion.
 """
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -28,7 +28,9 @@ import plata as plata_mod
 import competencia
 import conciliacion
 import conversion
+import duplicados
 import envios
+import publicidad
 import full
 import salud
 import espejos
@@ -208,7 +210,7 @@ seccion = st.segmented_control(
                 "Alertas", "Ganar la venta",
                 "Precios", "Mayoristas", "Stock ML", "Control de stock",
                 "Rentabilidad", "Precio óptimo", "Competencia",
-                "Oportunidades"],
+                "Publicidad", "Oportunidades"],
     default="Plata sobre la mesa", label_visibility="collapsed",
     # La key ademas de fijar la seccion entre reruns permite recorrerla desde
     # los tests: sin key, AppTest no puede cambiar de seccion.
@@ -2536,7 +2538,7 @@ elif seccion == "Competencia":
 elif seccion == "Oportunidades":
     st.markdown("#### Dónde hay plata sobre la mesa")
     op = st.radio("Vista", ["Visitas vs ventas", "Tramos de comisión",
-                            "Precios espejo", "Factura de ML",
+                            "Precios espejo", "Duplicados", "Factura de ML",
                             "Envíos", "Candidatos a Full",
                             "Salud del catálogo"],
                   horizontal=True, label_visibility="collapsed")
@@ -2901,6 +2903,111 @@ elif seccion == "Oportunidades":
                      "propio precio, no todas el mismo")
         elif dfe is not None:
             st.success("No hay publicaciones espejo con precios distintos. 👌")
+
+    elif op == "Duplicados":
+        st.caption(
+            "Publicaciones del mismo SKU que compiten entre sí. Deja la que "
+            "más vendió y borra la otra — salvo que vendan parecido, en cuyo "
+            "caso **se quedan las dos**.")
+        st.info(
+            "**Casi ningún SKU repetido es un duplicado.** De 997 SKU "
+            "activos, 720 tienen más de una publicación, pero la mayoría es "
+            "deliberada: las de **catálogo** las crea ML aparte y son las que "
+            "ganan el Buy Box, y las que mezclan **Premium y Clásica** son "
+            "una decisión de precio. Solo se tocan los grupos del mismo tipo, "
+            "sin catálogo y sin Full.", icon="🧩")
+
+        if st.button("Analizar duplicados"):
+            with st.spinner("Agrupando por SKU..."):
+                st.session_state["dup"] = duplicados.analizar(pubs)
+
+        dd = st.session_state.get("dup")
+        if dd is not None and len(dd):
+            por_clase = dd.groupby("clase")["sku"].nunique()
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Grupos que se pueden tocar",
+                      int(por_clase.get("limpio", 0)))
+            c2.metric("A borrar",
+                      int((dd["decision"] == "borrar").sum()))
+            c3.metric("Empates que se dejan",
+                      int((dd["decision"] == "dejar - empate").sum()))
+
+            with st.expander("Por qué no se tocan los otros grupos"):
+                st.dataframe(
+                    dd[dd["clase"] != "limpio"]
+                    .groupby("clase")
+                    .agg(grupos=("sku", "nunique"),
+                         publicaciones=("item_id", "size")).reset_index(),
+                    use_container_width=True, hide_index=True)
+                st.caption(
+                    "Borrar una publicación de catálogo es tirar la que gana "
+                    "el Buy Box. Borrar una Premium o una Clásica cambia la "
+                    "oferta, no limpia un duplicado.")
+
+            limpio = dd[dd["clase"] == "limpio"]
+            st.dataframe(
+                limpio[["sku", "titulo", "item_id", "precio", "unidades_30d",
+                        "importe_30d", "decision", "motivo"]],
+                use_container_width=True, height=360, hide_index=True,
+                column_config={
+                    "sku": "SKU", "titulo": "Título", "item_id": "Publicación",
+                    "precio": st.column_config.NumberColumn(
+                        "Precio", format="%.0f"),
+                    "unidades_30d": st.column_config.NumberColumn(
+                        "Unid. 30d", format="%.0f"),
+                    "importe_30d": st.column_config.NumberColumn(
+                        "Vendido 30d", format="%.0f"),
+                    "decision": "Qué se hace", "motivo": "Por qué"})
+
+            aborrar = dd[dd["decision"] == "borrar"]
+            if not len(aborrar):
+                st.success("No hay ninguna para borrar.")
+            else:
+                st.error(
+                    f"**Vas a borrar {len(aborrar)} publicaciones y esto no "
+                    "tiene vuelta atrás.** Borrar son dos pasos, cerrar y "
+                    "eliminar, y **ya el primero es definitivo**: una "
+                    "publicación cerrada no se puede reactivar — la API "
+                    "acepta el pedido y la deja cerrada igual. No vuelven el "
+                    "ID, la antigüedad, las preguntas ni las ventas "
+                    "históricas. Antes de borrar, cada publicación se guarda "
+                    "entera en la hoja `duplicados_borrados`: eso alcanza "
+                    "para volver a publicar el producto, no para recuperar "
+                    "ésta.", icon="🛑")
+
+                op_dp = st.text_input("Tu nombre (queda en el registro)",
+                                      key="dp_op")
+                escrito = st.text_input(
+                    "Escribí BORRAR para habilitar el botón", key="dp_conf")
+                if st.button("Borrar en MercadoLibre", key="dp_go",
+                             disabled=not (escrito.strip().upper() == "BORRAR"
+                                           and op_dp.strip())):
+                    barra = st.progress(0.0, text="Borrando...")
+                    try:
+                        res_dp = duplicados.borrar(
+                            ml, dd, operador=op_dp.strip(),
+                            callback=lambda i, t, f: barra.progress(
+                                i / t, text=f"Borrando {i} de {t}..."))
+                    except Exception as e:
+                        barra.empty()
+                        st.error(f"La corrida se cortó: "
+                                 f"{type(e).__name__}: {e}")
+                        st.stop()
+                    barra.empty()
+                    st.session_state["dup_res"] = res_dp
+                    st.session_state.pop("dup", None)
+
+        res_dp = st.session_state.get("dup_res")
+        if res_dp is not None and len(res_dp):
+            hechas = int((res_dp["resultado"] == "BORRADA").sum())
+            if hechas == len(res_dp):
+                st.success(f"{hechas} publicaciones borradas.")
+            else:
+                st.warning(f"{hechas} borradas de {len(res_dp)}. "
+                           "Mirá el detalle.")
+            st.dataframe(res_dp, use_container_width=True, hide_index=True)
+            st.caption("El catálogo quedó viejo: apretá **Actualizar "
+                       "catálogo** arriba para verlo sin las borradas.")
 
     elif op == "Tramos de comisión":
         st.caption(
@@ -3711,3 +3818,196 @@ elif seccion == "Rentabilidad":
             "Los cargos salen del promedio real por unidad de las ventas del "
             "período elegido. Los SKU con `base_cargos = sin_ventas` no "
             "registraron ventas: ahí el margen no descuenta comisión.")
+
+elif seccion == "Publicidad":
+    st.markdown("#### Publicidad")
+    st.caption(
+        "Tres anunciantes, uno por marca, con una campaña cada uno. La capa "
+        "de campañas es chica; lo que mueve la aguja son los anuncios.")
+
+    dias_pub = st.selectbox("Período a medir", [7, 15, 30, 60], index=2,
+                            format_func=lambda d: f"últimos {d} días")
+    hasta_pub = datetime.now().date() - timedelta(days=1)
+    desde_pub = hasta_pub - timedelta(days=dias_pub - 1)
+
+    # Con st.tabs Streamlit ejecuta y renderiza las TRES vistas en cada rerun
+    # —incluida la que baja miles de anuncios de la API— y ademas las apila
+    # visualmente mientras recalcula. Se elige con un selector para que en el
+    # DOM exista solo la vista activa.
+    _VISTAS_PUB = ["Cómo va", "Qué haría con los anuncios",
+                   "Topes y estratégicos"]
+    vista_pub = st.segmented_control(
+        "Vista", _VISTAS_PUB, default=_VISTAS_PUB[0],
+        key="pub_vista", label_visibility="collapsed") or _VISTAS_PUB[0]
+
+    if vista_pub == "Cómo va":
+        if st.button("Traer campañas"):
+            try:
+                with st.spinner("Leyendo publicidad..."):
+                    st.session_state["pub_camp"] = [
+                        (a, publicidad.campanas(ml, a["advertiser_id"]))
+                        for a in publicidad.anunciantes(ml)]
+            except Exception as e:
+                st.error(f"No pude leer publicidad: {type(e).__name__}: {e}")
+                st.stop()
+
+        camps = st.session_state.get("pub_camp")
+        if camps:
+            for a, cs in camps:
+                st.markdown(f"**{a['advertiser_name']}** · anunciante "
+                            f"`{a['advertiser_id']}`")
+                for c in cs:
+                    m1, m2, m3, m4 = st.columns(4)
+                    m1.metric("Campaña", c["name"])
+                    m2.metric("Estado", c["status"])
+                    m3.metric("Presupuesto", pesos(c.get("budget") or 0))
+                    m4.metric("ACOS objetivo", f"{c.get('acos_target', 0):.0f}%")
+                st.divider()
+
+    elif vista_pub == "Qué haría con los anuncios":
+        st.caption(
+            f"Mide del {desde_pub:%d/%m} al {hasta_pub:%d/%m}. Son ~1.500 "
+            "anuncios por anunciante, así que la lectura tarda unos minutos.")
+
+        cfg = publicidad.config()
+        st.markdown("Topes vigentes: **ACOS máx** {:.0f}% · **ROAS mín** "
+                    "{:.1f} · se ignora lo que tenga menos de {:.0f} clics"
+                    .format(cfg["acos_max"], cfg["roas_min"],
+                            cfg["clicks_minimos"]))
+
+        if st.button("Analizar los anuncios"):
+            paso = st.empty()
+            try:
+                with st.spinner("Bajando anuncios y métricas..."):
+                    df_ads, _, _ = publicidad.traer_todo(
+                        ml, desde_pub.isoformat(), hasta_pub.isoformat(),
+                        callback=lambda m: paso.caption(str(m)))
+                    st.session_state["pub_plan"] = publicidad.analizar(
+                        df_ads, pubs)
+            except Exception as e:
+                paso.empty()
+                st.error(f"No pude analizar: {type(e).__name__}: {e}")
+                st.stop()
+            paso.empty()
+
+        pl = st.session_state.get("pub_plan")
+        if pl is not None and len(pl):
+            g1, g2, g3, g4 = st.columns(4)
+            g1.metric("Anuncios", len(pl))
+            g2.metric("Gasto", pesos(pl["gasto"].sum()))
+            g3.metric("Facturado", pesos(pl["facturado"].sum()))
+            acos_gral = (pl["gasto"].sum() / pl["facturado"].sum() * 100
+                         if pl["facturado"].sum() else 0)
+            g4.metric("ACOS general", f"{acos_gral:.0f}%")
+
+            resumen_pub = (pl.groupby("accion")
+                           .agg(anuncios=("item_id", "size"),
+                                gasto=("gasto", "sum"),
+                                unidades=("unidades", "sum")).reset_index())
+            st.dataframe(resumen_pub, use_container_width=True,
+                         hide_index=True,
+                         column_config={
+                             "accion": "Qué haría",
+                             "gasto": st.column_config.NumberColumn(
+                                 "Gasto", format="%.0f"),
+                             "unidades": st.column_config.NumberColumn(
+                                 "Unidades", format="%.0f")})
+
+            apagar = pl[pl["accion"] == "pausar"]
+            if len(apagar):
+                st.warning(
+                    f"**{len(apagar)} anuncios** gastaron "
+                    f"{pesos(apagar['gasto'].sum())} y facturaron "
+                    f"{pesos(apagar['facturado'].sum())}.", icon="🔥")
+
+            ver = st.selectbox("Ver", ["pausar", "activar", "revisar",
+                                       "ninguna"], index=0, key="pub_ver")
+            v = pl[pl["accion"] == ver]
+            st.dataframe(
+                v[["sku", "titulo", "anunciante", "estado_ad", "gasto",
+                   "facturado", "unidades", "acos", "roas", "motivo"]],
+                use_container_width=True, height=380, hide_index=True,
+                column_config={
+                    "sku": "SKU", "titulo": "Título",
+                    "anunciante": "Campaña", "estado_ad": "Estado",
+                    "gasto": st.column_config.NumberColumn(
+                        "Gasto", format="%.0f"),
+                    "facturado": st.column_config.NumberColumn(
+                        "Facturado", format="%.0f"),
+                    "unidades": st.column_config.NumberColumn(
+                        "Unid.", format="%.0f"),
+                    "acos": st.column_config.NumberColumn(
+                        "ACOS %", format="%.0f"),
+                    "roas": st.column_config.NumberColumn(
+                        "ROAS", format="%.1f"),
+                    "motivo": "Por qué"})
+
+            st.download_button(
+                "Descargar el plan",
+                pl.to_csv(index=False).encode("utf-8"),
+                f"publicidad_{datetime.now():%Y%m%d}.csv", "text/csv",
+                key="pub_dl")
+
+            st.error(
+                "**Todavía no se puede ejecutar desde acá.** El endpoint de "
+                "MercadoLibre para prender y apagar un anuncio contesta 404 "
+                "en todas sus rutas documentadas, y la única que existe "
+                "devuelve 503 de forma constante. Hasta que se resuelva, "
+                "esta pantalla dice **qué** tocar y el cambio se hace en el "
+                "panel de MercadoLibre. El CSV de arriba trae la lista.",
+                icon="🚧")
+
+    elif vista_pub == "Topes y estratégicos":
+        st.caption(
+            "Los topes y la lista de estratégicos viven en la Google Sheet, "
+            "no en un archivo: en la nube el disco se borra en cada deploy.")
+
+        cfg = publicidad.config()
+        t1, t2 = st.columns(2)
+        nuevo_cfg = {}
+        with t1:
+            nuevo_cfg["acos_max"] = st.number_input(
+                "ACOS máximo %", 1.0, 200.0, float(cfg["acos_max"]), 1.0,
+                help="Arriba de esto el anuncio se pausa.")
+            nuevo_cfg["roas_min"] = st.number_input(
+                "ROAS mínimo", 0.1, 50.0, float(cfg["roas_min"]), 0.1)
+            nuevo_cfg["gasto_minimo"] = st.number_input(
+                "Gasto mínimo para juzgar", 0.0, 999999.0,
+                float(cfg["gasto_minimo"]), 500.0)
+        with t2:
+            nuevo_cfg["acos_bueno"] = st.number_input(
+                "ACOS bueno %", 1.0, 200.0, float(cfg["acos_bueno"]), 1.0,
+                help="Debajo de esto, un anuncio apagado se propone encender.")
+            nuevo_cfg["roas_bueno"] = st.number_input(
+                "ROAS bueno", 0.1, 50.0, float(cfg["roas_bueno"]), 0.1)
+            nuevo_cfg["clicks_minimos"] = st.number_input(
+                "Clics mínimos para juzgar", 0, 10000,
+                int(cfg["clicks_minimos"]), 5)
+
+        if st.button("Guardar topes"):
+            ok, det = publicidad.guardar_config(nuevo_cfg)
+            st.success("Topes guardados.") if ok else st.error(det)
+
+        st.divider()
+        st.markdown("##### SKU estratégicos")
+        st.caption(
+            "Estos SKU **no los toca ninguna regla**, ganen o pierdan. Son "
+            "los que se publicitan por decisión comercial: lanzamientos, los "
+            "que traen tráfico, los que se defienden de un competidor. Sin "
+            "esta lista, la primera corrida los apaga a todos.")
+
+        est = publicidad.estrategicos()
+        df_est = pd.DataFrame(
+            [{"sku": k, "nota": v} for k, v in est.items()]
+            or [{"sku": "", "nota": ""}])
+        editado = st.data_editor(df_est, num_rows="dynamic",
+                                 use_container_width=True, key="pub_est",
+                                 column_config={"sku": "SKU",
+                                                "nota": "Por qué"})
+        if st.button("Guardar estratégicos"):
+            filas = [{"sku": str(r["sku"]).strip().upper(),
+                      "nota": str(r["nota"] or "")}
+                     for _, r in editado.iterrows()
+                     if str(r.get("sku", "")).strip()]
+            ok, det = publicidad.guardar_estrategicos(filas)
+            st.success(f"{len(filas)} SKU guardados.") if ok else st.error(det)
