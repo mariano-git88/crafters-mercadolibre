@@ -1,6 +1,19 @@
 [
   {
     "fecha": "2026-08-05",
+    "hora": "19:20",
+    "tipo": "nuevo",
+    "titulo": "La publicidad ya se puede tocar desde la app",
+    "puntos": [
+      "Se pueden **pausar, encender, agregar y sacar** anuncios de las campañas, y cambiar estado y presupuesto de una campaña. Todo desde la sección Publicidad.",
+      "Ya se pausaron los **19 anuncios que gastaban de más**: se comían \\$1.286.026 en 30 días, con ACOS de hasta 95% contra un objetivo de 23%.",
+      "Se sacaron de sus campañas ~155 anuncios que apuntaban a publicaciones cerradas o inactivas.",
+      "**Todos los martes a las 9** un proceso automático apaga lo que no se banca. Solo apaga: encender y agregar quedan para vos, porque eso empieza a gastar.",
+      "Como mucho apaga 25 por corrida. Si hay más, van los de mayor gasto y el resto espera a la semana siguiente."
+    ]
+  },
+  {
+    "fecha": "2026-08-05",
     "hora": "12:30",
     "tipo": "mejora",
     "titulo": "Publicidad: pausar, sacar de campaña y sumar lo que convierte",

@@ -1,0 +1,60 @@
+name: Apagar publicidad que no rinde
+
+# Semanal, martes 9 de Argentina (12 UTC). Semanal y no diario a propósito:
+# las métricas se miden sobre 30 días y no se mueven de un día para el otro,
+# y cada corrida son ~160 llamadas a ML. El lunes ya corre el reporte de
+# competencia, así que va el martes para no pisarlo.
+on:
+  schedule:
+    - cron: '0 12 * * 2'
+  workflow_dispatch:
+    inputs:
+      aplicar:
+        description: 'Apagar de verdad (si está en false, solo simula)'
+        type: boolean
+        default: false
+
+concurrency:
+  group: publicidad
+  cancel-in-progress: false
+
+jobs:
+  apagar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r requirements.txt
+
+      - name: Escribir los secrets
+        env:
+          SECRETS_TOML: ${{ secrets.CRAFTERS_SECRETS_TOML }}
+        run: |
+          if [ -z "$SECRETS_TOML" ]; then
+            echo "Falta el secret CRAFTERS_SECRETS_TOML."; exit 1
+          fi
+          mkdir -p .streamlit
+          printf '%s' "$SECRETS_TOML" > .streamlit/secrets.toml
+          # La escritura de publicidad va por el panel, no por la API: sin
+          # [ads] ssid la corrida simula y no apaga nada. Se avisa acá para
+          # que no parezca que anduvo bien.
+          grep -q '^\[ads\]' .streamlit/secrets.toml || \
+            echo "::warning::No hay sección [ads] en los secrets: sin la cookie ssid no se puede apagar nada."
+
+      # El cron programado siempre aplica; el disparo a mano respeta el input.
+      - name: Apagar lo que no se banca
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ] || \
+             [ "${{ inputs.aplicar }}" = "true" ]; then
+            python publicidad_cron.py --aplicar
+          else
+            python publicidad_cron.py
+          fi
+
+      - name: Limpiar credenciales
+        if: always()
+        run: rm -f .streamlit/secrets.toml
