@@ -1,5 +1,17 @@
 [
   {
+    "fecha": "2026-08-06",
+    "hora": "09:30",
+    "tipo": "mejora",
+    "titulo": "Duplicados: si ninguna vendió, igual sobra una",
+    "puntos": [
+      "Antes, si las dos publicaciones del mismo producto vendían \\$0 en 30 días, no se tocaba ninguna por falta de datos.",
+      "Ahora **se deja una sola**: dos publicaciones facturando cero no son un caso sin datos, son una duplicada de más compitiendo por las mismas visitas.",
+      "Se queda la de más historia — lo que vendió en su vida y las visitas —, que es lo único que distingue una publicación viva de una abandonada.",
+      "La lista pasa de 13 a **30 publicaciones**. Tres de las nuevas se deciden por poco margen (3 contra 6 ventas históricas, por ejemplo): vale mirarlas antes de apretar."
+    ]
+  },
+  {
     "fecha": "2026-08-05",
     "hora": "23:15",
     "tipo": "mejora",

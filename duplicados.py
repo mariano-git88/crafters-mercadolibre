@@ -137,7 +137,16 @@ def analizar(pubs=None, conv=None):
                 "puntaje": _puntaje(m),
             })
 
-        marcadas.sort(key=lambda f: f["puntaje"], reverse=True)
+        # Si NINGUNA facturo en el periodo, el puntaje no desempata: quedarian
+        # ordenadas al azar y "la mejor" seria la primera que vino. Ahi manda
+        # la historia — lo que vendio en su vida y las visitas — que es lo
+        # unico que distingue una publicacion viva de una abandonada.
+        nadie_vendio = max(f["puntaje"] for f in marcadas) <= 0
+        if nadie_vendio:
+            marcadas.sort(key=lambda f: (f["vendidas_historico"],
+                                         f["visitas_30d"]), reverse=True)
+        else:
+            marcadas.sort(key=lambda f: f["puntaje"], reverse=True)
         mejor = marcadas[0]
 
         for i, f in enumerate(marcadas):
@@ -146,9 +155,26 @@ def analizar(pubs=None, conv=None):
                 continue
             if i == 0:
                 f["decision"] = "dejar"
-                f["motivo"] = (f"la que más vendió del grupo "
-                               f"(${f['importe_30d']:,.0f} en 30 días)"
-                               .replace(",", "."))
+                f["motivo"] = (
+                    f"ninguna del grupo vendió en 30 días; se deja ésta, que "
+                    f"es la de más historia ({int(f['vendidas_historico'])} "
+                    f"vendidas, {int(f['visitas_30d'])} visitas)"
+                    if nadie_vendio else
+                    f"la que más vendió del grupo "
+                    f"(${f['importe_30d']:,.0f} en 30 días)".replace(",", "."))
+                continue
+
+            # **Duplicados que no vendieron nada: sobra igual.** Dos
+            # publicaciones del mismo producto facturando cero no son un caso
+            # sin datos: son una duplicada de mas, compitiendo entre si por
+            # las mismas visitas. Se deja una.
+            if nadie_vendio:
+                f["decision"] = "borrar"
+                f["motivo"] = (f"ninguna del grupo vendió en 30 días y sobra: "
+                               f"tiene {int(f['vendidas_historico'])} vendidas "
+                               f"históricas contra "
+                               f"{int(mejor['vendidas_historico'])} de la que "
+                               "se deja")
                 continue
 
             total = sum(x["unidades_30d"] for x in marcadas)
@@ -156,11 +182,6 @@ def analizar(pubs=None, conv=None):
                 f["decision"] = "dejar"
                 f["motivo"] = (f"el grupo vendió {total:.0f} unidades en 30 "
                                "días: no alcanza para decidir")
-                continue
-
-            if mejor["puntaje"] <= 0:
-                f["decision"] = "dejar"
-                f["motivo"] = "ninguna del grupo vendió en 30 días"
                 continue
 
             relacion = f["puntaje"] / mejor["puntaje"]
