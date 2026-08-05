@@ -711,18 +711,27 @@ def cambiar_campana(ml, campaign_id, cambios):
         return False, f"{type(e).__name__}: {str(e)[:200]}"
 
 
-def crear_campana(ml, nombre, presupuesto, roas_target,
+def crear_campana(ml, advertiser_id, nombre, presupuesto, roas_target,
                   strategy="profitability", estado="paused"):
     """
     Crea una campana. **Nace pausada a proposito**: una campana nueva con
     presupuesto empieza a gastar en cuanto se activa, y esa es una decision
     aparte de crearla.
+
+    OJO con la ruta: el **alta lleva el anunciante en el path** y la
+    modificacion NO. Son asimetricas y no hay forma de deducirlo:
+
+        POST .../advertisers/{adv}/product_ads/campaigns   -> crear
+        PUT  .../product_ads/campaigns/{id}                -> modificar
+
+    El POST sin anunciante contesta 404, no 401, que es lo que confunde.
     """
     cuerpo = {"name": nombre, "budget": float(presupuesto),
               "roas_target": float(roas_target),
               "strategy": str(strategy).lower(), "status": estado}
+    ruta = (f"{BASE.format(site=SITE_ID, adv=advertiser_id)}/campaigns")
     try:
-        return True, ml.post(_ruta_campana(), cuerpo, _headers=CABECERA)
+        return True, ml.post(ruta, cuerpo, _headers=CABECERA)
     except Exception as e:
         return False, f"{type(e).__name__}: {str(e)[:200]}"
 
