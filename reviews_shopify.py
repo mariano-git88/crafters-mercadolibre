@@ -42,7 +42,7 @@ from pathlib import Path
 import requests
 
 import almacen
-from catalogo import sku_del_atributo
+from catalogo import cargar_catalogo, sku_del_atributo
 from meli import Meli, MeliError
 
 DIR = Path(__file__).resolve().parent
@@ -217,7 +217,12 @@ def correr(aplicar=False, log=None, ml=None, completo=False):
     skus = skus_de_la_tienda(cfg)
     log(f"  {len(skus)} SKU en Shopify")
 
-    pubs = json.loads((DIR / "catalogo.json").read_text(encoding="utf-8"))
+    # **No leer catalogo.json directo.** Esta en el .gitignore, asi que en el
+    # runner de Actions no existe y la corrida muere con FileNotFoundError.
+    # `cargar_catalogo` lo usa si esta y si no lo baja de ML.
+    if not (DIR / "catalogo.json").exists():
+        log("  no hay catálogo local, bajándolo de MercadoLibre...")
+    pubs = cargar_catalogo(ml)
     por_sku = publicaciones_por_sku(pubs, skus)
     publicaciones = sum(len(v) for v in por_sku.values())
     log(f"  {len(por_sku)} de esos SKU están publicados en MercadoLibre "
