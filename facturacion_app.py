@@ -35,6 +35,36 @@ st.set_page_config(page_title="Control de facturación — Suprabond",
                    page_icon=str(ICONO) if ICONO.exists() else "🧾",
                    layout="wide", initial_sidebar_state="collapsed")
 
+# El naranja de la casa, igual que en crafters_app.py y suprabond_app.py. Va
+# con multi-selector y !important porque el tema de Streamlit lo pisa.
+st.markdown("""
+    <style>
+    [data-testid="stMain"] .stButton > button,
+    [data-testid="stMain"] .stDownloadButton > button,
+    [data-testid="stMain"] [data-testid="stFormSubmitButton"] > button {
+        background-color: #C8552F !important;
+        color: #FFFFFF !important;
+        border-color: #C8552F !important;
+        padding: 0.2rem 0.7rem !important;
+        font-size: 0.72rem !important;
+        letter-spacing: 0.03em;
+    }
+    [data-testid="stMain"] .stButton > button:hover,
+    [data-testid="stMain"] .stDownloadButton > button:hover,
+    [data-testid="stMain"] [data-testid="stFormSubmitButton"] > button:hover {
+        background-color: #A8451F !important;
+        border-color: #A8451F !important;
+        color: #FFFFFF !important;
+    }
+    [data-testid="stMain"] [data-testid="stMetricValue"] {
+        font-size: 1.5rem !important; line-height: 1.1 !important;
+    }
+    [data-testid="stMain"] [data-testid="stMetricLabel"] {
+        font-size: 0.75rem !important;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
 
 def autenticado():
     # Sin secrets.toml (uso local) st.secrets revienta, no devuelve vacio.
@@ -76,8 +106,15 @@ def pesos_md(v):
 
 # ==================================================================== cabecera
 
-cuentas = almacen.cuentas_con_token() or [almacen.CUENTA_POR_DEFECTO]
 ETIQUETAS = {"crafters": "CRAFTERS", "erpa": "ERPA SACIF"}
+
+# Abre en ERPA: es la cuenta que tiene los certificados cargados y donde el
+# control encuentra algo. CRAFTERS queda a un click.
+PREFERIDA = "erpa"
+
+cuentas = almacen.cuentas_con_token() or [almacen.CUENTA_POR_DEFECTO]
+cuentas = ([PREFERIDA] if PREFERIDA in cuentas else []) + \
+          [c for c in cuentas if c != PREFERIDA]
 
 @st.dialog("Tutorial — Control de facturación", width="large")
 def _tutorial_dialog():

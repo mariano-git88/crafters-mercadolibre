@@ -1,6 +1,16 @@
 [
   {
     "fecha": "2026-08-06",
+    "hora": "17:55",
+    "tipo": "mejora",
+    "titulo": "Abre en ERPA SACIF y los botones quedaron en naranja",
+    "puntos": [
+      "La app **abre directamente en ERPA SACIF**, que es la cuenta con los certificados cargados. CRAFTERS queda a un click.",
+      "Los botones toman el naranja de la casa, igual que en las otras apps."
+    ]
+  },
+  {
+    "fecha": "2026-08-06",
     "hora": "17:30",
     "tipo": "nuevo",
     "titulo": "Tutorial y Novedades",
