@@ -77,6 +77,22 @@ GASTO_MINIMO = 3000.0
 DIAS = 30
 
 
+def toca_esta_semana():
+    """
+    Si la corrida programada de hoy va o se saltea.
+
+    **Cada 21 dias, no cada 7.** Con la ventana de 30 dias, un anuncio que se
+    prende el martes se juzgaria el martes siguiente con 7 dias propios y 23
+    de cuando estaba apagado: se lo puede prender y apagar antes de saber
+    como funciona. Feedback del equipo, 2026-08-06.
+
+    Se resuelve con la semana ISO modulo 3 en vez de guardar la fecha de la
+    ultima corrida: es deterministico, no necesita estado y no se desincroniza
+    si una semana el workflow no corre.
+    """
+    return date.today().isocalendar().week % 3 == 0
+
+
 def correr(aplicar=False, verbose=True, log=None, conv=None, ml=None):
     """
     `log` recibe cada linea; sirve para mostrarlo en la app en vez de la
@@ -104,6 +120,11 @@ def correr(aplicar=False, verbose=True, log=None, conv=None, ml=None):
     pubs = json.loads((DIR / "catalogo.json").read_text(encoding="utf-8")) \
         if (DIR / "catalogo.json").exists() else publicidad_catalogo(ml)
     plan = publicidad.analizar(df, pubs)
+    # Concentrar el presupuesto en los que mejor rinden, y despues frenar lo
+    # que tocamos hace poco. El orden importa: el enfriamiento tiene que ser
+    # lo ultimo, para que ninguna regla lo pase por encima.
+    plan = publicidad.concentrar_presupuesto(plan, camps, dias=DIAS)
+    plan = publicidad.aplicar_enfriamiento(plan)
 
     pes = lambda v: f"${v:,.0f}".replace(",", ".")
     log(f"\n{len(plan)} anuncios · gasto {pes(plan['gasto'].sum())} · "
@@ -230,6 +251,9 @@ def candidatos_a_sumar(ml, df_ads, pubs, log, conv=None):
     c = publicidad.candidatos(conv, pubs, df_ads, advs, camps)
     if not len(c):
         return c
+    # El enfriamiento vale para los dos lados: prender algo que apagamos hace
+    # una semana es el mismo error que apagarlo de nuevo.
+    c = publicidad.aplicar_enfriamiento(c)
     c = c[c["accion"] == "agregar"].sort_values("visitas", ascending=False)
     # Los estados de campana hacen falta para no "activar" un anuncio dentro
     # de una campana pausada, que no lo hace correr.
@@ -247,6 +271,12 @@ def publicidad_catalogo(ml):
 
 
 def main():
+    # El disparo programado se saltea las semanas que no tocan; el manual
+    # corre siempre, porque si alguien lo aprieta es porque lo quiere ahora.
+    if "--programado" in sys.argv and not toca_esta_semana():
+        print("Esta semana no toca: el ciclo es cada 21 días para que cada "
+              "anuncio se juzgue con datos suyos.")
+        return 0
     return correr(aplicar="--aplicar" in sys.argv)
 
 

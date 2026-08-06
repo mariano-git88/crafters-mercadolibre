@@ -409,6 +409,86 @@ def analizar(df_ads, pubs, cfg=None, estrat=None, df_rent=None):
     return df.sort_values("gasto", ascending=False).reset_index(drop=True)
 
 
+# ------------------------------------------- concentrar el presupuesto
+
+# Desde que uso de su tope una campana se considera limitada por el
+# presupuesto. Medido el 2026-08-06: Bulit iba al 88% y Suprabond al 83%.
+UMBRAL_TOPE = 0.75
+
+# Un anuncio se apaga por concentracion si rinde menos que esta fraccion del
+# **cuartil superior** de su campana. No se compara contra el mejor: un solo
+# anuncio excepcional dejaria a todos los demas por debajo y vaciaria la
+# campana.
+FRACCION_VS_BUENOS = 0.5
+
+# Tope de anuncios que la regla puede apagar por campana en una corrida.
+# Concentrar es mover plata de los flojos a los buenos; apagar media campana
+# de una no es concentrar, es cortar el gasto y de paso las ventas.
+MAX_POR_CAMPANA = 0.25
+
+
+def concentrar_presupuesto(plan, camps_por_adv, cfg=None, estrat=None,
+                           dias=30):
+    """
+    Apaga anuncios que rinden **bien pero mucho peor que sus compañeros de
+    campana**, para que el presupuesto se lo lleven los que mejor convierten.
+
+    La logica de fondo: en Product Ads el presupuesto es **de la campana, no
+    del anuncio** —el ad_group no tiene ni budget ni puja— asi que la unica
+    forma de concentrar plata en los buenos es hacerles lugar.
+
+    **Solo aplica si la campana esta contra su tope.** Si no lo agota, apagar
+    un anuncio que rinde no libera nada para nadie: se pierde su venta y ya.
+    Por eso mira `UMBRAL_TOPE` antes de tocar nada.
+
+    Devuelve las filas del plan que pasan a 'pausar', con el motivo escrito.
+    """
+    cfg = cfg or config()
+    estrat = estrat if estrat is not None else estrategicos()
+    if plan is None or not len(plan):
+        return plan
+
+    topes = {c["id"]: (c.get("budget") or 0) * dias
+             for cs in (camps_por_adv or {}).values() for c in cs}
+
+    cambios = 0
+    for camp, g in plan.groupby("campaign_id"):
+        tope = topes.get(camp, 0)
+        if not tope or g["gasto"].sum() / tope < UMBRAL_TOPE:
+            continue
+
+        # Solo los que estan corriendo y tienen plata medida encima.
+        vivos = g[(g["estado_ad"].isin(CORRIENDO))
+                  & (g["gasto"] >= cfg["gasto_minimo"])
+                  & (g["roas"] > 0)]
+        if len(vivos) < 4:
+            # Con tres anuncios no hay "cuartil superior" que valga.
+            continue
+
+        referencia = vivos["roas"].quantile(0.75)
+        piso = referencia * FRACCION_VS_BUENOS
+        flojos = vivos[vivos["roas"] < piso].sort_values("roas")
+        if not len(flojos):
+            continue
+
+        permitidos = max(1, int(len(vivos) * MAX_POR_CAMPANA))
+        for _, r in flojos.head(permitidos).iterrows():
+            sku = str(r.get("sku") or "").upper()
+            if sku and sku in estrat:
+                continue
+            if plan.loc[plan["item_id"] == r["item_id"], "accion"].iloc[0] \
+                    == "pausar":
+                continue          # ya lo apaga otra regla, no se pisa el motivo
+            plan.loc[plan["item_id"] == r["item_id"], "accion"] = "pausar"
+            plan.loc[plan["item_id"] == r["item_id"], "motivo"] = (
+                f"ROAS {r['roas']:.1f} contra {referencia:.1f} del cuartil "
+                f"superior de su campaña, que está al "
+                f"{g['gasto'].sum() / tope:.0%} del tope: el presupuesto "
+                "rinde más en los otros")
+            cambios += 1
+    return plan
+
+
 # ------------------------------------------------- candidatos a publicitar
 
 # Diagnosticos de `conversion.py` que significan "esto convierte y le falta
@@ -556,6 +636,73 @@ def candidatos(df_conv, pubs, df_ads, advs=None, camps_por_adv=None,
         })
 
     return pd.DataFrame(filas)
+
+
+# Dias que tiene que pasar un anuncio sin que lo toquemos antes de volver a
+# juzgarlo.
+#
+# **Por que existe.** Corriendo cada semana sobre una ventana de 30 dias, un
+# anuncio que se prende el lunes se juzga el lunes siguiente con 7 dias de
+# datos propios y 23 de otra epoca — o de cuando estaba apagado. Se lo puede
+# prender y apagar antes de saber como funciona de verdad. Es el feedback que
+# trajo Mariano el 2026-08-06 y era un defecto real.
+#
+# El enfriamiento es **por anuncio**, no del proceso entero: asi una corrida
+# sigue detectando rapido un problema nuevo, pero nunca re-juzga algo que
+# acabamos de tocar.
+ENFRIAMIENTO_DIAS = 21
+
+
+def tocados_hace_poco(dias=ENFRIAMIENTO_DIAS):
+    """
+    item_id -> fecha, de todo lo que tocamos dentro del enfriamiento.
+
+    Sale de la auditoria, que ya es el registro de que cambiamos y cuando. No
+    hace falta llevar otro estado en paralelo.
+    """
+    try:
+        filas = almacen.leer_hoja(almacen.HOJA_AUDITORIA,
+                                  almacen.COLUMNAS_AUDITORIA)
+    except Exception:
+        # Sin auditoria no se puede saber: se sigue sin enfriamiento en vez
+        # de frenar todo. Peor seria no hacer nada nunca.
+        return {}
+    corte = pd.Timestamp.now() - pd.Timedelta(days=dias)
+    recientes = {}
+    for f in filas:
+        if str(f.get("campo")) != "ad_status":
+            continue
+        try:
+            cuando = pd.Timestamp(str(f.get("fecha")))
+        except Exception:
+            continue
+        if cuando < corte:
+            continue
+        item = str(f.get("item_id") or "")
+        if item and (item not in recientes or cuando > recientes[item]):
+            recientes[item] = cuando
+    return recientes
+
+
+def aplicar_enfriamiento(plan, recientes=None, dias=ENFRIAMIENTO_DIAS):
+    """Deja en 'ninguna' lo que tocamos hace menos de `dias`."""
+    if plan is None or not len(plan):
+        return plan
+    recientes = recientes if recientes is not None else tocados_hace_poco(dias)
+    if not recientes:
+        return plan
+    for item, cuando in recientes.items():
+        fila = plan["item_id"] == item
+        if not fila.any():
+            continue
+        if plan.loc[fila, "accion"].iloc[0] == "ninguna":
+            continue
+        faltan = dias - (pd.Timestamp.now() - cuando).days
+        plan.loc[fila, "accion"] = "ninguna"
+        plan.loc[fila, "motivo"] = (
+            f"lo tocamos el {cuando:%d/%m}: se espera {max(faltan, 0)} días "
+            "más para juzgarlo con datos suyos")
+    return plan
 
 
 def resolver_candidatos(ml, cand, estados_camp=None, callback=None):

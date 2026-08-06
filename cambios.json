@@ -1,6 +1,18 @@
 [
   {
     "fecha": "2026-08-06",
+    "hora": "14:30",
+    "tipo": "mejora",
+    "titulo": "La publicidad se revisa cada 21 días, no cada 7",
+    "puntos": [
+      "Antes corría semanal. Con una ventana de 30 días, un anuncio prendido el martes se juzgaba el martes siguiente con 7 días propios y 23 de cuando estaba apagado: se lo podía prender y apagar antes de saber cómo funcionaba.",
+      "Ahora el ciclo es **cada 21 días**, y además **ningún anuncio se vuelve a tocar antes de 21 días** de la última vez. Eso vale para los dos lados: prender algo que apagamos la semana pasada es el mismo error que apagarlo de nuevo.",
+      "Se agregó una regla para concentrar el presupuesto en los anuncios que mejor rinden, apagando a los que rinden mucho peor que sus compañeros de campaña.",
+      "Ojo: con el ACOS máximo en 15% esa regla **no llega a activarse**, porque el tope ya apaga todo lo que ella apagaría. Recién sirve si algún día se afloja el ACOS."
+    ]
+  },
+  {
+    "fecha": "2026-08-06",
     "hora": "01:10",
     "tipo": "nuevo",
     "titulo": "Las reseñas de MercadoLibre pasan a la tienda Shopify",
