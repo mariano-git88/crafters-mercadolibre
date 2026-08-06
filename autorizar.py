@@ -120,11 +120,17 @@ def main():
         print("  Hay que habilitar offline_access en el panel de la app y reautorizar.")
 
     # Prueba real contra la API para confirmar que quedo todo bien.
-    print("\nProbando la conexion...")
+    # **La prueba va contra la cuenta recien autorizada**, no contra la de
+    # siempre. Sin pasar `cuenta` decia "OK -> CRAFTERSARG" despues de
+    # autorizar ERPA: parecia confirmar algo que no habia probado.
+    print(f"\nProbando la conexion de '{cuenta}'...")
     try:
-        yo = Meli(verbose=False).get("/users/me")
+        yo = Meli(verbose=False, cuenta=cuenta).get("/users/me")
         print(f"  OK -> {yo['nickname']} | {yo.get('site_id')} | "
               f"reputacion: {yo.get('seller_reputation', {}).get('level_id', 'n/d')}")
+        if str(yo.get("id")) != str(datos.get("user_id")):
+            print(f"  OJO: el token es del usuario {datos.get('user_id')} pero "
+                  f"la API contesta {yo.get('id')}.")
     except MeliError as e:
         print(f"  Se guardaron los tokens pero la prueba fallo: {e}")
         return 1
