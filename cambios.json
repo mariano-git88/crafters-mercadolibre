@@ -1,6 +1,19 @@
 [
   {
     "fecha": "2026-08-06",
+    "hora": "22:10",
+    "tipo": "mejora",
+    "titulo": "Duplicados de catálogo: ahora distingue por tienda oficial",
+    "puntos": [
+      "El análisis de fichas ahora mira **de qué tienda oficial** es cada publicación, que es lo que decide si algo es un duplicado o una decisión comercial.",
+      "**230 fichas tienen choque entre tiendas** (una en TO Bulit y otra en TO Crafters compitiendo en la misma ficha) y **146 tienen dos de la misma tienda**, que es duplicado claro.",
+      "**74 publicaciones tienen moderación encima ahora**: `forbidden` son las que ML bajó por duplicadas y `waiting_for_patch` las que quedaron pausadas esperando volver a competir.",
+      "También se muestran las publicaciones moderadas o inactivas, que antes quedaban fuera del análisis: eran justo el síntoma que había que ver.",
+      "Cómo se rompe el círculo: dejar en catálogo la de **una sola tienda** y rechazar la sugerencia de catálogo en la otra. La segunda vale igual, pero sin competir en la ficha."
+    ]
+  },
+  {
+    "fecha": "2026-08-06",
     "hora": "19:20",
     "tipo": "nuevo",
     "titulo": "Duplicados: ahora también mira la ficha de catálogo",

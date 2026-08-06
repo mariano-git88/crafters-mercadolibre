@@ -3013,21 +3013,33 @@ elif seccion == "Oportunidades":
 
         dc = st.session_state.get("dup_cat")
         if dc is not None and len(dc):
-            riesgo = dc[dc["clase"] == "varias en catálogo"]
+            choque = dc[dc["clase"] == "choque entre tiendas"]
+            misma = dc[dc["clase"] == "duplicada en la misma tienda"]
             mal = dc[dc["clase"] == "SKU distintos"]
-            k1, k2, k3 = st.columns(3)
-            k1.metric("Fichas en riesgo de moderación",
-                      riesgo["catalog_product_id"].nunique())
-            k2.metric("Publicaciones ahí", len(riesgo))
+            moderadas = dc[dc["moderacion"] != ""]
+            k1, k2, k3, k4 = st.columns(4)
+            k1.metric("Choque entre tiendas",
+                      choque["catalog_product_id"].nunique())
+            k2.metric("Duplicada en la misma tienda",
+                      misma["catalog_product_id"].nunique())
             k3.metric("Fichas con SKU distintos",
                       mal["catalog_product_id"].nunique())
+            k4.metric("Con moderación encima", len(moderadas))
 
             st.warning(
                 "**El círculo vicioso.** Cuando dos publicaciones nuestras "
                 "compiten en la misma ficha, MercadoLibre modera una por "
-                "duplicada y la tradicional queda pausada esperando volver a "
-                "competir. Pasa aunque los títulos sean distintos, por eso el "
-                "análisis por SKU no lo detecta.", icon="🔁")
+                "duplicada y la otra queda en `waiting_for_patch`, pausada "
+                "esperando volver a competir. Se rompe dejando en catálogo la "
+                "de **una sola tienda** y rechazando la sugerencia de "
+                "catálogo en la otra — la de la segunda tienda vale la pena "
+                "igual, pero sin competir en la ficha.", icon="🔁")
+            if len(moderadas):
+                st.error(
+                    f"**{len(moderadas)} publicaciones tienen moderación "
+                    "encima ahora mismo.** Es el síntoma, no la causa: "
+                    "`forbidden` es la que ML bajó por duplicada y "
+                    "`waiting_for_patch` la que quedó esperando.", icon="⛔")
 
             if len(mal):
                 st.error(
@@ -3038,18 +3050,23 @@ elif seccion == "Oportunidades":
                     "uno Phillips. Eso no se arregla borrando: hay que "
                     "corregir la asociación.", icon="🔗")
 
-            cual = st.radio(
-                "Ver", ["Varias en catálogo", "SKU distintos"],
-                horizontal=True, key="cat_ver", label_visibility="collapsed")
-            v = riesgo if cual == "Varias en catálogo" else mal
+            _OPC = {"Choque entre tiendas": choque,
+                    "Duplicada en la misma tienda": misma,
+                    "SKU distintos": mal,
+                    "Con moderación": moderadas}
+            cual = st.radio("Ver", list(_OPC), horizontal=True,
+                            key="cat_ver", label_visibility="collapsed")
+            v = _OPC[cual]
             st.dataframe(
-                v[["catalog_product_id", "item_id", "sku", "titulo",
-                   "en_catalogo", "unidades_30d", "importe_30d",
-                   "titulos_distintos"]],
+                v[["catalog_product_id", "item_id", "tienda", "tipo",
+                   "estado", "moderacion", "sku", "titulo", "en_catalogo",
+                   "unidades_30d", "importe_30d"]],
                 use_container_width=True, height=380, hide_index=True,
                 column_config={
                     "catalog_product_id": "Ficha",
-                    "item_id": "Publicación", "sku": "SKU",
+                    "item_id": "Publicación", "tienda": "Tienda oficial",
+                    "tipo": "Tipo", "estado": "Estado",
+                    "moderacion": "Moderación", "sku": "SKU",
                     "titulo": "Título",
                     "en_catalogo": st.column_config.CheckboxColumn(
                         "En catálogo"),
@@ -3057,8 +3074,7 @@ elif seccion == "Oportunidades":
                         "Unid. 30d", format="%.0f"),
                     "importe_30d": st.column_config.NumberColumn(
                         "Vendido 30d", format="%.0f"),
-                    "titulos_distintos": st.column_config.CheckboxColumn(
-                        "Títulos distintos")})
+                    })
 
             st.download_button(
                 "Descargar el detalle", dc.to_csv(index=False).encode("utf-8"),

@@ -224,6 +224,23 @@ def analizar(pubs=None, conv=None):
 #     Phillips colgados de la misma ficha.
 
 
+# Las tiendas oficiales de la cuenta, deducidas de las marcas que publica
+# cada una. Se dejan por nombre porque un id suelto no le dice nada a nadie.
+TIENDAS = {630: "TO Bulit", 631: "TO Suprabond", 2859: "TO Crafters",
+           211228: "TO Danska"}
+
+# `sub_status` que significan "ML te esta moderando esto". `waiting_for_patch`
+# es la publicacion pausada esperando volver a competir en catalogo — el
+# sintoma visible del circulo vicioso.
+MODERADA = ("forbidden", "waiting_for_patch", "invalid_kit")
+
+
+def _tienda(store_id):
+    if store_id is None:
+        return "sin tienda oficial"
+    return TIENDAS.get(store_id, f"TO {store_id}")
+
+
 def por_catalogo(pubs=None, conv=None):
     """
     Publicaciones que comparten producto de catalogo.
@@ -240,9 +257,12 @@ def por_catalogo(pubs=None, conv=None):
         conv = pd.read_csv(ruta) if ruta.exists() else None
     rend = _rendimiento(conv)
 
+    # **No se filtra por activas.** Las que estan moderadas o esperando
+    # (`under_review`, `inactive`) son justamente el sintoma que hay que ver:
+    # dejarlas afuera muestra el problema sin sus consecuencias.
     grupos = defaultdict(list)
     for p in pubs:
-        if p.get("status") != "active":
+        if p.get("status") in ("closed", "deleted"):
             continue
         if p.get("catalog_product_id"):
             grupos[p["catalog_product_id"]].append(p)
@@ -256,26 +276,41 @@ def por_catalogo(pubs=None, conv=None):
                  or "").strip() for p in ps}
         titulos = {(p.get("title") or "").strip().lower() for p in ps}
 
+        tiendas_cat = {p.get("official_store_id") for p in en_catalogo}
+
         if len(skus) > 1:
             clase = "SKU distintos"
             que = ("dos SKU nuestros cuelgan de la misma ficha: o son el "
                    "mismo producto con dos códigos, o uno está mal asociado")
+        elif len(en_catalogo) > 1 and len(tiendas_cat) == 1:
+            clase = "duplicada en la misma tienda"
+            que = (f"{len(en_catalogo)} publicaciones de "
+                   f"{_tienda(list(tiendas_cat)[0])} compiten en la misma "
+                   "ficha: sobra una")
         elif len(en_catalogo) > 1:
-            clase = "varias en catálogo"
-            que = (f"{len(en_catalogo)} publicaciones nuestras compiten en la "
-                   "misma ficha: ML modera una por duplicada y la tradicional "
-                   "queda esperando")
+            clase = "choque entre tiendas"
+            que = ("compiten en la misma ficha desde "
+                   + " y ".join(sorted(_tienda(t) for t in tiendas_cat))
+                   + ": ML modera una y la tradicional queda esperando. Se "
+                     "rompe dejando en catálogo la de una sola tienda y "
+                     "rechazando la sugerencia de catálogo en la otra")
         else:
             clase = "normal"
             que = "una de catálogo y el resto tradicionales"
 
         for p in ps:
             m = rend.get(p["id"], {})
+            sub = [x for x in (p.get("sub_status") or []) if x in MODERADA]
             filas.append({
                 "catalog_product_id": cat,
                 "clase": clase,
                 "riesgo": que,
                 "item_id": p["id"],
+                "tienda": _tienda(p.get("official_store_id")),
+                "tipo": ("Premium" if p.get("listing_type_id") == "gold_pro"
+                         else "Clásica"),
+                "estado": p.get("status"),
+                "moderacion": ", ".join(sub),
                 "sku": (sku_del_atributo(p) or p.get("seller_custom_field")
                         or ""),
                 "titulo": (p.get("title") or "")[:70],

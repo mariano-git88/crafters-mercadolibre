@@ -53,7 +53,12 @@ CAMPOS = ["id", "title", "price", "base_price", "original_price",
           "catalog_product_id", "permalink", "date_created", "last_updated",
           # Claves para agrupar: las publicaciones que comparten user_product_id
           # comparten el stock. inventory_id aparece cuando esta en Full.
-          "user_product_id", "inventory_id"]
+          "user_product_id", "inventory_id",
+          # La tienda oficial cambia que es un duplicado y que no: dos
+          # publicaciones de la MISMA tienda peleando la misma ficha de
+          # catalogo es un duplicado; una en cada tienda es una decision, pero
+          # si las dos van a catalogo chocan igual y ML modera una.
+          "official_store_id"]
 
 
 def logistica(pub):
