@@ -119,7 +119,19 @@ def correr(aplicar=False, verbose=True, log=None, conv=None, ml=None):
 
     pubs = json.loads((DIR / "catalogo.json").read_text(encoding="utf-8")) \
         if (DIR / "catalogo.json").exists() else publicidad_catalogo(ml)
-    plan = publicidad.analizar(df, pubs)
+    margenes, medidos = publicidad.margenes_por_sku()
+    if not margenes:
+        log("AVISO: no hay márgenes por SKU guardados, así que el tope de "
+            "ACOS es uno solo para todo el catálogo. Corré Rentabilidad en la "
+            "app y apretá «Guardar los márgenes para publicidad».")
+    elif medidos:
+        viejos = (pd.Timestamp.now() - pd.Timestamp(medidos)).days
+        log(f"Márgenes de {len(margenes)} SKU, medidos hace {viejos} días.")
+        if viejos > publicidad.MARGENES_VIEJOS_DIAS:
+            log("AVISO: están viejos. Un margen desactualizado decide mal el "
+                "tope de gasto y no se nota.")
+
+    plan = publicidad.analizar(df, pubs, margenes=margenes)
     # Concentrar el presupuesto en los que mejor rinden, y despues frenar lo
     # que tocamos hace poco. El orden importa: el enfriamiento tiene que ser
     # lo ultimo, para que ninguna regla lo pase por encima.

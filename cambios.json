@@ -1,6 +1,19 @@
 [
   {
     "fecha": "2026-08-06",
+    "hora": "17:00",
+    "tipo": "mejora",
+    "titulo": "El tope de publicidad ahora mira el margen de cada producto",
+    "puntos": [
+      "Antes había **un solo tope de ACOS para todo el catálogo** (15%). Eso estaba mal en las dos direcciones: para un producto que deja 10% de margen, gastar 15% en publicidad **pierde plata**; para uno que deja 33%, 15% deja plata sobre la mesa.",
+      "Ahora cada SKU tiene su propio tope, sacado de su margen. El punto de equilibrio es ACOS = margen —gastar en publicidad lo mismo que deja el producto se come toda la ganancia— y se usa el 60% de eso.",
+      "Ejemplos: margen 10,6% → tope 6,4%. Margen 25% → tope 15%. Margen 32,8% → tope 19,7%.",
+      "Para que funcione hay que correr **Rentabilidad** y apretar «Guardar los márgenes para publicidad». Los SKU sin margen medido siguen con el tope general.",
+      "Si los márgenes están viejos o no están, el proceso lo avisa en vez de decidir en silencio."
+    ]
+  },
+  {
+    "fecha": "2026-08-06",
     "hora": "14:30",
     "tipo": "mejora",
     "titulo": "La publicidad se revisa cada 21 días, no cada 7",

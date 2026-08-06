@@ -50,6 +50,21 @@ COLUMNAS_CONFIG = ["clave", "valor"]
 HOJA_ESTRATEGICOS = "publicidad_estrategicos"
 COLUMNAS_ESTRATEGICOS = ["sku", "nota"]
 
+# Cuanto del margen se acepta gastar en publicidad. Con 0,6 se gastan 6 de
+# cada 10 pesos de margen y quedan 4 de ganancia.
+FACTOR_MARGEN = 0.60
+
+# El tope por SKU se recorta a este rango. Abajo, porque un ACOS de 2% no lo
+# alcanza casi ningun anuncio y equivale a apagar el producto sin decirlo.
+# Arriba, porque por mas margen que tenga un SKU, gastar la mitad de la venta
+# en publicidad es una apuesta, no una decision.
+TOPE_MINIMO = 5.0
+TOPE_MAXIMO = 40.0
+
+# Pasado esto, los margenes guardados se consideran viejos y se avisa.
+MARGENES_VIEJOS_DIAS = 45
+
+
 # Los topes viven en la Sheet, no en un archivo: en Streamlit Cloud el disco
 # es efimero y cualquier cambio se perderia en el proximo deploy.
 POR_DEFECTO = {
@@ -67,6 +82,11 @@ POR_DEFECTO = {
     # ahi los candidatos de campanas dormidas quedan afuera.
     "campana_nuevos": 358677871.0,
     "anunciante_nuevos": 872.0,
+
+    # Que fraccion del margen del SKU se acepta gastar en publicidad. Ver
+    # `tope_acos`: el equilibrio es ACOS = margen, asi que con 0,6 quedan 4
+    # de cada 10 pesos de margen como ganancia.
+    "factor_margen": FACTOR_MARGEN,
 }
 
 
@@ -91,6 +111,76 @@ def config():
 def guardar_config(valores):
     filas = [{"clave": k, "valor": v} for k, v in valores.items()]
     return almacen.reescribir_hoja(HOJA_CONFIG, COLUMNAS_CONFIG, filas)
+
+
+HOJA_MARGENES = "publicidad_margenes"
+COLUMNAS_MARGENES = ["sku", "margen_pct", "fecha"]
+
+def margenes_por_sku():
+    """
+    sku -> margen_pct, de la ultima corrida de Rentabilidad guardada.
+
+    Devuelve tambien que tan vieja es la medicion, porque un margen de hace
+    meses aplicado a un tope de gasto decide mal en silencio.
+    """
+    try:
+        filas = almacen.leer_hoja(HOJA_MARGENES, COLUMNAS_MARGENES)
+    except Exception:
+        return {}, None
+    margenes, fecha = {}, None
+    for f in filas:
+        sku = str(f.get("sku", "")).strip().upper()
+        if not sku:
+            continue
+        try:
+            margenes[sku] = float(str(f.get("margen_pct")).replace(",", "."))
+        except (TypeError, ValueError):
+            continue
+        if f.get("fecha"):
+            fecha = str(f["fecha"])
+    return margenes, fecha
+
+
+def guardar_margenes(df_rent):
+    """
+    Guarda el margen por SKU para que lo use el tope de ACOS.
+
+    Se guarda **en porcentaje** (12.5 y no 0.125): es lo que se compara
+    contra el ACOS, que la API de ML tambien devuelve en porcentaje. Mezclar
+    las dos escalas da topes 100 veces mas chicos y apaga todo.
+    """
+    if df_rent is None or not len(df_rent) or "margen_pct" not in df_rent:
+        return False, "no hay márgenes para guardar"
+    hoy = pd.Timestamp.now().strftime("%Y-%m-%d")
+    filas = []
+    for _, r in df_rent.iterrows():
+        sku = str(r.get("sku") or "").strip().upper()
+        m = r.get("margen_pct")
+        if not sku or m is None or pd.isna(m):
+            continue
+        filas.append({"sku": sku, "margen_pct": round(float(m) * 100, 2),
+                      "fecha": hoy})
+    if not filas:
+        return False, "ningún SKU tenía margen calculado"
+    return almacen.reescribir_hoja(HOJA_MARGENES, COLUMNAS_MARGENES, filas)
+
+
+def tope_acos(sku, margenes, cfg):
+    """
+    Hasta cuanto ACOS se banca **ese** SKU.
+
+    El punto de equilibrio es ACOS = margen: gastar en publicidad el mismo
+    porcentaje que deja el producto se come toda la ganancia. Se toma una
+    fraccion de eso para que quede ganancia.
+
+    Sin margen conocido cae al tope general, que es lo unico honesto: inventar
+    un margen para un SKU que no medimos es peor que usar la regla vieja.
+    """
+    m = margenes.get(str(sku or "").strip().upper()) if margenes else None
+    if m is None or m <= 0:
+        return cfg["acos_max"], False
+    tope = m * cfg.get("factor_margen", FACTOR_MARGEN)
+    return min(max(tope, TOPE_MINIMO), TOPE_MAXIMO), True
 
 
 def estrategicos():
@@ -297,7 +387,8 @@ def _vendible(pub):
     return True, ""
 
 
-def analizar(df_ads, pubs, cfg=None, estrat=None, df_rent=None):
+def analizar(df_ads, pubs, cfg=None, estrat=None, df_rent=None,
+             margenes=None):
     """
     Marca que hacer con cada anuncio. Devuelve el mismo DataFrame con
     `accion` ('pausar' / 'activar' / 'revisar' / 'ninguna') y `motivo`.
@@ -307,6 +398,11 @@ def analizar(df_ads, pubs, cfg=None, estrat=None, df_rent=None):
     """
     cfg = cfg or config()
     estrat = estrat if estrat is not None else estrategicos()
+    # **El tope de ACOS es por SKU, no uno solo para todo el catalogo.** Un
+    # SKU que deja 10% de margen pierde plata con ACOS 15%; uno que deja 33%
+    # aguanta bastante mas. Ver `tope_acos`.
+    if margenes is None:
+        margenes, _ = margenes_por_sku()
     df = df_ads.copy()
     if not len(df):
         return df
@@ -363,10 +459,14 @@ def analizar(df_ads, pubs, cfg=None, estrat=None, df_rent=None):
                 motivos.append(f"gastó ${a['gasto']:,.0f} y no vendió nada"
                                .replace(",", "."))
                 continue
-            if a["acos"] > cfg["acos_max"]:
+            tope, propio = tope_acos(sku, margenes, cfg)
+            if a["acos"] > tope:
                 acciones.append("pausar")
-                motivos.append(f"ACOS {a['acos']:.0f}% supera el tope de "
-                               f"{cfg['acos_max']:.0f}%")
+                motivos.append(
+                    f"ACOS {a['acos']:.0f}% supera el {tope:.0f}% que banca "
+                    f"este SKU por su margen" if propio else
+                    f"ACOS {a['acos']:.0f}% supera el tope general de "
+                    f"{tope:.0f}% (sin margen medido para este SKU)")
                 continue
             if 0 < a["roas"] < cfg["roas_min"]:
                 acciones.append("pausar")

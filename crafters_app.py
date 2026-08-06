@@ -3821,6 +3821,29 @@ elif seccion == "Rentabilidad":
             "período elegido. Los SKU con `base_cargos = sin_ventas` no "
             "registraron ventas: ahí el margen no descuenta comisión.")
 
+        st.divider()
+        st.markdown("##### Usar estos márgenes para el tope de publicidad")
+        st.caption(
+            "El proceso de publicidad apaga un anuncio cuando su ACOS supera "
+            "lo que **ese producto** banca según su margen — no un número "
+            "único para todo el catálogo. El equilibrio es ACOS = margen: "
+            "gastar en publicidad el mismo porcentaje que deja el producto se "
+            "come toda la ganancia. Se usa el "
+            f"**{publicidad.config().get('factor_margen', 0.6):.0%} del "
+            "margen**, así queda ganancia.")
+
+        m_ant, f_ant = publicidad.margenes_por_sku()
+        if m_ant:
+            st.caption(f"Hay {len(m_ant)} SKU guardados, medidos el {f_ant}.")
+        if st.button("Guardar los márgenes para publicidad", key="rent_mg"):
+            ok, det = publicidad.guardar_margenes(df)
+            if ok:
+                nuevos, _ = publicidad.margenes_por_sku()
+                st.success(f"{len(nuevos)} SKU guardados. El próximo análisis "
+                           "de publicidad los usa.")
+            else:
+                st.error(str(det))
+
 elif seccion == "Publicidad":
     st.markdown("#### Publicidad")
     st.caption(
