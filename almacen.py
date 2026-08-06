@@ -34,8 +34,12 @@ SECRETS_LOCAL = DIR / ".streamlit" / "secrets.toml"
 HOJA_TOKENS = "tokens_ml"
 HOJA_AUDITORIA = "auditoria"
 
+# `cuenta` va **al final a proposito**: agregarla adelante correria todas las
+# columnas y la fila que ya esta guardada quedaria leida al reves.
+CUENTA_POR_DEFECTO = "crafters"
+
 COLUMNAS_TOKENS = ["access_token", "refresh_token", "user_id", "scope",
-                   "expira_en", "renovado"]
+                   "expira_en", "renovado", "cuenta"]
 COLUMNAS_AUDITORIA = ["fecha", "item_id", "campo", "valor_anterior",
                       "valor_nuevo", "resultado", "operador", "nota"]
 
@@ -192,16 +196,49 @@ def _hoja(planilla, titulo, columnas):
 
 # ------------------------------------------------------------------ tokens
 
-def leer_tokens():
-    """Devuelve el dict de tokens o None si todavia no hay autorizacion."""
+def _cuenta_de(fila):
+    """
+    La cuenta de una fila guardada. Las filas viejas no tienen la columna, y
+    esas son de CRAFTERS: es la unica que existia cuando se escribieron.
+    """
+    return (str(fila.get("cuenta") or "").strip().lower()
+            or CUENTA_POR_DEFECTO)
+
+
+def _filas_tokens():
+    hoja = _hoja(_abrir(), HOJA_TOKENS, COLUMNAS_TOKENS)
+    return hoja, _reintentar(hoja.get_all_records)
+
+
+def cuentas_con_token():
+    """Que cuentas tienen autorizacion guardada."""
+    if not hay_sheet():
+        return [CUENTA_POR_DEFECTO] if TOKENS_LOCAL.exists() else []
+    try:
+        _, filas = _filas_tokens()
+    except Exception:
+        return []
+    return sorted({_cuenta_de(f) for f in filas if f.get("access_token")})
+
+
+def leer_tokens(cuenta=CUENTA_POR_DEFECTO):
+    """
+    Los tokens de una cuenta, o None si esa cuenta no esta autorizada.
+
+    Cada cuenta es una fila. La columna `cuenta` se agrego despues, asi que
+    las filas que no la tienen se leen como CRAFTERS — era la unica cuenta
+    cuando se escribieron.
+    """
+    cuenta = (cuenta or CUENTA_POR_DEFECTO).strip().lower()
     if hay_sheet():
         try:
-            hoja = _hoja(_abrir(), HOJA_TOKENS, COLUMNAS_TOKENS)
-            filas = _reintentar(hoja.get_all_records)
-            if filas:
-                d = dict(filas[-1])       # siempre vale el ultimo guardado
+            _, filas = _filas_tokens()
+            propias = [f for f in filas if _cuenta_de(f) == cuenta]
+            if propias:
+                d = dict(propias[-1])     # siempre vale el ultimo guardado
                 d["expira_en"] = float(d.get("expira_en") or 0)
                 d["user_id"] = int(d.get("user_id") or 0)
+                d["cuenta"] = cuenta
                 return d
             return None
         except AlmacenError:
@@ -209,21 +246,31 @@ def leer_tokens():
         except Exception as e:
             raise AlmacenError(f"No pude leer los tokens de la Sheet: {e}") from e
 
-    if TOKENS_LOCAL.exists():
+    if cuenta == CUENTA_POR_DEFECTO and TOKENS_LOCAL.exists():
         return json.loads(TOKENS_LOCAL.read_text(encoding="utf-8"))
+    local = TOKENS_LOCAL.with_name(f"tokens_{cuenta}.json")
+    if local.exists():
+        return json.loads(local.read_text(encoding="utf-8"))
     return None
 
 
-def guardar_tokens(datos):
+def guardar_tokens(datos, cuenta=CUENTA_POR_DEFECTO):
     """
-    Guarda los tokens. En la Sheet reemplaza la fila unica: nos interesa el
-    ultimo refresh_token y nada mas, el historial no sirve (los viejos ya
-    estan invalidados).
+    Guarda los tokens de una cuenta **sin pisar los de las otras**.
+
+    Antes la hoja se vaciaba entera y se escribia una sola fila. Con varias
+    cuentas eso borraria las demas, y como el refresh_token es de un solo uso
+    la cuenta pisada quedaria muerta hasta reautorizarla a mano.
     """
+    cuenta = (cuenta or CUENTA_POR_DEFECTO).strip().lower()
+    datos = dict(datos)
+    datos["cuenta"] = cuenta
+
     if hay_sheet():
         try:
-            hoja = _hoja(_abrir(), HOJA_TOKENS, COLUMNAS_TOKENS)
-            fila = [str(datos.get(c, "")) for c in COLUMNAS_TOKENS]
+            hoja, filas = _filas_tokens()
+            otras = [f for f in filas if _cuenta_de(f) != cuenta]
+            nuevas = otras + [datos]
 
             # Se reintenta la secuencia completa, no cada paso: como arranca
             # borrando, repetirla deja el mismo resultado. Y hay que insistir,
@@ -232,17 +279,20 @@ def guardar_tokens(datos):
             def escribir():
                 hoja.clear()
                 hoja.append_row(COLUMNAS_TOKENS)
-                hoja.append_row(fila)
+                for f in nuevas:
+                    hoja.append_row([str(f.get(c, "")) for c in COLUMNAS_TOKENS])
 
             _reintentar(escribir)
             return datos
         except Exception as e:
             raise AlmacenError(f"No pude guardar los tokens en la Sheet: {e}") from e
 
+    destino = (TOKENS_LOCAL if cuenta == CUENTA_POR_DEFECTO
+               else TOKENS_LOCAL.with_name(f"tokens_{cuenta}.json"))
     # Escritura atomica: si se corta a la mitad no perdemos el refresh_token.
-    tmp = TOKENS_LOCAL.with_suffix(".json.tmp")
+    tmp = destino.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(datos, indent=2), encoding="utf-8")
-    tmp.replace(TOKENS_LOCAL)
+    tmp.replace(destino)
     return datos
 
 

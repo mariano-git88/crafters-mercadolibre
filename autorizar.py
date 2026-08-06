@@ -37,26 +37,43 @@ def main():
         print(f"\nERROR: {e}\n")
         return 1
 
+    # `--cuenta <nombre>` autoriza una cuenta que no sea la de siempre. Cada
+    # cuenta es una fila propia en la hoja de tokens, asi que autorizar una
+    # **no pisa** a las demas.
+    argv = sys.argv[1:]
+    cuenta = almacen.CUENTA_POR_DEFECTO
+    if "--cuenta" in argv:
+        i = argv.index("--cuenta")
+        cuenta = argv[i + 1].strip().lower() if i + 1 < len(argv) else cuenta
+        argv = argv[:i] + argv[i + 2:]
+
     # El code se puede pasar como argumento (comodo para correr desde el chat)
     # o de forma interactiva si el script tiene teclado disponible.
-    pegado = " ".join(sys.argv[1:]).strip()
+    pegado = " ".join(argv).strip()
 
-    print(f"Los tokens se guardan en: {almacen.describir()}\n")
+    print(f"Los tokens se guardan en: {almacen.describir()}")
+    print(f"Cuenta: {cuenta}")
+    ya = almacen.cuentas_con_token()
+    if ya:
+        print(f"Ya autorizadas: {', '.join(ya)}")
+    print()
 
     if not pegado:
         try:
-            if almacen.leer_tokens():
-                print("OJO: ya hay tokens guardados (o sea, ya estabas autorizado).")
+            if almacen.leer_tokens(cuenta):
+                print(f"OJO: la cuenta '{cuenta}' ya esta autorizada.")
                 print("Si igual queres rehacer la autorizacion, segui los pasos.")
         except almacen.AlmacenError as e:
             print(f"AVISO: {e}\n")
 
-        url = url_de_autorizacion(cred["app_id"], cred["redirect_uri"])
+        url = url_de_autorizacion(cred["app_id"], cred["redirect_uri"],
+                                  state=cuenta)
 
         print("\n" + "=" * 78)
-        print("PASO 1 - Abri este link en el navegador, logueado con la cuenta de")
-        print("         MercadoLibre de CRAFTERS (tiene que ser el usuario ADMIN,")
-        print("         no un colaborador):\n")
+        print(f"PASO 1 - Abri este link en el navegador, logueado con la cuenta")
+        print(f"         de MercadoLibre de **{cuenta.upper()}** (tiene que ser el")
+        print("         usuario ADMIN, no un colaborador). Si ya estas logueado")
+        print("         con otra cuenta, usa una ventana privada:\n")
         print(url)
         print("\n" + "=" * 78)
         print("PASO 2 - Dale 'Permitir'. El navegador te va a mandar a:\n")
@@ -64,7 +81,8 @@ def main():
         print("         Es NORMAL que esa pagina de error o no cargue: lo unico que")
         print("         importa es la direccion que quedo arriba en el navegador.")
         print("\nPASO 3 - Copia esa direccion COMPLETA y volve a correr:\n")
-        print('         python autorizar.py "LA_DIRECCION_QUE_COPIASTE"\n')
+        extra = "" if cuenta == almacen.CUENTA_POR_DEFECTO else f" --cuenta {cuenta}"
+        print(f'         python autorizar.py "LA_DIRECCION_QUE_COPIASTE"{extra}\n')
         print("         (el codigo dura pocos minutos, no lo dejes para despues)")
         print("=" * 78 + "\n")
         return 0
@@ -86,7 +104,7 @@ def main():
     # Guardamos usando el mismo formato que usa el cliente para renovar.
     datos = tokens_desde_respuesta(respuesta)
     try:
-        almacen.guardar_tokens(datos)
+        almacen.guardar_tokens(datos, cuenta)
     except almacen.AlmacenError as e:
         print(f"\nERROR guardando los tokens: {e}")
         return 1

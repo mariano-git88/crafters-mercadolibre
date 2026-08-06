@@ -105,27 +105,33 @@ def leer_credenciales():
 
 
 class Meli:
-    def __init__(self, verbose=True):
+    def __init__(self, verbose=True, cuenta=None):
+        """
+        `cuenta` elige cual autorizacion usar. Sin pasar nada va la de
+        siempre (CRAFTERS), asi que todo lo que ya existia sigue igual.
+        """
         self.cred = leer_credenciales()
         self.verbose = verbose
+        self.cuenta = (cuenta or almacen.CUENTA_POR_DEFECTO).strip().lower()
         self.sesion = requests.Session()
         self.tokens = self._leer_tokens()
 
     # ------------------------------------------------------------------ tokens
 
     def _leer_tokens(self):
-        tokens = almacen.leer_tokens()
+        tokens = almacen.leer_tokens(self.cuenta)
         if not tokens:
             raise MeliError(
-                "No hay tokens guardados todavia. Corre `python autorizar.py` "
-                "para hacer la autorizacion inicial (se hace una sola vez)."
+                f"La cuenta '{self.cuenta}' no esta autorizada todavia. Corre "
+                f"`python autorizar.py --cuenta {self.cuenta}` (se hace una "
+                "sola vez por cuenta)."
             )
         return tokens
 
     def _guardar_tokens(self, respuesta):
         """Guarda la respuesta de /oauth/token agregando cuando vence."""
         datos = tokens_desde_respuesta(respuesta)
-        self.tokens = almacen.guardar_tokens(datos)
+        self.tokens = almacen.guardar_tokens(datos, self.cuenta)
         return self.tokens
 
     def _renovar(self):

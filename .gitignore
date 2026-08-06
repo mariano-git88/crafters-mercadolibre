@@ -76,3 +76,6 @@ sesion_ads.json
 
 # Bloque de secrets para el cron: NO subir
 secrets_para_github_actions.txt
+
+# Tokens de cuentas adicionales (fallback local sin Sheet)
+tokens_*.json
