@@ -1,6 +1,19 @@
 [
   {
     "fecha": "2026-08-06",
+    "hora": "01:10",
+    "tipo": "nuevo",
+    "titulo": "Las reseñas de MercadoLibre pasan a la tienda Shopify",
+    "puntos": [
+      "Un proceso semanal trae las reseñas que los productos tienen en MercadoLibre y las carga en la ficha del producto de la tienda Shopify, a través de Parlata.",
+      "**584 de los 669 SKU de la tienda están publicados en ML**, y hay unas **66.000 reseñas** de 3 estrellas o más para traer.",
+      "Solo entran las de **3 estrellas o más**, y cada una queda marcada como venida de MercadoLibre.",
+      "Ojo con qué son: ML agrupa las reseñas **por producto de catálogo**, y esa página la comparten todos los vendedores del producto. O sea que parte de lo que entra lo escribió gente que le compró a un competidor.",
+      "No llevan el sello de «voz verificada»: ése queda para las reseñas grabadas por clientes propios."
+    ]
+  },
+  {
+    "fecha": "2026-08-06",
     "hora": "09:30",
     "tipo": "mejora",
     "titulo": "Duplicados: si ninguna vendió, igual sobra una",

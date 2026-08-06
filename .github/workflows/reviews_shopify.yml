@@ -1,0 +1,64 @@
+name: Reseñas de MercadoLibre a Shopify
+
+# Miércoles 10 de Argentina (13 UTC). Va el miércoles porque el lunes corre
+# el reporte de competencia y el martes el de publicidad, y esta corrida
+# pagina miles de reseñas: no conviene apilarla con otra.
+on:
+  schedule:
+    - cron: '0 13 * * 3'
+  workflow_dispatch:
+    inputs:
+      aplicar:
+        description: 'Importar de verdad (si está en false, solo simula)'
+        type: boolean
+        default: false
+      completo:
+        description: 'Mirar TODO el catálogo en vez de la tanda de la semana (primera corrida)'
+        type: boolean
+        default: false
+
+concurrency:
+  group: reviews-shopify
+  cancel-in-progress: false
+
+jobs:
+  importar:
+    runs-on: ubuntu-latest
+    # Una tanda son ~390 publicaciones y unos 15 minutos; la corrida
+    # completa se acerca a la hora. El margen es para esa.
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r requirements.txt
+
+      - name: Escribir los secrets
+        env:
+          SECRETS_TOML: ${{ secrets.CRAFTERS_SECRETS_TOML }}
+        run: |
+          if [ -z "$SECRETS_TOML" ]; then
+            echo "Falta el secret CRAFTERS_SECRETS_TOML."; exit 1
+          fi
+          mkdir -p .streamlit
+          printf '%s' "$SECRETS_TOML" > .streamlit/secrets.toml
+          grep -q '^\[parlata\]' .streamlit/secrets.toml || \
+            echo "::warning::No hay sección [parlata] en los secrets: la corrida no va a poder importar nada."
+
+      - name: Traer las reseñas
+        run: |
+          ARGS=""
+          if [ "${{ github.event_name }}" = "schedule" ] || \
+             [ "${{ inputs.aplicar }}" = "true" ]; then
+            ARGS="--aplicar"
+          fi
+          if [ "${{ inputs.completo }}" = "true" ]; then
+            ARGS="$ARGS --completo"
+          fi
+          python reviews_shopify.py $ARGS
+
+      - name: Limpiar credenciales
+        if: always()
+        run: rm -f .streamlit/secrets.toml

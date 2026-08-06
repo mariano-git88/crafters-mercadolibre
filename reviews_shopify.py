@@ -2,8 +2,9 @@
 """
 Lleva las reseñas de MercadoLibre a la tienda Shopify, via Parlata.
 
-    python reviews_shopify.py            -> dice que traeria, no manda nada
-    python reviews_shopify.py --aplicar  -> las importa
+    python reviews_shopify.py             -> dice que traeria, no manda nada
+    python reviews_shopify.py --aplicar   -> importa la tanda de la semana
+    python reviews_shopify.py --completo  -> mira TODO el catalogo (1ra vez)
 
 Suprabond vende el mismo catalogo en MercadoLibre y en Shopify. En ML hay
 años de reseñas acumuladas; la tienda Shopify arranca de cero.
@@ -179,7 +180,35 @@ def enviar(cfg, filas, publicar=True, callback=None):
     return total
 
 
-def correr(aplicar=False, log=None, ml=None):
+# En cuantas tandas se parte el catalogo para las corridas semanales.
+#
+# **Por que hay rotacion.** El endpoint de ML no deja pedir "las nuevas", asi
+# que encontrar una reseña nueva obliga a paginar todo: 1.557 publicaciones
+# son ~15.000 llamadas y cerca de una hora. Como los reintentos son no-op
+# —el indice unico de Parlata los saltea— repetir eso cada semana para
+# encontrar un puñado de reseñas es tirar tiempo y minutos de Actions.
+#
+# Con 4 tandas, cada semana se miran ~146 SKU y cada SKU se refresca una vez
+# por mes. La primera corrida va con `--completo`, que trae todo de una.
+TANDAS = 4
+
+
+def tanda_de_la_semana(por_sku, tanda=None):
+    """
+    El pedazo del catalogo que le toca a esta corrida.
+
+    El corte es por posicion en la lista ordenada, no aleatorio: asi la
+    tanda es la misma si la corrida se repite el mismo dia, y entre las
+    cuatro se cubre todo sin solaparse.
+    """
+    if tanda is None:
+        tanda = datetime.now().isocalendar().week % TANDAS
+    claves = sorted(por_sku)
+    elegidas = [k for i, k in enumerate(claves) if i % TANDAS == tanda]
+    return {k: por_sku[k] for k in elegidas}, tanda
+
+
+def correr(aplicar=False, log=None, ml=None, completo=False):
     log = log or (lambda m: print(m, flush=True))
     cfg = config()
     ml = ml or Meli(verbose=False)
@@ -196,6 +225,15 @@ def correr(aplicar=False, log=None, ml=None):
     if not por_sku:
         log("Nada para traer: ningún SKU coincide entre las dos tiendas.")
         return 0
+
+    if completo:
+        log("\nCorrida COMPLETA: se miran los SKU de una. Tarda cerca de "
+            "una hora.")
+    else:
+        por_sku, tanda = tanda_de_la_semana(por_sku)
+        log(f"\nTanda {tanda + 1} de {TANDAS}: {len(por_sku)} SKU "
+            f"({sum(len(v) for v in por_sku.values())} publicaciones). "
+            "Cada SKU se refresca una vez por mes.")
 
     log("\nTrayendo reseñas (se paginan todas: ML no deja pedir las nuevas)...")
     filas = juntar(ml, por_sku, callback=log)
@@ -223,7 +261,8 @@ def correr(aplicar=False, log=None, ml=None):
 
 
 def main():
-    return correr(aplicar="--aplicar" in sys.argv)
+    return correr(aplicar="--aplicar" in sys.argv,
+                 completo="--completo" in sys.argv)
 
 
 if __name__ == "__main__":
