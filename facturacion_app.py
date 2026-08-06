@@ -22,9 +22,10 @@ import facturacion as F
 from meli import Meli, MeliError, es_error_de_api
 
 _ASSETS = Path(__file__).resolve().parent / "_assets"
-ICONO = _ASSETS / "icono_crafters.png"
+LOGO = _ASSETS / "logo_suprabond.png"         # horizontal, para el encabezado
+ICONO = _ASSETS / "icono_suprabond.png"       # cuadrado, para la pestaña
 
-st.set_page_config(page_title="Control de facturación",
+st.set_page_config(page_title="Control de facturación — Suprabond",
                    page_icon=str(ICONO) if ICONO.exists() else "🧾",
                    layout="wide", initial_sidebar_state="collapsed")
 
@@ -39,11 +40,13 @@ def autenticado():
         return True
     izq, centro, der = st.columns([1, 2, 1])
     with centro:
+        if LOGO.exists():
+            st.image(str(LOGO), width=260)
         st.markdown("### Control de facturación")
         st.caption("Percepciones y retenciones. Acceso restringido.")
         with st.form("login"):
             ingresada = st.text_input("Contraseña", type="password")
-            if st.form_submit_button("Ingresar", use_container_width=True):
+            if st.form_submit_button("Ingresar", width="stretch"):
                 if ingresada == clave:
                     st.session_state["auth_crafters"] = True
                     st.rerun()
@@ -72,7 +75,10 @@ ETIQUETAS = {"crafters": "CRAFTERS", "erpa": "ERPA SACIF"}
 
 izq, der = st.columns([3, 2])
 with izq:
+    if LOGO.exists():
+        st.image(str(LOGO), width=200)
     st.markdown("## Control de facturación")
+    st.caption("Percepciones y retenciones de MercadoLibre, mes a mes.")
 with der:
     cuenta = st.segmented_control(
         "Cuenta", cuentas, default=cuentas[0], key="cuenta",
@@ -100,10 +106,12 @@ if not almacen.hay_sheet():
         "guardan en archivos locales; en Streamlit Cloud se borran en cada "
         "reinicio.", icon="⚠️")
 
+# Ojo con el `or`: al hacer click en la opcion ya elegida, segmented_control
+# la deselecciona y devuelve None. Sin respaldo la pagina queda en blanco.
 seccion = st.segmented_control(
     "Sección", ["Control del mes", "Certificados"],
     default="Control del mes", label_visibility="collapsed",
-    key="seccion_activa")
+    key="seccion_activa") or "Control del mes"
 st.divider()
 
 
@@ -137,7 +145,7 @@ if seccion == "Control del mes":
     with c3:
         st.write("")
         correr = st.button("Controlar el mes", type="primary",
-                           use_container_width=True)
+                           width="stretch")
 
     clave_estado = f"ctrl::{cuenta}::{mes['anio']}-{mes['mes']}::{con_ret}"
 
@@ -201,14 +209,14 @@ if seccion == "Control del mes":
     with st.expander("Ver el detalle"):
         v = st.segmented_control("Detalle", ["Percepciones", "Retenciones"],
                                  default="Percepciones",
-                                 label_visibility="collapsed")
+                                 label_visibility="collapsed") or "Percepciones"
         df = per if v == "Percepciones" else ret
         if not len(df):
             st.caption("Sin datos para este período.")
         else:
             st.dataframe(
                 df.sort_values("monto", ascending=False),
-                use_container_width=True, hide_index=True,
+                width="stretch", hide_index=True,
                 column_config={
                     "monto": st.column_config.NumberColumn(
                         "monto", format="$%.2f"),
@@ -247,7 +255,7 @@ if seccion == "Certificados":
             certs[c] = ""
 
     editado = st.data_editor(
-        certs[F.COLS_CERT], num_rows="dynamic", use_container_width=True,
+        certs[F.COLS_CERT], num_rows="dynamic", width="stretch",
         hide_index=True,
         column_config={
             "cuenta": st.column_config.SelectboxColumn(
