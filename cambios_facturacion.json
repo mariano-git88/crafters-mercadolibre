@@ -1,0 +1,36 @@
+[
+  {
+    "fecha": "2026-08-06",
+    "hora": "17:30",
+    "tipo": "nuevo",
+    "titulo": "Tutorial y Novedades",
+    "puntos": [
+      "Botón **Tutorial** con la explicación de cada control, qué mirar en cada hallazgo y por qué las retenciones tardan.",
+      "Botón **Novedades** (este) con lo que va cambiando en la app."
+    ]
+  },
+  {
+    "fecha": "2026-08-06",
+    "hora": "17:10",
+    "tipo": "nuevo",
+    "titulo": "Nace el control mensual de facturación",
+    "puntos": [
+      "Elegís cuenta y mes, y la app revisa sola si MercadoLibre **percibió o retuvo donde no correspondía**. Es el control que se hacía a mano.",
+      "**Selector de cuenta** entre CRAFTERS y ERPA SACIF. Los certificados son distintos en cada una.",
+      "Cuatro controles: **cobrado teniendo certificado vigente** (lo reclamable), alícuota fuera de lo habitual, dos regímenes sobre el mismo movimiento, y **certificados por vencer** con 45 días de aviso.",
+      "Pestaña **Certificados** editable, con las fechas de vigencia de cada uno.",
+      "Encontró **\\$267.914 reclamables en ERPA**: mayo con Catamarca \\$163.187 y Corrientes \\$48.956, y abril con Corrientes \\$55.771."
+    ]
+  },
+  {
+    "fecha": "2026-08-06",
+    "hora": "17:05",
+    "tipo": "arreglo",
+    "titulo": "Tres cosas que hacían que el control mintiera en silencio",
+    "puntos": [
+      "Las percepciones de IIBB se estaban filtrando por un campo que **solo Buenos Aires usa**: Catamarca aparece como \"IBCA\" y Corrientes como \"IBCO\". El control habría dicho \"nada para reclamar\" justo en las provincias con certificado.",
+      "MercadoLibre factura por **dos vías separadas**, y la app leía una sola. En abril eso dejaba afuera \\$4.263 de Corrientes.",
+      "El cruce contra los certificados ahora va por **la fecha de cada movimiento** y no por el mes entero: un certificado emitido a mitad de mes no vuelve reclamable todo el mes."
+    ]
+  }
+]

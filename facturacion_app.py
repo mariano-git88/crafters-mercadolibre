@@ -18,8 +18,14 @@ import pandas as pd
 import streamlit as st
 
 import almacen
+import cambios
 import facturacion as F
+import tutorial_facturacion
 from meli import Meli, MeliError, es_error_de_api
+
+# Cada app lleva su propio registro: compartirlo mostraria las novedades de la
+# app de CRAFTERS aca adentro.
+CAMBIOS = "cambios_facturacion.json"
 
 _ASSETS = Path(__file__).resolve().parent / "_assets"
 LOGO = _ASSETS / "logo_suprabond.png"         # horizontal, para el encabezado
@@ -73,13 +79,32 @@ def pesos_md(v):
 cuentas = almacen.cuentas_con_token() or [almacen.CUENTA_POR_DEFECTO]
 ETIQUETAS = {"crafters": "CRAFTERS", "erpa": "ERPA SACIF"}
 
-izq, der = st.columns([3, 2])
-with izq:
+@st.dialog("Tutorial — Control de facturación", width="large")
+def _tutorial_dialog():
+    tutorial_facturacion.render()
+
+
+@st.dialog("Novedades — qué cambió en la app", width="large")
+def _cambios_dialog():
+    cambios.render(CAMBIOS)
+
+
+enc_logo, enc_info, enc_btn = st.columns([1.1, 2, 1.3])
+with enc_logo:
     if LOGO.exists():
-        st.image(str(LOGO), width=200)
-    st.markdown("## Control de facturación")
+        st.image(str(LOGO), width=190)
+    else:
+        st.markdown("### Suprabond")
+with enc_info:
+    st.markdown("##### Control de facturación")
     st.caption("Percepciones y retenciones de MercadoLibre, mes a mes.")
-with der:
+    st.caption(f"Versión de la app: {cambios.ultima_actualizacion(CAMBIOS)}")
+with enc_btn:
+    bt1, bt2 = st.columns(2)
+    if bt1.button("📖 Tutorial", width="stretch"):
+        _tutorial_dialog()
+    if bt2.button("🆕 Novedades", width="stretch"):
+        _cambios_dialog()
     cuenta = st.segmented_control(
         "Cuenta", cuentas, default=cuentas[0], key="cuenta",
         format_func=lambda c: ETIQUETAS.get(c, c.upper()),

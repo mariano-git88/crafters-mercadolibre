@@ -40,7 +40,19 @@ ARCHIVO = Path(__file__).resolve().parent / "cambios.json"
 ICONO = {"nuevo": "🆕", "mejora": "⬆️", "arreglo": "🔧"}
 
 
-def cargar():
+def _ruta(archivo=None):
+    """
+    Cada app tiene su propio registro: la de CRAFTERS usa `cambios.json` y la
+    de facturacion `cambios_facturacion.json`. Compartirlo mostraria novedades
+    de una app en la otra.
+    """
+    if archivo is None:
+        return ARCHIVO
+    p = Path(archivo)
+    return p if p.is_absolute() else Path(__file__).resolve().parent / p
+
+
+def cargar(archivo=None):
     """
     Lee el registro del disco. **Sin cachear, a proposito** — ver la nota de
     arriba: cachearlo reintroduce el problema que este archivo vino a evitar.
@@ -49,7 +61,7 @@ def cargar():
     muestra un aviso en vez de tumbar la app.
     """
     try:
-        datos = json.loads(ARCHIVO.read_text(encoding="utf-8"))
+        datos = json.loads(_ruta(archivo).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return []
     return datos if isinstance(datos, list) else []
@@ -64,28 +76,28 @@ def _dma(fecha):
     return f"{d}/{m}/{a}"
 
 
-def ultima_actualizacion():
+def ultima_actualizacion(archivo=None):
     """'31/07/2026 16:30' de la entrada más reciente, para el encabezado."""
-    datos = cargar()
+    datos = cargar(archivo)
     if not datos:
         return ""
     return f"{_dma(datos[0].get('fecha'))} {datos[0].get('hora', '')}".strip()
 
 
-def cuantos_desde(fecha=None):
+def cuantos_desde(fecha=None, archivo=None):
     """Cuántas entradas hay desde una fecha (para un badge, si algún día va)."""
-    datos = cargar()
+    datos = cargar(archivo)
     if not fecha:
         return len(datos)
     return sum(1 for c in datos if str(c.get("fecha", "")) > fecha)
 
 
-def render() -> None:
+def render(archivo=None) -> None:
     """Pinta el registro completo dentro del modal."""
-    datos = cargar()
+    datos = cargar(archivo)
     if not datos:
-        st.warning(f"No pude leer el registro de novedades (`{ARCHIVO.name}`).",
-                   icon="⚠️")
+        st.warning("No pude leer el registro de novedades "
+                   f"(`{_ruta(archivo).name}`).", icon="⚠️")
         return
 
     st.caption(
