@@ -2999,6 +2999,77 @@ elif seccion == "Oportunidades":
                     st.session_state["dup_res"] = res_dp
                     st.session_state.pop("dup", None)
 
+        st.divider()
+        st.markdown("##### Publicaciones que comparten ficha de catálogo")
+        st.caption(
+            "Esto **no lo ve el análisis de arriba**, que agrupa por SKU. Acá "
+            "se agrupa por la ficha de catálogo, que es donde MercadoLibre "
+            "decide qué es un duplicado — aunque los títulos sean distintos, "
+            "o incluso los SKU.")
+
+        if st.button("Revisar fichas de catálogo", key="cat_go"):
+            with st.spinner("Agrupando por ficha..."):
+                st.session_state["dup_cat"] = duplicados.por_catalogo(pubs)
+
+        dc = st.session_state.get("dup_cat")
+        if dc is not None and len(dc):
+            riesgo = dc[dc["clase"] == "varias en catálogo"]
+            mal = dc[dc["clase"] == "SKU distintos"]
+            k1, k2, k3 = st.columns(3)
+            k1.metric("Fichas en riesgo de moderación",
+                      riesgo["catalog_product_id"].nunique())
+            k2.metric("Publicaciones ahí", len(riesgo))
+            k3.metric("Fichas con SKU distintos",
+                      mal["catalog_product_id"].nunique())
+
+            st.warning(
+                "**El círculo vicioso.** Cuando dos publicaciones nuestras "
+                "compiten en la misma ficha, MercadoLibre modera una por "
+                "duplicada y la tradicional queda pausada esperando volver a "
+                "competir. Pasa aunque los títulos sean distintos, por eso el "
+                "análisis por SKU no lo detecta.", icon="🔁")
+
+            if len(mal):
+                st.error(
+                    f"**{mal['catalog_product_id'].nunique()} fichas tienen "
+                    "dos SKU nuestros colgados.** O son el mismo producto con "
+                    "dos códigos, o uno está mal asociado — pasa con "
+                    "variantes que se parecen, como un destornillador plano y "
+                    "uno Phillips. Eso no se arregla borrando: hay que "
+                    "corregir la asociación.", icon="🔗")
+
+            cual = st.radio(
+                "Ver", ["Varias en catálogo", "SKU distintos"],
+                horizontal=True, key="cat_ver", label_visibility="collapsed")
+            v = riesgo if cual == "Varias en catálogo" else mal
+            st.dataframe(
+                v[["catalog_product_id", "item_id", "sku", "titulo",
+                   "en_catalogo", "unidades_30d", "importe_30d",
+                   "titulos_distintos"]],
+                use_container_width=True, height=380, hide_index=True,
+                column_config={
+                    "catalog_product_id": "Ficha",
+                    "item_id": "Publicación", "sku": "SKU",
+                    "titulo": "Título",
+                    "en_catalogo": st.column_config.CheckboxColumn(
+                        "En catálogo"),
+                    "unidades_30d": st.column_config.NumberColumn(
+                        "Unid. 30d", format="%.0f"),
+                    "importe_30d": st.column_config.NumberColumn(
+                        "Vendido 30d", format="%.0f"),
+                    "titulos_distintos": st.column_config.CheckboxColumn(
+                        "Títulos distintos")})
+
+            st.download_button(
+                "Descargar el detalle", dc.to_csv(index=False).encode("utf-8"),
+                f"fichas_catalogo_{datetime.now():%Y%m%d}.csv", "text/csv",
+                key="cat_dl")
+            st.info(
+                "**Es un informe, no una acción.** Salir de catálogo no se "
+                "deshace, y la que conviene dejar no siempre es la que más "
+                "vendió: a veces la tradicional tiene la antigüedad y las "
+                "preguntas. Por eso acá no hay botón de borrar.", icon="📋")
+
         res_dp = st.session_state.get("dup_res")
         if res_dp is not None and len(res_dp):
             hechas = int((res_dp["resultado"] == "BORRADA").sum())

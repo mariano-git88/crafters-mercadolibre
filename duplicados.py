@@ -205,6 +205,96 @@ def analizar(pubs=None, conv=None):
     return df.reset_index(drop=True)
 
 
+# -------------------------------------------------- duplicados de catalogo
+#
+# `analizar()` agrupa **por SKU** y saltea todo grupo que toque catalogo. Eso
+# deja afuera un problema que el SKU no ve: **varias publicaciones nuestras
+# compitiendo en la MISMA ficha de catalogo**.
+#
+# Ahi ML modera una por duplicada, la tradicional queda pausada esperando
+# volver a competir, y el ciclo se repite. El SKU no lo detecta porque los
+# titulos son distintos y porque a veces son SKU distintos.
+#
+# Medido el 2026-08-06 sobre el catalogo activo:
+#   - 262 productos de catalogo con 2+ publicaciones nuestras EN catalogo
+#     (987 publicaciones) -> riesgo de moderacion
+#   - 377 con una de catalogo + tradicionales -> normal, no se toca
+#   - 16 con **SKU distintos** apuntando al mismo producto, que no es un
+#     duplicado sino una asociacion mal hecha: un destornillador plano y uno
+#     Phillips colgados de la misma ficha.
+
+
+def por_catalogo(pubs=None, conv=None):
+    """
+    Publicaciones que comparten producto de catalogo.
+
+    **Es un informe, no una accion.** Salir de catalogo es irreversible y la
+    que conviene dejar no siempre es la que mas vendio: a veces la tradicional
+    tiene la antiguedad y las preguntas. Se marca el riesgo y se decide
+    mirando.
+    """
+    if pubs is None:
+        pubs = json.loads((DIR / "catalogo.json").read_text(encoding="utf-8"))
+    if conv is None:
+        ruta = DIR / "conversion.csv"
+        conv = pd.read_csv(ruta) if ruta.exists() else None
+    rend = _rendimiento(conv)
+
+    grupos = defaultdict(list)
+    for p in pubs:
+        if p.get("status") != "active":
+            continue
+        if p.get("catalog_product_id"):
+            grupos[p["catalog_product_id"]].append(p)
+
+    filas = []
+    for cat, ps in grupos.items():
+        if len(ps) < 2:
+            continue
+        en_catalogo = [p for p in ps if p.get("catalog_listing")]
+        skus = {(sku_del_atributo(p) or p.get("seller_custom_field")
+                 or "").strip() for p in ps}
+        titulos = {(p.get("title") or "").strip().lower() for p in ps}
+
+        if len(skus) > 1:
+            clase = "SKU distintos"
+            que = ("dos SKU nuestros cuelgan de la misma ficha: o son el "
+                   "mismo producto con dos códigos, o uno está mal asociado")
+        elif len(en_catalogo) > 1:
+            clase = "varias en catálogo"
+            que = (f"{len(en_catalogo)} publicaciones nuestras compiten en la "
+                   "misma ficha: ML modera una por duplicada y la tradicional "
+                   "queda esperando")
+        else:
+            clase = "normal"
+            que = "una de catálogo y el resto tradicionales"
+
+        for p in ps:
+            m = rend.get(p["id"], {})
+            filas.append({
+                "catalog_product_id": cat,
+                "clase": clase,
+                "riesgo": que,
+                "item_id": p["id"],
+                "sku": (sku_del_atributo(p) or p.get("seller_custom_field")
+                        or ""),
+                "titulo": (p.get("title") or "")[:70],
+                "en_catalogo": bool(p.get("catalog_listing")),
+                "precio": p.get("price"),
+                "unidades_30d": m.get("unidades", 0),
+                "importe_30d": m.get("importe", 0),
+                "vendidas_historico": p.get("sold_quantity") or 0,
+                "titulos_distintos": len(titulos) > 1,
+                "permalink": p.get("permalink", ""),
+            })
+
+    df = pd.DataFrame(filas)
+    if len(df):
+        df = df.sort_values(["clase", "catalog_product_id", "importe_30d"],
+                            ascending=[True, True, False])
+    return df.reset_index(drop=True)
+
+
 # ---------------------------------------------------------------- escritura
 
 def _respaldar(ml, item_id, fila, operador):

@@ -1,6 +1,19 @@
 [
   {
     "fecha": "2026-08-06",
+    "hora": "19:20",
+    "tipo": "nuevo",
+    "titulo": "Duplicados: ahora también mira la ficha de catálogo",
+    "puntos": [
+      "El análisis de duplicados agrupa **por SKU**, y eso deja afuera un problema que el SKU no ve: varias publicaciones nuestras compitiendo en la **misma ficha de catálogo**, aunque tengan títulos distintos.",
+      "Ahí MercadoLibre modera una por duplicada y la tradicional queda pausada esperando volver a competir. Es el círculo vicioso que reportaron.",
+      "Hay **252 fichas con 2 o más publicaciones nuestras en catálogo** (934 publicaciones), y en 120 de ellas los títulos son distintos.",
+      "Y **16 fichas tienen dos SKU nuestros colgados**: o es el mismo producto con dos códigos, o uno está mal asociado — pasa con variantes parecidas, como un destornillador plano y uno Phillips.",
+      "Es un **informe, no una acción**: salir de catálogo no se deshace, y la que conviene dejar no siempre es la que más vendió."
+    ]
+  },
+  {
+    "fecha": "2026-08-06",
     "hora": "17:00",
     "tipo": "mejora",
     "titulo": "El tope de publicidad ahora mira el margen de cada producto",
