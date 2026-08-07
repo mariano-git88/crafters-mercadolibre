@@ -327,6 +327,25 @@ def _a_sacar(en_catalogo, rend, gemelos=None):
                       f"{'factura' if facturan else 'vendió'} {texto(tope)}")
             # Sacarla la cierra: solo se recomienda si despues queda algo
             # vivo del producto — el gemelo tradicional, o la lider.
+            # **30 dias no alcanzan para condenar una publicacion con
+            # historia.** Si vendio parecido que la lider en toda su vida,
+            # que este mes haya facturado cero puede ser estacionalidad o que
+            # la lider le gano el Buy Box hace poco. Cerrarla es irreversible,
+            # asi que en ese caso se mira.
+            h_lider = lider.get("sold_quantity") or 0
+            h_esta = p.get("sold_quantity") or 0
+            if facturan and h_lider and h_esta >= PAREJO * h_lider:
+                # El replace va sobre los numeros, no sobre la frase: aplicado
+                # al texto entero se come tambien las comas de la redaccion.
+                a = f"{h_esta:,.0f}".replace(",", ".")
+                b = f"{h_lider:,.0f}".replace(",", ".")
+                salida[p["id"]] = (
+                    "mirar a mano",
+                    f"{motivo}, pero tiene historia parecida ({a} vendidas "
+                    f"contra {b} de la líder): 30 días no alcanzan para "
+                    f"cerrarla")
+                continue
+
             sku = (sku_del_atributo(p) or p.get("seller_custom_field")
                    or "").strip().upper()
             hay_gemelo = bool((gemelos or {}).get(sku))
