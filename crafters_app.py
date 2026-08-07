@@ -3034,6 +3034,21 @@ elif seccion == "Oportunidades":
                 "de **una sola tienda** y rechazando la sugerencia de "
                 "catálogo en la otra — la de la segunda tienda vale la pena "
                 "igual, pero sin competir en la ficha.", icon="🔁")
+            n_sacar = int((dc["accion"] == "sacar del catálogo").sum())
+            n_mirar = int((dc["accion"] == "mirar a mano").sum())
+            if n_sacar:
+                st.info(
+                    f"**{n_sacar} publicaciones convendría sacar del "
+                    f"catálogo** (columna *Acción*): no venden y su hermana "
+                    f"en la misma ficha sí. Otras **{n_mirar} venden "
+                    f"parecido a la mejor**, así que ahí no hay una obvia y "
+                    f"se decide mirando.\n\n**Esto no se puede hacer desde "
+                    f"acá:** MercadoLibre no deja modificar `catalog_listing` "
+                    f"por API (contesta *field_not_updatable*), así que va "
+                    f"por el panel. Y ojo, **salir del catálogo no se "
+                    f"deshace**: volver a entrar crea una publicación nueva, "
+                    f"sin historia.", icon="📤")
+
             if len(moderadas):
                 st.error(
                     f"**{len(moderadas)} publicaciones tienen moderación "
@@ -3058,13 +3073,16 @@ elif seccion == "Oportunidades":
                             key="cat_ver", label_visibility="collapsed")
             v = _OPC[cual]
             st.dataframe(
-                v[["catalog_product_id", "item_id", "tienda", "tipo",
+                v[["catalog_product_id", "item_id", "accion", "motivo",
+                   "tienda", "tipo",
                    "estado", "moderacion", "sku", "titulo", "en_catalogo",
                    "unidades_30d", "importe_30d"]],
                 use_container_width=True, height=380, hide_index=True,
                 column_config={
                     "catalog_product_id": "Ficha",
-                    "item_id": "Publicación", "tienda": "Tienda oficial",
+                    "item_id": "Publicación",
+                    "accion": "Acción", "motivo": "Por qué",
+                    "tienda": "Tienda oficial",
                     "tipo": "Tipo", "estado": "Estado",
                     "moderacion": "Moderación", "sku": "SKU",
                     "titulo": "Título",

@@ -241,14 +241,77 @@ def _tienda(store_id):
     return TIENDAS.get(store_id, f"TO {store_id}")
 
 
+PAREJO = 0.25          # dos que venden parecido no son una buena y una mala
+
+
+def _a_sacar(en_catalogo, rend):
+    """
+    Cual de las que compiten en una ficha sobra. Devuelve
+    {item_id: (accion, motivo)}.
+
+    **La accion es sacar del catalogo, no borrar.** Asi la publicacion deja de
+    pelear contra su hermana pero conserva antiguedad, preguntas y ranking.
+    Borrar tira todo eso y no se deshace.
+
+    Manda la facturacion de 30 dias; si todas estan en cero manda la historia,
+    igual que en `analizar()`. Si la segunda llega al 25% de la primera se
+    quedan las dos.
+
+    **No se puede ejecutar por API**: `PUT /items/{id}` con
+    `catalog_listing: false` contesta 400 `field_not_updatable` — medido el
+    7/8/2026 sobre MLA1932967895. Va por el panel, a mano o capturando la
+    llamada interna como se hizo con Publicidad.
+    """
+    if len(en_catalogo) < 2:
+        return {}
+
+    def plata(p):
+        return rend.get(p["id"], {}).get("importe", 0) or 0
+
+    def hist(p):
+        return p.get("sold_quantity") or 0
+
+    facturan = sum(plata(p) for p in en_catalogo) > 0
+    medida, cuanto = (plata, "$") if facturan else (hist, "u")
+    orden = sorted(en_catalogo, key=medida, reverse=True)
+    lider = orden[0]
+    tope = medida(lider)
+
+    if tope <= 0:
+        return {p["id"]: ("mirar a mano", "ninguna vendió nunca: no hay dato "
+                          "para elegir cuál sacar") for p in en_catalogo}
+
+    def texto(v):
+        if cuanto == "$":
+            return f"${v:,.0f}".replace(",", ".")
+        return ("1 unidad" if v == 1
+                else f"{v:,.0f} unidades".replace(",", "."))
+
+    salida = {lider["id"]: ("dejar", f"es la que más {'factura' if facturan else 'vendió'} "
+                            f"de la ficha ({texto(tope)})")}
+    for p in orden[1:]:
+        v = medida(p)
+        if v >= PAREJO * tope:
+            salida[p["id"]] = ("mirar a mano",
+                               f"vende parecido a la mejor ({texto(v)} contra "
+                               f"{texto(tope)}): no hay una obvia")
+        else:
+            base = "no vendió nada" if v <= 0 else f"apenas {texto(v)}"
+            salida[p["id"]] = ("sacar del catálogo",
+                               f"{base} y su hermana en la misma ficha "
+                               f"{'factura' if facturan else 'vendió'} "
+                               f"{texto(tope)}")
+    return salida
+
+
 def por_catalogo(pubs=None, conv=None):
     """
     Publicaciones que comparten producto de catalogo.
 
-    **Es un informe, no una accion.** Salir de catalogo es irreversible y la
-    que conviene dejar no siempre es la que mas vendio: a veces la tradicional
-    tiene la antiguedad y las preguntas. Se marca el riesgo y se decide
-    mirando.
+    **Es un informe, no una accion.** Salir de catalogo es irreversible, no se
+    puede por API (ver `_a_sacar`) y la que conviene dejar no siempre es la
+    que mas vendio: a veces la tradicional tiene la antiguedad y las
+    preguntas. La columna `accion` es una recomendacion, no un boton.
     """
     if pubs is None:
         pubs = json.loads((DIR / "catalogo.json").read_text(encoding="utf-8"))
@@ -298,12 +361,22 @@ def por_catalogo(pubs=None, conv=None):
             clase = "normal"
             que = "una de catálogo y el resto tradicionales"
 
+        # Solo tiene sentido recomendar donde efectivamente compiten dos
+        # nuestras en la ficha; en "normal" y "SKU distintos" el problema es
+        # otro y la accion tambien.
+        reco = (_a_sacar(en_catalogo, rend)
+                if clase in ("duplicada en la misma tienda",
+                             "choque entre tiendas") else {})
+
         for p in ps:
             m = rend.get(p["id"], {})
             sub = [x for x in (p.get("sub_status") or []) if x in MODERADA]
+            accion, motivo = reco.get(p["id"], ("", ""))
             filas.append({
                 "catalog_product_id": cat,
                 "clase": clase,
+                "accion": accion,
+                "motivo": motivo,
                 "riesgo": que,
                 "item_id": p["id"],
                 "tienda": _tienda(p.get("official_store_id")),
