@@ -27,6 +27,10 @@ BASE = "https://api.mercadolibre.com"
 SITE_ID = "MLA"                                  # Argentina
 AUTH_BASE = "https://auth.mercadolibre.com.ar"   # cambia el dominio segun el pais
 
+# Prefijo de los codigos de publicacion del sitio (MLA123456789). Se usa para
+# reconocer cuando la planilla trae el codigo directo en vez del SKU.
+PREFIJO_ITEM = SITE_ID
+
 DIR = Path(__file__).resolve().parent
 CRED_FILE = DIR / "credentials.txt"
 

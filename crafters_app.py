@@ -42,6 +42,8 @@ import lista_precios as LP
 import mayoristas
 import preguntas as preg
 import promociones
+import promos_campanas
+import promos_planilla
 import reporte
 import stock_control
 import tramos
@@ -210,7 +212,8 @@ with enc_btn:
 seccion = st.segmented_control(
     "Sección", ["Plata sobre la mesa", "Reporte semanal", "Preguntas",
                 "Alertas", "Ganar la venta",
-                "Precios", "Mayoristas", "Stock ML", "Control de stock",
+                "Precios", "Mayoristas", "Promos por planilla",
+                "Stock ML", "Control de stock",
                 "Rentabilidad", "Precio óptimo", "Competencia",
                 "Publicidad", "Oportunidades"],
     default="Plata sobre la mesa", label_visibility="collapsed",
@@ -4402,3 +4405,322 @@ elif seccion == "Publicidad":
                      if str(r.get("sku", "")).strip()]
             ok, det = publicidad.guardar_estrategicos(filas)
             st.success(f"{len(filas)} SKU guardados.") if ok else st.error(det)
+
+
+# ============================================================ promos por planilla
+
+elif seccion == "Promos por planilla":
+    st.markdown("#### Descuentos en lote")
+    modo_pp = st.segmented_control(
+        "Modo", ["Desde planilla", "Replicar una campaña", "Activar por regla"],
+        default="Desde planilla", key="modo_pp",
+        label_visibility="collapsed") or "Desde planilla"
+
+    @st.cache_data(ttl=600, show_spinner=False)
+    def _camps_todas(_ml, sello):
+        return promos_campanas.campanas(_ml)
+
+    @st.cache_data(ttl=600, show_spinner=False)
+    def _camps_propias(_ml, sello):
+        return promos_planilla.campanas_propias(_ml)
+
+    @st.cache_data(ttl=600, show_spinner=False)
+    def _elegibles_pp(_ml, campana_id, sello):
+        return promos_planilla.elegibles(_ml, campana_id)
+
+    if "sello_promos" not in st.session_state:
+        st.session_state["sello_promos"] = 0
+    sello_pp = st.session_state["sello_promos"]
+
+    st.button("↻ Releer campañas", key="rl_pp",
+              on_click=lambda: st.session_state.__setitem__(
+                  "sello_promos", st.session_state["sello_promos"] + 1))
+
+    # ---------------------------------------------------------------- planilla
+    if modo_pp == "Desde planilla":
+        st.caption(
+            "Subís una planilla con una columna de **SKU o EAN** (también sirve "
+            "el código MLA) y otra con el **descuento en porcentaje**, y cada "
+            "producto entra a la campaña con ese descuento. Los que no estén en "
+            "la planilla no se tocan.")
+
+        try:
+            camps = _camps_propias(ml, sello_pp)
+        except Exception as e:
+            st.error(f"No pude traer las campañas: {e}")
+            st.stop()
+        if not len(camps):
+            st.warning(
+                "**No hay ninguna campaña propia vigente.** Se crean desde el "
+                "panel de MercadoLibre, en *Publicaciones → Promociones → Crear "
+                "campaña propia*. Por API no se pueden crear: el pedido "
+                "contesta que sí y no crea nada.", icon="⚠️")
+            st.stop()
+
+        etiquetas = {f"{c['nombre']}  ·  hasta el {c['hasta']}": c["campana_id"]
+                     for _, c in camps.iterrows()}
+        campana_id = etiquetas[st.selectbox("Campaña", list(etiquetas),
+                                            key="camp_pp")]
+
+        with st.spinner("Preguntándole a MercadoLibre qué publicaciones acepta..."):
+            try:
+                eleg = _elegibles_pp(ml, campana_id, sello_pp)
+            except Exception as e:
+                st.error(f"No pude traer las elegibles: {e}")
+                st.stop()
+
+        e1, e2, e3 = st.columns(3)
+        e1.metric("Publicaciones que acepta", cumplen(len(eleg)))
+        e2.metric("Ya con descuento",
+                  sum(1 for e in eleg.values() if e["estado_promo"] == "started"))
+        minimos = [1 - e["max_precio"] / e["original_price"]
+                   for e in eleg.values()
+                   if e.get("max_precio") and e.get("original_price")]
+        maximos = [1 - e["min_precio"] / e["original_price"]
+                   for e in eleg.values()
+                   if e.get("min_precio") and e.get("original_price")]
+        if minimos:
+            e3.metric("Descuento admitido",
+                      f"{min(minimos):.0%} a {max(maximos):.0%}")
+            st.caption(
+                f"El rango lo fija MercadoLibre **por publicación**, no por "
+                f"campaña: el mínimo va de {min(minimos):.1%} a "
+                f"{max(minimos):.1%} según el artículo. Lo que quede afuera se "
+                f"marca en la simulación y no se aplica.")
+
+        archivo_pp = st.file_uploader("Planilla (.xlsx o .csv)",
+                                      type=["xlsx", "xls", "csv"], key="up_pp")
+        if not archivo_pp:
+            st.session_state.pop("sim_pp", None)
+            st.stop()
+        try:
+            df_pp = promos_planilla.leer_planilla(archivo_pp)
+        except Exception as e:
+            st.error(f"No pude leer la planilla: {e}")
+            st.stop()
+
+        ck_auto, cp_auto = promos_planilla.detectar_columnas(df_pp)
+        cols_pp = list(df_pp.columns)
+        p1, p2, p3 = st.columns([2, 2, 1])
+        col_clave_pp = p1.selectbox(
+            "Columna de SKU / EAN / MLA", cols_pp,
+            index=cols_pp.index(ck_auto) if ck_auto in cols_pp else 0,
+            key="ck_pp")
+        col_pct_pp = p2.selectbox(
+            "Columna de descuento", cols_pp,
+            index=cols_pp.index(cp_auto) if cp_auto in cols_pp else 0,
+            key="cp_pp")
+        p3.metric("Filas", cumplen(len(df_pp)))
+        st.caption("El descuento se lee igual escrito `30`, `30%`, `0,30` o "
+                   "`0.3`. De 1 para abajo se toma como fracción.")
+
+        if st.button("Simular los descuentos", key="sim_btn_pp"):
+            try:
+                st.session_state["sim_pp"] = promos_planilla.simular(
+                    df_pp, pubs, eleg, col_clave_pp, col_pct_pp, ml=ml)
+            except Exception as e:
+                st.error(f"Error al simular: {e}")
+
+        sim_pp = st.session_state.get("sim_pp")
+        if sim_pp is None or not len(sim_pp):
+            st.stop()
+
+        rc = promos_planilla.resumen(sim_pp)
+        q1, q2, q3, q4 = st.columns(4)
+        q1.metric("Altas nuevas", rc.get("alta", 0))
+        q2.metric("Cambian de precio", rc.get("actualizar", 0))
+        q3.metric("Ya estaban igual", rc.get("sin_cambio", 0))
+        q4.metric("Fuera de rango", rc.get("fuera_de_rango", 0))
+
+        st.dataframe(sim_pp, use_container_width=True, height=340,
+                     hide_index=True,
+                     column_config={"descuento": st.column_config.NumberColumn(
+                         "Descuento", format="percent")})
+
+        n_pp = rc.get("alta", 0) + rc.get("actualizar", 0)
+        if not n_pp:
+            st.info("No hay nada para aplicar.")
+            st.stop()
+        st.error(f"**Esto carga {n_pp} publicaciones a la campaña de verdad** y "
+                 "cambia el precio que ve el comprador.", icon="⚠️")
+        o1, o2 = st.columns([2, 3])
+        op_pp = o1.text_input("Tu nombre (queda en el registro)", key="op_pp")
+        conf_pp = o2.checkbox(f"Confirmo cargar {n_pp} publicaciones",
+                              key="conf_pp")
+        if st.button("Cargar a la campaña", key="go_pp",
+                     disabled=not (conf_pp and op_pp.strip())):
+            barra = st.progress(0.0, text="Cargando...")
+            st.session_state["res_pp"] = promos_planilla.aplicar(
+                ml, sim_pp, campana_id, operador=op_pp.strip(),
+                callback=lambda i, t, iid: barra.progress(
+                    i / t, text=f"Cargando {i} de {t}: {iid}"))
+            barra.empty()
+        res_pp = st.session_state.get("res_pp")
+        if res_pp is not None and len(res_pp):
+            ok = int((res_pp["resultado"] == "OK").sum())
+            (st.success if ok == len(res_pp) else st.error)(
+                f"{ok} cargadas, {len(res_pp) - ok} con error.")
+            st.dataframe(res_pp, use_container_width=True, height=260,
+                         hide_index=True)
+
+    # ---------------------------------------------------------------- replicar
+    elif modo_pp == "Replicar una campaña":
+        st.caption(
+            "Copia los descuentos de una campaña a otra. **Copia el "
+            "porcentaje, no el importe**: entre una campaña y la otra los "
+            "precios se movieron, y repetir el precio viejo aplicaría un "
+            "descuento distinto al que quisiste.")
+        try:
+            todas = _camps_todas(ml, sello_pp)
+        except Exception as e:
+            st.error(f"No pude traer las campañas: {e}")
+            st.stop()
+        if not len(todas):
+            st.warning("No hay campañas disponibles.")
+            st.stop()
+
+        propias = todas[todas["tipo"] == "SELLER_CAMPAIGN"]
+        et_todas = {f"{r['nombre'] or r['id']} · {r['nombre_tipo']} · "
+                    f"{r['desde']}→{r['hasta']}": r["id"]
+                    for _, r in todas.iterrows()}
+        et_prop = {f"{r['nombre'] or r['id']} · {r['desde']}→{r['hasta']}":
+                   r["id"] for _, r in propias.iterrows()}
+        if not len(propias):
+            st.warning("Para replicar hace falta al menos una campaña propia "
+                       "de destino.", icon="⚠️")
+            st.stop()
+
+        r1, r2 = st.columns(2)
+        origen = et_todas[r1.selectbox("Desde", list(et_todas), key="or_pp")]
+        destino = et_prop[r2.selectbox("Hacia (campaña propia)",
+                                       list(et_prop), key="de_pp")]
+        tipos = dict(zip(todas["id"], todas["tipo"]))
+
+        if origen == destino:
+            st.info("Elegí dos campañas distintas.")
+            st.stop()
+
+        if st.button("Ver qué se replicaría", key="sim_rep"):
+            caja = st.status("Leyendo las dos campañas...", expanded=True)
+            try:
+                st.session_state["plan_rep"] = promos_campanas.replicar(
+                    ml, origen, tipos.get(origen, "SELLER_CAMPAIGN"),
+                    destino, tipos.get(destino, "SELLER_CAMPAIGN"),
+                    callback=caja.write)
+                caja.update(label="Listo", state="complete", expanded=False)
+            except Exception as e:
+                caja.update(label="Falló", state="error")
+                st.error(str(e))
+
+        plan = st.session_state.get("plan_rep")
+        if plan is None or not len(plan):
+            st.stop()
+        rr = promos_campanas.resumen(plan)
+        m1, m2, m3 = st.columns(3)
+        m1.metric("A dar de alta", rr.get("a dar de alta", 0))
+        m2.metric("Ya estaban", rr.get("ya estaban", 0))
+        m3.metric("Descuento promedio", f"{rr.get('descuento promedio', 0):.1%}")
+        if rr.get("no elegibles"):
+            st.warning(f"**{rr['no elegibles']} no entran en la campaña "
+                       "destino.** Lo decide MercadoLibre.", icon="⚠️")
+        st.dataframe(plan, use_container_width=True, height=320,
+                     hide_index=True,
+                     column_config={"descuento": st.column_config.NumberColumn(
+                         "Descuento", format="percent")})
+
+        n_rep = rr.get("a dar de alta", 0)
+        if not n_rep:
+            st.info("No hay nada para replicar.")
+            st.stop()
+        st.error(f"**Esto da de alta {n_rep} publicaciones** en la campaña "
+                 "destino y cambia el precio que ve el comprador.", icon="⚠️")
+        c1, c2 = st.columns([2, 3])
+        op_rep = c1.text_input("Tu nombre", key="op_rep")
+        cf_rep = c2.checkbox(f"Confirmo replicar {n_rep}", key="cf_rep")
+        if st.button("Replicar", key="go_rep",
+                     disabled=not (cf_rep and op_rep.strip())):
+            barra = st.progress(0.0, text="Aplicando...")
+            st.session_state["res_rep"] = promos_campanas.aplicar(
+                ml, plan, operador=op_rep.strip(),
+                callback=lambda i, t, iid: barra.progress(
+                    i / t, text=f"{i} de {t}: {iid}"))
+            barra.empty()
+        rres = st.session_state.get("res_rep")
+        if rres is not None and len(rres):
+            ok = int((rres["resultado"] == "OK").sum())
+            (st.success if ok == len(rres) else st.error)(
+                f"{ok} replicadas, {len(rres) - ok} con error.")
+            st.dataframe(rres, use_container_width=True, height=260,
+                         hide_index=True)
+
+    # ------------------------------------------------------------- por regla
+    else:
+        st.caption(
+            "Acepta de una todas las ofertas de una campaña que cumplan una "
+            "condición. Sirve para las que **MercadoLibre arma y fija el "
+            "precio** (relámpago, compartidas): ahí no hay nada que negociar, "
+            "lo único que decide es cuánto descuento te pide.")
+        try:
+            todas = _camps_todas(ml, sello_pp)
+        except Exception as e:
+            st.error(f"No pude traer las campañas: {e}")
+            st.stop()
+
+        et = {f"{r['nombre'] or r['id']} · {r['nombre_tipo']}": r["id"]
+              for _, r in todas.iterrows()}
+        g1, g2 = st.columns([3, 2])
+        cid = et[g1.selectbox("Campaña", list(et), key="cid_rg")]
+        tope = g2.number_input("Tope de descuento (%)", 1, 60, 5, 1,
+                               key="tope_rg",
+                               help="Solo entran las que piden hasta ese "
+                                    "descuento.")
+        tipos = dict(zip(todas["id"], todas["tipo"]))
+
+        if st.button("Ver cuáles cumplen", key="sim_rg"):
+            caja = st.status("Leyendo la campaña...", expanded=True)
+            try:
+                st.session_state["plan_rg"] = promos_campanas.por_regla(
+                    ml, cid, tipos.get(cid, "LIGHTNING"),
+                    tope_descuento=tope / 100, callback=caja.write)
+                caja.update(label="Listo", state="complete", expanded=False)
+            except Exception as e:
+                caja.update(label="Falló", state="error")
+                st.error(str(e))
+
+        plan_rg = st.session_state.get("plan_rg")
+        if plan_rg is None or not len(plan_rg):
+            st.stop()
+        rg = promos_campanas.resumen(plan_rg)
+        v1, v2, v3 = st.columns(3)
+        v1.metric("Cumplen la regla", rg.get("a dar de alta", 0))
+        v2.metric("Piden más que el tope", rg.get("no cumplen la regla", 0))
+        v3.metric("Descuento promedio", f"{rg.get('descuento promedio', 0):.1%}")
+        st.dataframe(plan_rg, use_container_width=True, height=320,
+                     hide_index=True,
+                     column_config={"descuento": st.column_config.NumberColumn(
+                         "Descuento", format="percent")})
+
+        n_rg = rg.get("a dar de alta", 0)
+        if not n_rg:
+            st.info("Ninguna oferta cumple esa condición.")
+            st.stop()
+        st.error(f"**Esto activa {n_rg} promociones de verdad** y cambia el "
+                 "precio que ve el comprador.", icon="⚠️")
+        h1, h2 = st.columns([2, 3])
+        op_rg = h1.text_input("Tu nombre", key="op_rg")
+        cf_rg = h2.checkbox(f"Confirmo activar {n_rg}", key="cf_rg")
+        if st.button("Activar las que cumplen", key="go_rg",
+                     disabled=not (cf_rg and op_rg.strip())):
+            barra = st.progress(0.0, text="Activando...")
+            st.session_state["res_rg"] = promos_campanas.aplicar(
+                ml, plan_rg, operador=op_rg.strip(),
+                callback=lambda i, t, iid: barra.progress(
+                    i / t, text=f"{i} de {t}: {iid}"))
+            barra.empty()
+        rres = st.session_state.get("res_rg")
+        if rres is not None and len(rres):
+            ok = int((rres["resultado"] == "OK").sum())
+            (st.success if ok == len(rres) else st.error)(
+                f"{ok} activadas, {len(rres) - ok} con error.")
+            st.dataframe(rres, use_container_width=True, height=260,
+                         hide_index=True)
