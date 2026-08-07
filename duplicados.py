@@ -243,8 +243,34 @@ def _tienda(store_id):
 
 PAREJO = 0.25          # dos que venden parecido no son una buena y una mala
 
+# `paused` se reactiva cuando uno quiere; `closed` no vuelve. Para saber si
+# despues de sacar una queda algo vivo del producto, las pausadas cuentan.
+VIVA = ("active", "paused")
 
-def _a_sacar(en_catalogo, rend):
+
+def _gemelos_tradicionales(pubs):
+    """
+    SKU -> publicaciones tradicionales vivas.
+
+    **Sacar del catalogo CIERRA la publicacion**, no la convierte en
+    tradicional (medido el 7/8/2026 sobre MLA1635845677: quedo `closed`). Lo
+    que sigue vendiendo es el gemelo tradicional que ML creo al anotarse al
+    catalogo, con el mismo precio. Por eso hay que saber si existe antes de
+    recomendar sacar: si no hay gemelo ni queda otra viva en la ficha,
+    sacarla deja al producto sin vidriera.
+    """
+    trad = defaultdict(list)
+    for p in pubs:
+        if p.get("catalog_listing") or p.get("status") not in VIVA:
+            continue
+        sku = (sku_del_atributo(p) or p.get("seller_custom_field")
+               or "").strip().upper()
+        if sku:
+            trad[sku].append(p["id"])
+    return trad
+
+
+def _a_sacar(en_catalogo, rend, gemelos=None):
     """
     Cual de las que compiten en una ficha sobra. Devuelve
     {item_id: (accion, motivo)}.
@@ -297,10 +323,21 @@ def _a_sacar(en_catalogo, rend):
                                f"{texto(tope)}): no hay una obvia")
         else:
             base = "no vendió nada" if v <= 0 else f"apenas {texto(v)}"
-            salida[p["id"]] = ("sacar del catálogo",
-                               f"{base} y su hermana en la misma ficha "
-                               f"{'factura' if facturan else 'vendió'} "
-                               f"{texto(tope)}")
+            motivo = (f"{base} y su hermana en la misma ficha "
+                      f"{'factura' if facturan else 'vendió'} {texto(tope)}")
+            # Sacarla la cierra: solo se recomienda si despues queda algo
+            # vivo del producto — el gemelo tradicional, o la lider.
+            sku = (sku_del_atributo(p) or p.get("seller_custom_field")
+                   or "").strip().upper()
+            hay_gemelo = bool((gemelos or {}).get(sku))
+            lider_viva = lider.get("status") in VIVA
+            if hay_gemelo or lider_viva:
+                salida[p["id"]] = ("sacar del catálogo", motivo)
+            else:
+                salida[p["id"]] = (
+                    "mirar a mano",
+                    f"{motivo}, pero es la única viva del producto: sacarla "
+                    f"la cierra y no queda vidriera")
     return salida
 
 
@@ -319,6 +356,7 @@ def por_catalogo(pubs=None, conv=None):
         ruta = DIR / "conversion.csv"
         conv = pd.read_csv(ruta) if ruta.exists() else None
     rend = _rendimiento(conv)
+    gemelos = _gemelos_tradicionales(pubs)
 
     # **No se filtra por activas.** Las que estan moderadas o esperando
     # (`under_review`, `inactive`) son justamente el sintoma que hay que ver:
@@ -364,7 +402,7 @@ def por_catalogo(pubs=None, conv=None):
         # Solo tiene sentido recomendar donde efectivamente compiten dos
         # nuestras en la ficha; en "normal" y "SKU distintos" el problema es
         # otro y la accion tambien.
-        reco = (_a_sacar(en_catalogo, rend)
+        reco = (_a_sacar(en_catalogo, rend, gemelos)
                 if clase in ("duplicada en la misma tienda",
                              "choque entre tiendas") else {})
 
