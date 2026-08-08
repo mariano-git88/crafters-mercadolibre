@@ -4695,10 +4695,19 @@ elif seccion == "Promos por planilla":
         v1.metric("Cumplen la regla", rg.get("a dar de alta", 0))
         v2.metric("Piden más que el tope", rg.get("no cumplen la regla", 0))
         v3.metric("Descuento promedio", f"{rg.get('descuento promedio', 0):.1%}")
+        # min_precio/max_precio son el rango que ML permite elegir. Acá el
+        # precio lo fija ML, así que no significan nada y confunden.
         st.dataframe(plan_rg, use_container_width=True, height=320,
                      hide_index=True,
-                     column_config={"descuento": st.column_config.NumberColumn(
-                         "Descuento", format="percent")})
+                     column_config={
+                         "descuento": st.column_config.NumberColumn(
+                             "Descuento", format="percent"),
+                         "precio_original": st.column_config.NumberColumn(
+                             "Precio hoy", format="%.2f"),
+                         "precio_promo": st.column_config.NumberColumn(
+                             "Precio con la promo", format="%.2f"),
+                         "min_precio": None, "max_precio": None,
+                         "campana_id": None})
 
         n_rg = rg.get("a dar de alta", 0)
         if not n_rg:

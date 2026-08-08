@@ -98,10 +98,56 @@ def _headers(ctx, mla):
     }
 
 
-def _sigue_viva(ml, item, gemelos_de):
+def user_product(ml, item):
+    """
+    El `MLAU` del que cuelga una publicacion, o None.
+
+    Sale de `catalog_listing_eligibility`. **No existe el camino inverso**:
+    `/user-products/{MLAU}/items` da 404, asi que no se puede pedir "dame
+    todas las publicaciones de este user product" y hay que comparar de a una.
+    """
+    try:
+        return (ml.get(f"/items/{item}/catalog_listing_eligibility")
+                or {}).get("user_product_id")
+    except MeliError:
+        return None
+
+
+def espejos_que_venden(ml, item, candidatas, rend):
+    """
+    Cuales de `candidatas` comparten user product con `item` **y facturan**.
+
+    **El opt-out se lleva puestos a los espejos.** Va por `MLAU`, no por el
+    `MLA`, asi que cierra a todas las que cuelgan de ese user product. Medido
+    el 7/8/2026: sacar `MLA3566239140` cerro tambien `MLA2307537486` —el mismo
+    segundo en `last_updated`— que facturaba $2.723.389 en 30 dias. Entre las
+    cuatro que se cayeron asi habia $3,59 millones mensuales.
+
+    Se comparan solo las hermanas del mismo SKU: son las unicas que pueden
+    compartir user product, y son pocas. Recorrer el catalogo entero seria
+    ~1.900 llamadas por publicacion.
+    """
+    mio = user_product(ml, item)
+    if not mio:
+        return mio, []
+    culpables = []
+    for otro in candidatas:
+        if not otro or otro == item:
+            continue
+        if (rend or {}).get(otro, {}).get("importe", 0) <= 0:
+            continue          # si no factura, que se cierre no cuesta plata
+        if user_product(ml, otro) == mio:
+            culpables.append((otro, rend[otro]["importe"]))
+    return mio, culpables
+
+
+def _sigue_viva(ml, item, gemelos_de, rend=None):
     """
     Que quede algo del producto despues de cerrar `item`: el gemelo
     tradicional, o alguna hermana viva en la misma ficha.
+
+    Ademas **frena si un espejo del mismo user product esta vendiendo**: el
+    opt-out lo cerraria junto con este (ver `espejos_del_mismo`).
 
     **Se relee en vivo, no del cache.** El analisis puede tener dias y la
     publicacion que lo respaldaba pudo cerrarse en el medio.
@@ -118,6 +164,16 @@ def _sigue_viva(ml, item, gemelos_de):
         if a.get("id") == "SELLER_SKU":
             sku = (a.get("value_name") or "").strip().upper()
     sku = sku or (d.get("seller_custom_field") or "").strip().upper()
+
+    if rend is None:
+        return False, (f"{item}: sin los datos de facturación no puedo saber "
+                       f"si un espejo suyo está vendiendo")
+    up, venden = espejos_que_venden(ml, item, gemelos_de.get(sku, []), rend)
+    if venden:
+        otro, plata = venden[0]
+        return False, (f"{item} comparte user product {up} con {otro}, que "
+                       f"factura ${plata:,.0f} en 30 días: sacarla cerraría "
+                       f"las dos".replace(",", "."))
 
     for otro in gemelos_de.get(sku, []):
         if otro == item:
@@ -188,7 +244,7 @@ def _respaldar(ml, item, ctx, motivo, operador, resultado):
 
 
 def sacar_lote(ml, items, gemelos_de, operador="", callback=None,
-               pausa=1.5, hasta=None):
+               pausa=1.5, hasta=None, rend=None):
     """
     Saca varias, verificando cada una antes.
 
@@ -206,7 +262,7 @@ def sacar_lote(ml, items, gemelos_de, operador="", callback=None,
                            "detalle": f"no se intentó (tope de {hasta})"})
             continue
         try:
-            puede, porque = _sigue_viva(ml, item, gemelos_de)
+            puede, porque = _sigue_viva(ml, item, gemelos_de, rend)
             if not puede:
                 salida.append({"item_id": item, "ok": False,
                                "detalle": f"salteada: {porque}"})
@@ -257,16 +313,26 @@ def main():
     pubs = json.loads((__import__("pathlib").Path(__file__).resolve().parent
                        / "catalogo.json").read_text(encoding="utf-8"))
     gem = gemelos_desde_catalogo(pubs)
+    # Sin el rendimiento no se puede saber si un espejo esta vendiendo, que es
+    # justo lo que evita cerrar una que factura.
+    import pandas as pd
+    ruta = __import__("pathlib").Path(__file__).resolve().parent / "conversion.csv"
+    rend = {}
+    if ruta.exists():
+        for _, r in pd.read_csv(ruta).iterrows():
+            rend[r["item_id"]] = {"importe": float(r.get("importe") or 0)}
+    else:
+        print("OJO: falta conversion.csv, no puedo frenar por espejo que vende\n")
 
     if not de_verdad:
         print("SIMULACRO (agregá --hacerlo para ejecutar)\n")
         for it in items:
-            puede, porque = _sigue_viva(ml, it, gem)
+            puede, porque = _sigue_viva(ml, it, gem, rend)
             print(f"  {it}  {'se puede' if puede else 'NO'} — {porque}")
         return 0
 
     print("SACANDO DEL CATÁLOGO — es irreversible\n")
-    for r in sacar_lote(ml, items, gem, operador="cli",
+    for r in sacar_lote(ml, items, gem, operador="cli", rend=rend,
                         callback=lambda m: print("  " + m)):
         print(f"  {r['item_id']}: {r['detalle']}")
     return 0
