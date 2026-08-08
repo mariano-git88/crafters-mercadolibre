@@ -68,21 +68,21 @@ def contexto(mlau, sesion=None):
     armado en curso, no al usuario.
     """
     s = sesion or panel_ads.leer_sesion()
-    r = requests.get(ASISTENTE.format(up=mlau),
+    url = ASISTENTE.format(up=mlau) if mlau else PANEL + "/publicar/kit"
+    r = requests.get(url,
                      headers={"User-Agent": NAVEGADOR,
                               "Accept": "text/html,application/xhtml+xml",
                               "Accept-Language": "es-AR,es;q=0.9"},
                      cookies={"ssid": s["ssid"]}, timeout=90)
     if r.status_code != 200:
-        raise MeliError(f"el asistente contestó {r.status_code} para {mlau}")
+        raise MeliError(f"el asistente contestó {r.status_code}")
     if "/login" in r.url:
         raise MeliError("la sesión venció: volvé a copiar el ssid")
 
     tok = re.search(r'<meta\s+name="csrf-token"\s+content="([^"]+)"', r.text)
     ses = re.findall(r"\d+-list_kit-[0-9a-f]+", r.text)
     if not tok or not ses:
-        raise MeliError(f"no encontré csrf o session_id en el asistente "
-                        f"de {mlau}")
+        raise MeliError("no encontré csrf o session_id en el asistente")
     galletas = {"ssid": s["ssid"]}
     galletas.update(dict(r.cookies))
     return {"csrf": tok.group(1), "session": ses[0], "cookies": galletas,
@@ -155,7 +155,7 @@ def _evento(ctx, metodo, paso, cuerpo=None, extra=None, confirmar=False):
     r = requests.put(EVENTO, headers={
         "User-Agent": NAVEGADOR, "Accept": "application/json",
         "Content-Type": "application/json", "Origin": PANEL,
-        "Referer": ASISTENTE.format(up=ctx["mlau"]),
+        "Referer": PANEL + "/publicar/kit",
         "x-csrf-token": ctx["csrf"],
     }, cookies=ctx["cookies"], json=payload, timeout=120)
     try:
@@ -210,105 +210,102 @@ def _productos_de(datos):
     return []
 
 
-def crear_kit(productos, precio, tienda, tipo="gold_special", sesion=None,
+def crear_kit(productos, precio=None, tienda=None, tipo=None, sesion=None,
               callback=None):
     """
     Arma un kit y lo publica. Devuelve (ok, detalle).
 
-    `productos` es una lista de (MLAU, cantidad). El primero es el principal.
+    `productos` es una lista de (MLAU, cantidad). El primero queda como
+    principal.
 
-    Los pasos son los del asistente, en orden; si alguno falla se corta ahi y
-    se devuelve el mensaje que muestra ML, que suele decir exactamente que
-    esta mal.
+    El flujo sale de una captura completa de punta a punta (kits 10), que es
+    la unica que sirvio: las anteriores eran pedazos de sesiones distintas
+    porque **con DevTools acoplado el navegador queda angosto, ML lo lee como
+    mobile y corta el asistente**. Undocked se puede capturar entero.
+
+    Tres cosas que no se adivinan:
+
+    - **El asistente se abre SIN producto precargado** y se agregan todos por
+      evento. Abrirlo con `pre_charged_ups` deja el principal cargado y
+      agregarlo otra vez lo duplica.
+    - **Confirmar los productos va dos veces**, con el mismo cuerpo.
+    - **El paso 2 dispara TRES sugerencias de IA** —titulo, foto y
+      descripcion— con valor vacio. No hay que confirmarlas ni devolver nada:
+      alcanza con pedirlas. Sin las tres, `next_form` no avanza.
+
+    `precio`, `tienda` y `tipo` son opcionales: si no se pasan, quedan los que
+    ML calcula a partir de los componentes.
     """
-    principal = productos[0][0]
-    ctx = contexto(principal, sesion)
+    ctx = contexto(None, sesion)
     if callback:
         callback(f"sesión {ctx['session']}")
 
-    # 1) Agregar los acompañantes (el principal ya viene precargado).
+    # 1) Agregar todos los productos.
     d = {}
-    for up, _ in productos[1:]:
+    for up, _ in productos:
         cod, d = _evento(ctx, "PATCH", "search_form/search-add-product",
                          {"product_added": up, "offset": 0,
                           "filters": ["ONLY_ELIGIBLE"]})
         if cod >= 400:
             return False, f"al agregar {up}: {_mensaje_de_error(d) or cod}"
 
-    # 2) Confirmar la lista con las cantidades. El principal NO se vuelve a
-    #    agregar: ya viene precargado y agregarlo lo duplica.
-    lista = _productos_de(d) if productos[1:] else ctx.get("productos") or []
+    lista = _productos_de(d)
     if not lista:
         return False, "el asistente no devolvió la lista de productos"
 
+    # Las cantidades: el multipack es el mismo producto con quantity > 1.
     cantidades = {up: n for up, n in productos}
-    for p in lista:
-        n = cantidades.get(p.get("id"))
+    for x in lista:
+        n = cantidades.get(x.get("id"))
         if n:
-            p.setdefault("stock", {})
-            p["stock"]["quantity"] = min(int(n), MAX_UNIDADES)
+            x.setdefault("stock", {})
+            x["stock"]["quantity"] = min(int(n), MAX_UNIDADES)
 
-    # **Confirmar los productos va en dos tiempos.** La primera llamada
-    # contesta `CONFIRMATION_REQUIRED` (ML avisa que el cambio arrastra otras
-    # cosas) y hay que repetirla; recien ahi devuelve REDIRECT. Mandarla una
-    # sola vez deja el asistente en el paso 1 sin decir por que.
-    cod, d = _evento(ctx, "PATCH", "search_form/products-manager-default",
-                     {"products": lista})
-    if d.get("result_type") == "CONFIRMATION_REQUIRED":
+    # 2) Confirmar, dos veces con el mismo cuerpo.
+    for _ in range(2):
         cod, d = _evento(ctx, "PATCH", "search_form/products-manager-default",
-                         {"products": lista}, confirmar=True)
-    if cod >= 400:
-        return False, f"al confirmar productos: {_mensaje_de_error(d) or cod}"
+                         {"products": lista})
+        if cod >= 400:
+            return False, f"al confirmar: {_mensaje_de_error(d) or cod}"
+        time.sleep(0.4)
 
-    # 3) Avanzar. **Confirmar los productos NO avanza**: devuelve CONTENT y
-    #    se queda en el paso 1. El que avanza es `search_form/next_form`.
-    cod, d = _evento(ctx, "GET", "search_form/next_form")
-    if cod >= 400 or d.get("result_type") != "REDIRECT":
-        return False, (f"no avanzó del paso 1: "
-                       f"{_mensaje_de_error(d) or d.get('result_type')}")
-
-    # 4) Paso 2. El titulo lo arma ML solo. **La foto de portada es opcional**:
-    #    cuando puede armarla, `next_form` redirige de una (visto en la
-    #    captura 8). Solo si no avanza se pide la sugerida con IA.
+    # 3) Paso 2: pedir las tres sugerencias de IA.
     abrir_paso(ctx, "kit_detail_form")
-    cod, d = _evento(ctx, "GET", "kit_detail_form/next_form")
-    if d.get("result_type") != "REDIRECT":
-        _evento(ctx, "PATCH",
-                "kit_detail_form/ai-suggestions-picture-uploader-default", "")
+    for cual in ("title", "picture-uploader", "description"):
         cod, d = _evento(
-            ctx, "PATCH",
-            "kit_detail_form/ai-suggestions-picture-uploader-default", "")
-        foto = _foto_sugerida(d)
-        if foto:
-            _evento(ctx, "PATCH",
-                    "kit_detail_form/ai-suggestions-picture-uploader-default",
-                    foto.get("secureUrl") or foto.get("url"), confirmar=True)
-            _evento(ctx, "PATCH", "kit_detail_form/picture-uploader-default",
-                    [foto])
-        cod, d = _evento(ctx, "GET", "kit_detail_form/next_form")
-        if d.get("result_type") != "REDIRECT":
-            return False, (f"no avanzó del paso 2 (falta la portada): "
-                           f"{_mensaje_de_error(d) or d.get('result_type')}")
+            ctx, "PATCH", f"kit_detail_form/ai-suggestions-{cual}-default", "")
+        if cod >= 400:
+            return False, f"al pedir la sugerencia de {cual}: {cod}"
+        time.sleep(0.6)
 
-    # 4) Tienda oficial, tipo de publicacion y precio.
+    cod, d = _evento(ctx, "GET", "kit_detail_form/next_form")
+    if cod >= 400:
+        return False, f"no avanzó del paso 2: {_mensaje_de_error(d) or cod}"
+
+    # 4) Condiciones de venta. Solo se toca lo que se quiera cambiar.
     abrir_paso(ctx, "sales_condition_form")
-    for paso, valor in (
-            ("sales_condition_form/official-store-default", str(tienda)),
-            ("sales_condition_form/listing-fees-default",
-             {"listingType": {"selected": tipo,
-                              "channels": [{"channel": "ml",
-                                            "listingType": tipo,
-                                            "campaign": "no-campaign"}]}}),
-            ("sales_condition_form/price-default",
-             {"marketplace": {"currency": "ARS",
-                              "price": round(float(precio), 2),
-                              "syncronized": True}})):
+    pasos = []
+    if tienda:
+        pasos.append(("sales_condition_form/official-store-default",
+                      str(tienda)))
+    if tipo:
+        pasos.append(("sales_condition_form/listing-fees-default",
+                      {"listingType": {"selected": tipo,
+                                       "channels": [{"channel": "ml",
+                                                     "listingType": tipo,
+                                                     "campaign": "no-campaign"}]}}))
+    if precio:
+        pasos.append(("sales_condition_form/price-default",
+                      {"marketplace": {"currency": "ARS",
+                                       "price": round(float(precio), 2),
+                                       "syncronized": True}}))
+    for paso, valor in pasos:
         cod, d = _evento(ctx, "PATCH", paso, valor)
         if d.get("result_type") == "CONFIRMATION_REQUIRED":
             cod, d = _evento(ctx, "PATCH", paso, valor, confirmar=True)
         if cod >= 400:
             return False, f"en {paso.split('/')[-1]}: {_mensaje_de_error(d) or cod}"
-        time.sleep(0.3)
+        time.sleep(0.4)
 
     # 5) Crear.
     cod, d = _evento(ctx, "POST", "create-item", {},
