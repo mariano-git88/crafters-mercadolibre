@@ -135,16 +135,22 @@ def abrir_paso(ctx, paso):
     return r.status_code, r.text
 
 
-def _evento(ctx, metodo, paso, cuerpo=None, extra=None):
+def _evento(ctx, metodo, paso, cuerpo=None, extra=None, confirmar=False):
     """Un paso del asistente. Devuelve la respuesta ya parseada."""
+    cuerpo_ev = ({"output": {"value": cuerpo}} if cuerpo is not None
+                 else {"output": {}})
+    if confirmar:
+        cuerpo_ev["confirmed"] = True
+        cuerpo_ev["applyToAll"] = False
+        cuerpo_ev["output"]["confirmed"] = True
+        cuerpo_ev["output"]["applyToAll"] = False
     payload = {
         "method": metodo,
         "path": f"list-kits/{ctx['session']}/{paso}",
         "loadingEvents": [], "errorEvents": [], "queryParams": {},
         "pathParams": [], "bodyParams": [],
         "headers": dict(extra or {}),
-        "body": {"output": {"value": cuerpo}} if cuerpo is not None
-                else {"output": {}},
+        "body": cuerpo_ev,
     }
     r = requests.put(EVENTO, headers={
         "User-Agent": NAVEGADOR, "Accept": "application/json",
@@ -242,8 +248,15 @@ def crear_kit(productos, precio, tienda, tipo="gold_special", sesion=None,
             p.setdefault("stock", {})
             p["stock"]["quantity"] = min(int(n), MAX_UNIDADES)
 
+    # **Confirmar los productos va en dos tiempos.** La primera llamada
+    # contesta `CONFIRMATION_REQUIRED` (ML avisa que el cambio arrastra otras
+    # cosas) y hay que repetirla; recien ahi devuelve REDIRECT. Mandarla una
+    # sola vez deja el asistente en el paso 1 sin decir por que.
     cod, d = _evento(ctx, "PATCH", "search_form/products-manager-default",
                      {"products": lista})
+    if d.get("result_type") == "CONFIRMATION_REQUIRED":
+        cod, d = _evento(ctx, "PATCH", "search_form/products-manager-default",
+                         {"products": lista}, confirmar=True)
     if cod >= 400:
         return False, f"al confirmar productos: {_mensaje_de_error(d) or cod}"
 
@@ -254,28 +267,28 @@ def crear_kit(productos, precio, tienda, tipo="gold_special", sesion=None,
         return False, (f"no avanzó del paso 1: "
                        f"{_mensaje_de_error(d) or d.get('result_type')}")
 
-    # 4) Paso 2: lo unico que pide es la **foto de portada**. El titulo lo
-    #    arma ML solo. Y la foto la sugiere con IA: se pide, se confirma y se
-    #    guarda — no hay que generar ni subir nada.
+    # 4) Paso 2. El titulo lo arma ML solo. **La foto de portada es opcional**:
+    #    cuando puede armarla, `next_form` redirige de una (visto en la
+    #    captura 8). Solo si no avanza se pide la sugerida con IA.
     abrir_paso(ctx, "kit_detail_form")
-    cod, d = _evento(ctx, "PATCH",
-                     "kit_detail_form/ai-suggestions-picture-uploader-default",
-                     "")
-    foto = _foto_sugerida(d)
-    if not foto:
-        return False, "el asistente no sugirió una foto de portada"
-    cod, d = _evento(ctx, "PATCH",
-                     "kit_detail_form/ai-suggestions-picture-uploader-default",
-                     foto.get("secureUrl") or foto.get("url"))
-    cod, d = _evento(ctx, "PATCH", "kit_detail_form/picture-uploader-default",
-                     [foto])
-    if cod >= 400:
-        return False, f"al poner la foto: {_mensaje_de_error(d) or cod}"
-
     cod, d = _evento(ctx, "GET", "kit_detail_form/next_form")
     if d.get("result_type") != "REDIRECT":
-        return False, (f"no avanzó del paso 2: "
-                       f"{_mensaje_de_error(d) or d.get('result_type')}")
+        _evento(ctx, "PATCH",
+                "kit_detail_form/ai-suggestions-picture-uploader-default", "")
+        cod, d = _evento(
+            ctx, "PATCH",
+            "kit_detail_form/ai-suggestions-picture-uploader-default", "")
+        foto = _foto_sugerida(d)
+        if foto:
+            _evento(ctx, "PATCH",
+                    "kit_detail_form/ai-suggestions-picture-uploader-default",
+                    foto.get("secureUrl") or foto.get("url"), confirmar=True)
+            _evento(ctx, "PATCH", "kit_detail_form/picture-uploader-default",
+                    [foto])
+        cod, d = _evento(ctx, "GET", "kit_detail_form/next_form")
+        if d.get("result_type") != "REDIRECT":
+            return False, (f"no avanzó del paso 2 (falta la portada): "
+                           f"{_mensaje_de_error(d) or d.get('result_type')}")
 
     # 4) Tienda oficial, tipo de publicacion y precio.
     abrir_paso(ctx, "sales_condition_form")
@@ -291,6 +304,8 @@ def crear_kit(productos, precio, tienda, tipo="gold_special", sesion=None,
                               "price": round(float(precio), 2),
                               "syncronized": True}})):
         cod, d = _evento(ctx, "PATCH", paso, valor)
+        if d.get("result_type") == "CONFIRMATION_REQUIRED":
+            cod, d = _evento(ctx, "PATCH", paso, valor, confirmar=True)
         if cod >= 400:
             return False, f"en {paso.split('/')[-1]}: {_mensaje_de_error(d) or cod}"
         time.sleep(0.3)
