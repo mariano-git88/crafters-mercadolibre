@@ -79,3 +79,4 @@ secrets_para_github_actions.txt
 
 # Tokens de cuentas adicionales (fallback local sin Sheet)
 tokens_*.json
+canastas_kits.json

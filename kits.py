@@ -59,6 +59,8 @@ from ventas import traer_ordenes
 
 DIR = Path(__file__).resolve().parent
 
+CACHE_CANASTAS = DIR / "canastas_kits.json"
+
 PANEL_KIT = ("https://vendedores.mercadolibre.com.ar/publicar/kit"
              "?pre_charged_ups={up}")
 
@@ -107,13 +109,21 @@ def _puntaje(veces, lift):
     return round(lift * math.log1p(veces), 1)
 
 
-def canastas(ml, dias=DIAS, callback=None):
+def canastas(ml, dias=DIAS, callback=None, refrescar=False):
     """
     Las compras reales de los ultimos `dias`, como conjuntos de SKU.
 
     **Agrupa por `pack_id`, no por orden.** ML parte el carrito en una orden
     por producto; sin esto, todas las canastas tienen un solo item.
+
+    Se cachea: bajar 12 meses son ~25.000 ordenes y varios minutos, y la app
+    no puede hacer eso en cada corrida.
     """
+    if CACHE_CANASTAS.exists() and not refrescar:
+        d = json.loads(CACHE_CANASTAS.read_text(encoding="utf-8"))
+        if d.get("dias") == dias:
+            return [set(c) for c in d["canastas"]]
+
     hasta = datetime.now()
     desde = hasta - timedelta(days=dias)
     if callback:
@@ -133,7 +143,22 @@ def canastas(ml, dias=DIAS, callback=None):
             s = de_sku.get(iid)
             if s:
                 juntos[pack].add(s)
-    return [c for c in juntos.values() if len(c) > 1]
+    salida = [c for c in juntos.values() if len(c) > 1]
+    CACHE_CANASTAS.write_text(json.dumps(
+        {"dias": dias, "bajado": hasta.strftime("%Y-%m-%d %H:%M"),
+         "canastas": [sorted(c) for c in salida]}, ensure_ascii=False),
+        encoding="utf-8")
+    return salida
+
+
+def cuando_se_bajo():
+    """Cuando se bajaron las canastas, para mostrarlo en la app."""
+    if not CACHE_CANASTAS.exists():
+        return None
+    try:
+        return json.loads(CACHE_CANASTAS.read_text(encoding="utf-8")).get("bajado")
+    except (OSError, json.JSONDecodeError):
+        return None
 
 
 def _reglas(canastas_, clave_de=None, minimo=MINIMO_JUNTOS, lift_min=LIFT_MINIMO):
@@ -469,4 +494,134 @@ def multipacks(pubs=None, cargos=None, unidades=UNIDADES_MULTIPACK):
     df = pd.DataFrame(filas)
     if len(df):
         df = df.sort_values(["ahorro_ml", "vendidas"], ascending=False)
+    return df.reset_index(drop=True)
+
+
+def conjuntos(canastas_, hasta=MAX_PRODUCTOS, minimo=MINIMO_JUNTOS):
+    """
+    Grupos de 2, 3 y 4 productos que se compran juntos mas de lo esperable.
+
+    Crece por niveles: un trio solo se prueba si sus tres pares ya pasaron el
+    corte. Sin esa poda habria que evaluar todas las combinaciones de 700 SKU
+    —millones— y la mayoria no aparece nunca.
+
+    El `lift` de un grupo se compara contra lo que se esperaria si los
+    productos fueran independientes: multiplicar sus frecuencias.
+    """
+    n = len(canastas_)
+    if not n:
+        return pd.DataFrame()
+
+    solo = collections.Counter()
+    for c in canastas_:
+        for x in c:
+            solo[x] += 1
+
+    filas = []
+    # Nivel 2: todos los pares.
+    actual = collections.Counter()
+    for c in canastas_:
+        for par in itertools.combinations(sorted(c), 2):
+            actual[par] += 1
+    vivos = {g for g, v in actual.items() if v >= minimo}
+
+    tam = 2
+    while vivos and tam <= hasta:
+        for g in vivos:
+            veces = actual[g]
+            esperado = 1.0
+            for x in g:
+                esperado *= solo[x] / n
+            lift = (veces / n) / esperado if esperado else 0
+            if lift < LIFT_MINIMO:
+                continue
+            filas.append({"productos": tam, "skus": list(g), "juntos": veces,
+                          "lift": round(lift, 1),
+                          "confianza": round(
+                              veces / min(solo[x] for x in g), 2)})
+        if tam == hasta:
+            break
+        # Nivel siguiente: solo combinaciones cuyos sub-grupos sobrevivieron.
+        candidatos = collections.Counter()
+        for c in canastas_:
+            ordenado = sorted(c)
+            if len(ordenado) <= tam:
+                continue
+            for g in itertools.combinations(ordenado, tam + 1):
+                if all(sub in vivos for sub in
+                       itertools.combinations(g, tam)):
+                    candidatos[g] += 1
+        actual = candidatos
+        vivos = {g for g, v in candidatos.items() if v >= minimo}
+        tam += 1
+
+    df = pd.DataFrame(filas)
+    if len(df):
+        df["puntaje"] = [_puntaje(r["juntos"], r["lift"])
+                         for _, r in df.iterrows()]
+        df = df.sort_values(["productos", "puntaje"], ascending=[False, False])
+    return df.reset_index(drop=True)
+
+
+def kits_de_varios(canastas_, cargos=None, pubs=None):
+    """
+    Los conjuntos de 2 a 4 productos, con precio y economia.
+
+    Un kit de 3 o 4 productos distintos ahorra mas que uno de 2 —son tres o
+    cuatro cargos fijos en vez de uno— pero tambien es mas facil que la suma
+    cruce los $33.000 y aparezca el envio. Por eso cada uno se evalua.
+    """
+    if pubs is None:
+        pubs = json.loads((DIR / "catalogo.json").read_text(encoding="utf-8"))
+    activas = [p for p in pubs if p.get("status") == "active"]
+    mejor = {}
+    for p in sorted(activas, key=lambda x: x.get("price") or 0, reverse=True):
+        s = _sku(p)
+        if s:
+            mejor.setdefault(s, p)
+
+    pcts = {}
+    if cargos is not None and len(cargos):
+        for _, r in cargos.iterrows():
+            v = _comision_variable(r.get("precio_prom"), r.get("comision_prom"))
+            if v is not None:
+                pcts[str(r["sku"]).strip().upper()] = v
+    pct_tipico = (sum(pcts.values()) / len(pcts)) if pcts else 0.16
+
+    filas = []
+    for _, g in conjuntos(canastas_).iterrows():
+        skus = g["skus"]
+        ps = [mejor.get(s) for s in skus]
+        if any(x is None for x in ps) or any(_es_kit(x.get("title")) for x in ps):
+            continue
+        precios = [x.get("price") or 0 for x in ps]
+        if not all(precios):
+            continue
+        pct = sum(pcts.get(s, pct_tipico) for s in skus) / len(skus)
+        e = economia(precios, pct)
+        desc = descuento_que_banca(precios, pct)
+        filas.append({
+            "origen": "se compran juntos", "productos": int(g["productos"]),
+            "juntos": int(g["juntos"]), "lift": g["lift"],
+            "confianza": g["confianza"],
+            "detalle": " + ".join((x.get("title") or "")[:32] for x in ps),
+            "skus": ", ".join(skus),
+            "precio_suelto": e["precio_suelto"],
+            "ahorro_ml": e["ahorro"],
+            "ahorro_de": ("cargo fijo"
+                          if e["envio_suelto"] - e["envio_kit"] <= 0
+                          else "envío" if e["cargo_fijo_suelto"] -
+                          e["cargo_fijo_kit"] <= 0 else "cargo fijo y envío"),
+            "cruza_umbral": e["cruza_umbral"],
+            "descuento_que_banca": round(desc, 4),
+            "precio_kit_sugerido": round(e["precio_suelto"] * (1 - desc), 2),
+            "motivo": (f"{int(g['juntos'])} compras juntas, {g['lift']}× más "
+                       f"de lo esperable, confianza {g['confianza']:.0%}"),
+            "items": ", ".join(x["id"] for x in ps),
+            "user_product": ps[0].get("user_product_id") or "",
+            "crear_kit": PANEL_KIT.format(up=ps[0].get("user_product_id") or ""),
+        })
+    df = pd.DataFrame(filas)
+    if len(df):
+        df = df.sort_values(["productos", "ahorro_ml"], ascending=[False, False])
     return df.reset_index(drop=True)

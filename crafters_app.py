@@ -41,6 +41,7 @@ import rentabilidad as rent
 import lista_precios as LP
 import mayoristas
 import preguntas as preg
+import kits as kits_mod
 import promociones
 import promos_campanas
 import promos_planilla
@@ -212,7 +213,7 @@ with enc_btn:
 seccion = st.segmented_control(
     "Sección", ["Plata sobre la mesa", "Reporte semanal", "Preguntas",
                 "Alertas", "Ganar la venta",
-                "Precios", "Mayoristas", "PROMOS",
+                "Precios", "Mayoristas", "PROMOS", "KITS",
                 "Stock ML", "Control de stock",
                 "Rentabilidad", "Precio óptimo", "Competencia",
                 "Publicidad", "Oportunidades"],
@@ -4818,3 +4819,168 @@ elif seccion == "PROMOS":
                 f"{ok} activadas, {len(rres) - ok} con error.")
             st.dataframe(rres, use_container_width=True, height=260,
                          hide_index=True)
+
+
+
+# ======================================================================= kits
+
+elif seccion == "KITS":
+    st.markdown("#### Armar kits")
+    st.caption(
+        "Qué conviene vender junto, y **cuánto se puede descontar sin ganar "
+        "menos** que vendiéndolo suelto.")
+
+    bajado = kits_mod.cuando_se_bajo()
+    c1, c2, c3 = st.columns([2, 2, 2])
+    c1.metric("Ventas analizadas", bajado or "todavía no")
+    dias_k = c2.number_input("Días de historia", 30, 730,
+                             kits_mod.DIAS, 30, key="dias_k")
+    with c3:
+        st.write("")
+        rebajar = st.button("↻ Volver a bajar las ventas", key="rb_k",
+                            help="12 meses son ~25.000 órdenes: tarda varios "
+                                 "minutos. Después queda cacheado.")
+
+    if rebajar:
+        caja = st.status("Bajando ventas...", expanded=True)
+        try:
+            kits_mod.canastas(ml, dias=int(dias_k), refrescar=True,
+                              callback=caja.write)
+            caja.update(label="Listo", state="complete", expanded=False)
+            st.cache_data.clear()
+        except Exception as e:
+            caja.update(label="Falló", state="error")
+            st.error(str(e))
+
+    if not bajado and not rebajar:
+        st.info("Todavía no se bajaron las ventas. Apretá **Volver a bajar "
+                "las ventas** para empezar.")
+        st.stop()
+
+    @st.cache_data(ttl=1800, show_spinner=False)
+    def _cargos_k(sello):
+        """Lo que cuesta vender cada SKU: comisión, envío y cargo fijo."""
+        import rentabilidad as rent_k
+        hist = json.loads((Path(__file__).resolve().parent /
+                           "historico_ventas.json").read_text(encoding="utf-8"))
+        envios = {}
+        ruta_e = Path(__file__).resolve().parent / "costos_envio.json"
+        if ruta_e.exists():
+            envios = json.loads(ruta_e.read_text(encoding="utf-8"))
+        return rent_k.cargos_por_sku(hist.get("ordenes", hist), envios)
+
+    try:
+        cargos_k = _cargos_k(0)
+    except Exception as e:
+        st.warning(f"Sin datos de costos de venta ({e}). Los ahorros usan "
+                   f"una comisión típica.", icon="⚠️")
+        cargos_k = None
+
+    vista_k = st.segmented_control(
+        "Vista", ["Multipacks del mismo producto", "Kits de varios productos"],
+        default="Multipacks del mismo producto", key="vista_k",
+        label_visibility="collapsed") or "Multipacks del mismo producto"
+
+    st.info(
+        "**El ahorro de un kit es el cargo fijo, no la comisión.** La comisión "
+        "es un porcentaje y da igual cobrarla en una venta o en tres; el cargo "
+        "fijo se paga **por venta**. En un producto de $2.500 son $1.250 — la "
+        "mitad del precio.\n\n**Ojo con cruzar los \\$33.000**: ahí el cargo "
+        "fijo se hace cero pero aparecen ~\\$7.641 de envío a cargo nuestro. "
+        "Esos kits se descartan solos.", icon="💡")
+
+    if vista_k == "Multipacks del mismo producto":
+        @st.cache_data(ttl=1800, show_spinner="Calculando multipacks...")
+        def _multi(sello):
+            return kits_mod.multipacks(pubs=pubs, cargos=cargos_k)
+
+        mp = _multi(st.session_state.get("sello_catalogo", 0))
+        if not len(mp):
+            st.info("No hay multipacks que ahorren.")
+            st.stop()
+
+        solo_firme = st.checkbox(
+            "Solo los que ahorran cargo fijo (sin supuestos)", value=True,
+            key="firme_k",
+            help="El ahorro de envío supone que, sin el pack, habrían sido "
+                 "compras separadas. El de cargo fijo es real siempre.")
+        v = mp[mp["ahorro_de"] == "cargo fijo"] if solo_firme else mp
+
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Multipacks", len(v))
+        m2.metric("Ahorro total por venta", pesos(float(v["ahorro_ml"].sum())))
+        m3.metric("Descuento que banca",
+                  f"{v['descuento_que_banca'].mean():.0%} promedio")
+
+        st.dataframe(
+            v, use_container_width=True, height=380, hide_index=True,
+            column_config={
+                "unidades": "Unid.", "producto": "Producto",
+                "precio_unidad": st.column_config.NumberColumn(
+                    "Precio c/u", format="$%.0f"),
+                "precio_suelto": st.column_config.NumberColumn(
+                    "Sueltos", format="$%.0f"),
+                "precio_kit_sugerido": st.column_config.NumberColumn(
+                    "Precio del pack", format="$%.0f"),
+                "ahorro_ml": st.column_config.NumberColumn(
+                    "Ahorro", format="$%.0f"),
+                "descuento_que_banca": st.column_config.NumberColumn(
+                    "Descuento que banca", format="percent"),
+                "crear_kit": st.column_config.LinkColumn(
+                    "Crear", display_text="armar"),
+                "sku": None, "item": None, "user_product": None,
+                "origen": None, "supuesto": None,
+                "ahorro_cargo_fijo": None, "ahorro_envio": None})
+        st.download_button("Descargar", v.to_csv(index=False).encode("utf-8"),
+                           f"multipacks_{datetime.now():%Y%m%d}.csv",
+                           "text/csv", key="dl_mp")
+    else:
+        @st.cache_data(ttl=1800, show_spinner="Buscando qué se compra junto...")
+        def _varios(sello, dias):
+            cs = kits_mod.canastas(ml, dias=int(dias))
+            return kits_mod.kits_de_varios(cs, cargos=cargos_k, pubs=pubs)
+
+        try:
+            kv = _varios(st.session_state.get("sello_catalogo", 0), dias_k)
+        except Exception as e:
+            st.error(f"No pude calcular los kits: {e}")
+            st.stop()
+        if not len(kv):
+            st.info("No hay grupos con evidencia suficiente. Probá ampliando "
+                    "los días de historia.")
+            st.stop()
+
+        k1, k2, k3 = st.columns(3)
+        k1.metric("Kits propuestos", len(kv))
+        k2.metric("De 3 o más productos", int((kv["productos"] >= 3).sum()))
+        k3.metric("Ahorro promedio", pesos(float(kv["ahorro_ml"].mean())))
+
+        cuantos = st.multiselect(
+            "Cuántos productos", sorted(kv["productos"].unique()),
+            default=sorted(kv["productos"].unique()), key="cnt_k")
+        v = kv[kv["productos"].isin(cuantos)]
+
+        st.dataframe(
+            v, use_container_width=True, height=380, hide_index=True,
+            column_config={
+                "productos": "N°", "detalle": "Kit", "motivo": "Por qué",
+                "precio_suelto": st.column_config.NumberColumn(
+                    "Sueltos", format="$%.0f"),
+                "precio_kit_sugerido": st.column_config.NumberColumn(
+                    "Precio del kit", format="$%.0f"),
+                "ahorro_ml": st.column_config.NumberColumn(
+                    "Ahorro", format="$%.0f"),
+                "descuento_que_banca": st.column_config.NumberColumn(
+                    "Descuento que banca", format="percent"),
+                "crear_kit": st.column_config.LinkColumn(
+                    "Crear", display_text="armar"),
+                "skus": None, "items": None, "user_product": None,
+                "origen": None, "juntos": None, "lift": None,
+                "confianza": None, "cruza_umbral": None})
+        st.download_button("Descargar", v.to_csv(index=False).encode("utf-8"),
+                           f"kits_{datetime.now():%Y%m%d}.csv", "text/csv",
+                           key="dl_kv")
+
+    st.caption(
+        "**Publicar el kit no se puede por API**: el botón *armar* abre el "
+        "panel de MercadoLibre con el producto principal ya cargado.")
