@@ -53,7 +53,7 @@ ELIGE_EL_VENDEDOR = ("SELLER_CAMPAIGN",)
 
 COLUMNAS = ["item_id", "accion", "motivo", "tipo", "campana_id", "oferta_id",
             "precio_original", "precio_promo", "descuento", "min_precio",
-            "max_precio"]
+            "max_precio", "stock_min", "stock_max"]
 
 
 def campanas(ml):
@@ -100,6 +100,11 @@ def ofertas(ml, campana_id, tipo, estados=("candidate", "started"),
                                  else None,
                     "min_precio": x.get("min_discounted_price"),
                     "max_precio": x.get("max_discounted_price"),
+                    # Las relampago piden COMPROMETER stock y el POST lo
+                    # exige: sin el contesta 400 "Stock must be greater
+                    # than X and less than Y".
+                    "stock_min": (x.get("stock") or {}).get("min"),
+                    "stock_max": (x.get("stock") or {}).get("max"),
                 })
             vueltas += 1
             if callback:
@@ -117,7 +122,8 @@ def _fila(item, accion, motivo, tipo="", campana="", o=None, precio=None,
             "campana_id": campana, "oferta_id": o.get("oferta_id", ""),
             "precio_original": o.get("precio_original"),
             "precio_promo": precio, "descuento": desc,
-            "min_precio": o.get("min_precio"), "max_precio": o.get("max_precio")}
+            "min_precio": o.get("min_precio"), "max_precio": o.get("max_precio"),
+            "stock_min": o.get("stock_min"), "stock_max": o.get("stock_max")}
 
 
 def replicar(ml, origen, tipo_origen, destino, tipo_destino, callback=None,
@@ -279,6 +285,11 @@ def aplicar(ml, plan, operador="", callback=None, tope=None):
             cuerpo["offer_id"] = f["oferta_id"]
         if pd.notna(f["precio_promo"]):
             cuerpo["deal_price"] = round(float(f["precio_promo"]), 2)
+        # Las relampago exigen cuanto stock se compromete. Va el maximo, que
+        # es el disponible: comprometer menos limita la oferta sin ahorrar
+        # nada, porque el descuento se aplica igual a lo que se venda.
+        if pd.notna(f.get("stock_max")):
+            cuerpo["stock"] = int(f["stock_max"])
 
         nueva = ""
         try:
