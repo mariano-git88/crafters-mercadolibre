@@ -118,6 +118,41 @@ def _productos_de_la_pagina(html):
         return []
 
 
+# **ML mira las pistas del cliente.** Con DevTools acoplado el navegador queda
+# angosto, ML lo lee como pantalla chica y corta el asistente — Mariano lo
+# sufrio al capturar. Un cliente que no manda `viewport-width` cae en el mismo
+# lugar. Y el navegador manda `x-requested-with` en TODOS los eventos, no solo
+# al crear.
+PISTAS = {
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "es-AR,es;q=0.9",
+    "Content-Type": "application/json",
+    "device-memory": "8",
+    "downlink": "10",
+    "dpr": "1",
+    "ect": "4g",
+    "rtt": "50",
+    "viewport-width": "1920",
+    "sec-ch-ua": '"Not;A=Brand";v="8", "Chromium";v="140", '
+                 '"Google Chrome";v="140"',
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": '"Windows"',
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin",
+    "priority": "u=1, i",
+    "x-requested-with": "XMLHttpRequest",
+}
+
+
+def _cabeceras(ctx):
+    h = dict(PISTAS)
+    h.update({"User-Agent": NAVEGADOR, "Origin": PANEL,
+              "Referer": PANEL + "/publicar/kit",
+              "x-csrf-token": ctx["csrf"]})
+    return h
+
+
 def abrir_paso(ctx, paso):
     """
     Carga la **pagina** de un paso del asistente.
@@ -152,12 +187,8 @@ def _evento(ctx, metodo, paso, cuerpo=None, extra=None, confirmar=False):
         "headers": dict(extra or {}),
         "body": cuerpo_ev,
     }
-    r = requests.put(EVENTO, headers={
-        "User-Agent": NAVEGADOR, "Accept": "application/json",
-        "Content-Type": "application/json", "Origin": PANEL,
-        "Referer": PANEL + "/publicar/kit",
-        "x-csrf-token": ctx["csrf"],
-    }, cookies=ctx["cookies"], json=payload, timeout=120)
+    r = requests.put(EVENTO, headers=_cabeceras(ctx),
+                     cookies=ctx["cookies"], json=payload, timeout=120)
     try:
         datos = r.json()
     except ValueError:
@@ -211,7 +242,7 @@ def _productos_de(datos):
 
 
 def crear_kit(productos, precio=None, tienda=None, tipo=None, sesion=None,
-              callback=None):
+              callback=None, titulo=None):
     """
     Arma un kit y lo publica. Devuelve (ok, detalle).
 
@@ -269,8 +300,14 @@ def crear_kit(productos, precio=None, tienda=None, tipo=None, sesion=None,
             return False, f"al confirmar: {_mensaje_de_error(d) or cod}"
         time.sleep(0.4)
 
-    # 3) Paso 2: pedir las tres sugerencias de IA.
+    # 3) Paso 2. El titulo se puede mandar directo —`title-default` con un
+    #    string contesta 200 y el foco pasa de `title_task` a
+    #    `picture_uploader_task`, o sea que lo toma—. La **portada** no: solo
+    #    se puede poner una imagen que ML haya generado para esa sesion, y la
+    #    sugerencia de IA contesta REJECT desde este cliente.
     abrir_paso(ctx, "kit_detail_form")
+    if titulo:
+        _evento(ctx, "PATCH", "kit_detail_form/title-default", titulo)
     for cual in ("title", "picture-uploader", "description"):
         cod, d = _evento(
             ctx, "PATCH", f"kit_detail_form/ai-suggestions-{cual}-default", "")
