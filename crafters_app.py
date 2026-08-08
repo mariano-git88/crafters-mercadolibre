@@ -4877,7 +4877,8 @@ elif seccion == "KITS":
         cargos_k = None
 
     vista_k = st.segmented_control(
-        "Vista", ["Multipacks del mismo producto", "Kits de varios productos"],
+        "Vista", ["Multipacks del mismo producto", "Kits de varios productos",
+                  "Los que cruzan $33.000"],
         default="Multipacks del mismo producto", key="vista_k",
         label_visibility="collapsed") or "Multipacks del mismo producto"
 
@@ -4934,7 +4935,11 @@ elif seccion == "KITS":
         st.download_button("Descargar", v.to_csv(index=False).encode("utf-8"),
                            f"multipacks_{datetime.now():%Y%m%d}.csv",
                            "text/csv", key="dl_mp")
-    else:
+        st.session_state["kits_para_registrar"] = v
+
+    # El `else` suelto hacia que la vista del umbral corriera TAMBIEN esta:
+    # con tres opciones ya no alcanza, hay que nombrarla.
+    elif vista_k == "Kits de varios productos":
         @st.cache_data(ttl=1800, show_spinner="Buscando qué se compra junto...")
         def _varios(sello, dias):
             cs = kits_mod.canastas(ml, dias=int(dias))
@@ -4980,6 +4985,103 @@ elif seccion == "KITS":
         st.download_button("Descargar", v.to_csv(index=False).encode("utf-8"),
                            f"kits_{datetime.now():%Y%m%d}.csv", "text/csv",
                            key="dl_kv")
+        st.session_state["kits_para_registrar"] = v
+
+    # ------------------------------------------- los que cruzan el umbral
+    elif vista_k == "Los que cruzan $33.000":
+        st.caption(
+            "Un kit que cruza los \\$33.000 deja de pagar cargo fijo pero "
+            "empieza a pagar el envío. Acá la pregunta no es cuánto ahorra "
+            "—no ahorra— sino **cuánto cuesta**, y si el volumen extra lo "
+            "justifica.")
+
+        @st.cache_data(ttl=1800, show_spinner="Calculando rentabilidad...")
+        def _cruce(sello, dias):
+            cs = kits_mod.canastas(ml, dias=int(dias))
+            todos = kits_mod.kits_de_varios(cs, cargos=cargos_k, pubs=pubs)
+            return kits_mod.rentabilidad_del_kit(
+                todos[todos["cruza_umbral"]], cargos_k)
+
+        try:
+            cru = _cruce(st.session_state.get("sello_catalogo", 0), dias_k)
+        except Exception as e:
+            st.error(f"No pude calcular: {e}")
+            st.stop()
+        if not len(cru):
+            st.info("Ningún kit cruza el umbral.")
+            st.stop()
+
+        con_dato = cru[cru["veredicto"] != "sin costo"]
+        u1, u2, u3 = st.columns(3)
+        u1.metric("Ganan más por venta",
+                  int((cru["veredicto"] == "conviene").sum()))
+        u2.metric("Ganan menos, pero ganan",
+                  int((cru["veredicto"] == "probar").sum()))
+        u3.metric("Pierden plata", int((cru["veredicto"] == "NO").sum()))
+
+        if len(con_dato):
+            sanos = int((con_dato["veredicto"] != "NO").sum())
+            malos = int((con_dato["veredicto"] == "NO").sum())
+            st.success(
+                f"**{sanos} de {len(con_dato)} dejan margen positivo.** Que "
+                f"un kit gane menos por venta que los productos sueltos no lo "
+                f"descalifica: el precio del pack empuja volumen y ese margen "
+                f"se cobra más veces. **Lo que descalifica es perder plata**, "
+                f"y eso pasa en {malos}.", icon="✅")
+        if int((cru["veredicto"] == "sin costo").sum()):
+            st.info(f"{int((cru['veredicto'] == 'sin costo').sum())} no se "
+                    f"pueden evaluar porque falta el costo de algún "
+                    f"componente. Cargalos en **Rentabilidad**.")
+
+        st.dataframe(
+            cru, use_container_width=True, height=380, hide_index=True,
+            column_config={
+                "detalle": "Kit", "veredicto": "¿Conviene?", "motivo": "Por qué",
+                "precio_suelto": st.column_config.NumberColumn(
+                    "Sueltos", format="$%.0f"),
+                "costo": st.column_config.NumberColumn("Costo", format="$%.0f"),
+                "margen_suelto": st.column_config.NumberColumn(
+                    "Margen suelto", format="$%.0f"),
+                "margen_kit": st.column_config.NumberColumn(
+                    "Margen kit", format="$%.0f"),
+                "diferencia": st.column_config.NumberColumn(
+                    "Diferencia", format="$%.0f"),
+                "margen_kit_pct": st.column_config.NumberColumn(
+                    "Margen kit", format="percent"),
+                "cruza_umbral": None, "productos": None})
+        st.download_button("Descargar", cru.to_csv(index=False).encode("utf-8"),
+                           f"kits_umbral_{datetime.now():%Y%m%d}.csv",
+                           "text/csv", key="dl_cr")
+        st.session_state["kits_para_registrar"] = cru[
+            cru["veredicto"] == "conviene"]
+
+    # -------------------------------------------------------- dejar registro
+    st.divider()
+    st.markdown("##### Dejar constancia")
+    st.caption(
+        "Guarda en la planilla qué kits se propusieron y cuáles se armaron, "
+        "con fecha y quién. **No crea nada en MercadoLibre** — eso es del "
+        "panel — pero deja el registro que hoy no existe en ningún lado.")
+
+    para_reg = st.session_state.get("kits_para_registrar")
+    if para_reg is not None and len(para_reg):
+        g1, g2, g3 = st.columns([2, 2, 2])
+        op_k = g1.text_input("Tu nombre", key="op_k")
+        est_k = g2.selectbox("Estado", ["propuesto", "armado", "descartado"],
+                             key="est_k")
+        with g3:
+            st.write("")
+            if st.button(f"Registrar {len(para_reg)}", key="go_k",
+                         disabled=not op_k.strip()):
+                ok, det = kits_mod.registrar(para_reg, operador=op_k.strip(),
+                                             estado=est_k)
+                (st.success if ok else st.error)(det)
+
+    hechos = kits_mod.registrados()
+    if len(hechos):
+        with st.expander(f"Ver el registro ({len(hechos)})"):
+            st.dataframe(hechos.tail(200), use_container_width=True,
+                         hide_index=True, height=280)
 
     st.caption(
         "**Publicar el kit no se puede por API**: el botón *armar* abre el "

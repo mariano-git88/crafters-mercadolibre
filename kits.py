@@ -625,3 +625,175 @@ def kits_de_varios(canastas_, cargos=None, pubs=None):
     if len(df):
         df = df.sort_values(["productos", "ahorro_ml"], ascending=[False, False])
     return df.reset_index(drop=True)
+
+
+def rentabilidad_del_kit(kits_df, cargos=None, costos=None):
+    """
+    Margen del kit contra vender los mismos productos por separado.
+
+    Sirve sobre todo para los que **cruzan los $33.000**: ahi el kit deja de
+    pagar cargo fijo pero empieza a pagar el envio, y la pregunta no es si
+    ahorra —no ahorra— sino **cuanto cuesta** y si el volumen extra lo
+    justifica.
+
+    El costo del producto se toma **sin el descuento de proveedor**: se esta
+    decidiendo un precio, y si se baja contando con un descuento que puede no
+    estar, la venta pasa a perdida (ver `rentabilidad.costo_efectivo`).
+    """
+    import rentabilidad as rent
+
+    if costos is None:
+        costos, _ = rent.costos_guardados()
+    cd = {}
+    if costos is not None and len(costos):
+        for _, r in costos.iterrows():
+            try:
+                cd[str(r["sku"]).strip().upper()] = float(r["costo"])
+            except (TypeError, ValueError):
+                pass
+
+    pcts = {}
+    if cargos is not None and len(cargos):
+        for _, r in cargos.iterrows():
+            v = _comision_variable(r.get("precio_prom"), r.get("comision_prom"))
+            if v is not None:
+                pcts[str(r["sku"]).strip().upper()] = v
+    pct_tipico = (sum(pcts.values()) / len(pcts)) if pcts else 0.16
+
+    filas = []
+    for _, k in kits_df.iterrows():
+        skus = [s.strip().upper() for s in str(k.get("skus", "")).split(",")
+                if s.strip()]
+        if not skus:
+            continue
+        cs = [cd.get(s) for s in skus]
+        if any(c is None for c in cs):
+            filas.append({"detalle": k.get("detalle"), "veredicto": "sin costo",
+                          "motivo": "falta el costo de algún componente"})
+            continue
+
+        precios = []
+        # El precio de cada componente sale del suelto repartido igual que en
+        # la propuesta: se recalcula desde el catalogo en `kits_de_varios`.
+        suelto = float(k.get("precio_suelto") or 0)
+        if not suelto:
+            continue
+        pct = sum(pcts.get(s, pct_tipico) for s in skus) / len(skus)
+        costo = sum(rent.costo_efectivo(c) for c in cs)
+
+        # Reparto el precio suelto proporcional al costo, que es lo mas
+        # cercano a los precios reales sin volver a leer el catalogo.
+        total_costo = sum(cs) or 1
+        precios = [suelto * (c / total_costo) for c in cs]
+
+        e = economia(precios, pct)
+        # Devuelve (detalle, total): sin el [1] se resta una tupla y revienta.
+        otros_s = rent.otros_conceptos_monto(suelto)[1]
+        otros_k = rent.otros_conceptos_monto(e["precio_kit"])[1]
+        margen_suelto = suelto - costo - e["costo_ml_suelto"] - otros_s
+        margen_kit = e["precio_kit"] - costo - e["costo_ml_kit"] - otros_k
+        dif = margen_kit - margen_suelto
+
+        # **Lo que descalifica es perder plata, no perder margen.** Un kit que
+        # gana menos por venta pero sigue en positivo puede convenir igual: el
+        # precio del pack empuja volumen y ese margen se cobra mas veces. El
+        # corte duro es el cero.
+        # El replace de miles va sobre CADA numero, nunca sobre la frase
+        # entera: aplicado al texto se come las comas de la redaccion.
+        def pes(v):
+            return f"${v:,.0f}".replace(",", ".")
+
+        if margen_kit <= 0:
+            ver = "NO"
+            mot = (f"margen negativo ({pes(margen_kit)}): se pierde plata en "
+                   f"cada venta, el volumen no lo arregla")
+        elif dif > 0:
+            ver = "conviene"
+            mot = f"gana {pes(dif)} más por venta"
+        else:
+            extra = (-dif) / margen_kit if margen_kit else 0
+            ver = "probar"
+            mot = (f"gana {pes(-dif)} menos por venta pero sigue en positivo "
+                   f"({pes(margen_kit)}, {margen_kit / e['precio_kit']:.0%}); "
+                   f"empata vendiendo {extra:.0%} más")
+
+        filas.append({
+            "detalle": k.get("detalle"), "productos": k.get("productos"),
+            "precio_suelto": round(suelto, 2),
+            "costo": round(costo, 2),
+            "margen_suelto": round(margen_suelto, 2),
+            "margen_kit": round(margen_kit, 2),
+            "diferencia": round(dif, 2),
+            "margen_kit_pct": round(margen_kit / e["precio_kit"], 4)
+                              if e["precio_kit"] else None,
+            "veredicto": ver, "motivo": mot,
+            "cruza_umbral": bool(k.get("cruza_umbral")),
+        })
+    df = pd.DataFrame(filas)
+    if len(df) and "diferencia" in df:
+        df = df.sort_values("diferencia", ascending=False)
+    return df.reset_index(drop=True)
+
+
+# ------------------------------------------------------------------ registro
+
+HOJA_KITS = "kits"
+COLS_KITS = ["fecha", "tipo", "productos", "detalle", "skus", "items",
+             "precio_suelto", "precio_kit", "descuento", "ahorro_ml",
+             "ahorro_de", "cruza_umbral", "veredicto", "motivo", "estado",
+             "operador", "user_product", "link"]
+
+
+def registrar(filas, operador="", estado="propuesto"):
+    """
+    Deja constancia en el Sheet de los kits propuestos y de los armados.
+
+    **No crea nada en MercadoLibre**: armar el kit es del panel (ver el
+    encabezado). Esto es el registro de que se decidio y quien lo decidio, que
+    es lo que hoy no existe en ningun lado.
+
+    `append_hoja` recibe **diccionarios** y devuelve `(ok, detalle)`; si no se
+    mira el retorno, el registro falla en silencio.
+    """
+    import almacen
+    from datetime import datetime as _dt
+
+    if hasattr(filas, "iterrows"):
+        filas = [r.to_dict() for _, r in filas.iterrows()]
+    if not filas:
+        return True, "nada para registrar"
+
+    ahora = _dt.now().strftime("%Y-%m-%d %H:%M:%S")
+    listas = []
+    for f in filas:
+        listas.append({
+            "fecha": ahora,
+            "tipo": f.get("origen") or f.get("tipo") or "",
+            "productos": f.get("productos") or f.get("unidades") or "",
+            "detalle": f.get("detalle") or f.get("producto") or "",
+            "skus": f.get("skus") or f.get("sku") or "",
+            "items": f.get("items") or f.get("item") or "",
+            "precio_suelto": f.get("precio_suelto"),
+            "precio_kit": f.get("precio_kit_sugerido"),
+            "descuento": f.get("descuento_que_banca"),
+            "ahorro_ml": f.get("ahorro_ml"),
+            "ahorro_de": f.get("ahorro_de", ""),
+            "cruza_umbral": f.get("cruza_umbral", ""),
+            "veredicto": f.get("veredicto", ""),
+            "motivo": f.get("motivo", ""),
+            "estado": estado,
+            "operador": operador,
+            "user_product": f.get("user_product", ""),
+            "link": f.get("crear_kit", ""),
+        })
+    ok, detalle = almacen.append_hoja(HOJA_KITS, COLS_KITS, listas)
+    return ok, (detalle or f"{len(listas)} kits registrados")
+
+
+def registrados():
+    """Lo que ya se registró, para no proponer dos veces lo mismo."""
+    import almacen
+    try:
+        return pd.DataFrame(almacen.leer_hoja(HOJA_KITS, COLS_KITS))
+    except Exception:            # noqa: BLE001
+        return pd.DataFrame()
