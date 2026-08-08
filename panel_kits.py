@@ -118,6 +118,23 @@ def _productos_de_la_pagina(html):
         return []
 
 
+def abrir_paso(ctx, paso):
+    """
+    Carga la **pagina** de un paso del asistente.
+
+    Hace falta de verdad: el asistente es con estado del lado del servidor y
+    los bricks de un paso no existen hasta que su pagina se pidio. Sin esto,
+    pedir la foto sugerida contesta **500 `No value present`** (una
+    `NoSuchElementException` de Java, o sea que ML busca algo que todavia no
+    creo).
+    """
+    r = requests.get(
+        f"https://www.mercadolibre.com.ar/publicar/kit/{ctx['session']}/{paso}",
+        headers={"User-Agent": NAVEGADOR, "Accept": "text/html"},
+        cookies=ctx["cookies"], timeout=90)
+    return r.status_code, r.text
+
+
 def _evento(ctx, metodo, paso, cuerpo=None, extra=None):
     """Un paso del asistente. Devuelve la respuesta ya parseada."""
     payload = {
@@ -149,6 +166,32 @@ def _mensaje_de_error(datos):
         if d.get("type") == "ERROR" and d.get("message"):
             return d["message"]
     return ""
+
+
+def _foto_sugerida(datos):
+    """
+    La foto de portada que ML propone con IA para el kit.
+
+    **No hay que generar ni subir nada**: el asistente la arma solo a partir
+    de los productos. Se pide con valor vacio, viene en el brick del
+    `picture_uploader`, y despues se confirma.
+    """
+    def buscar(o):
+        if isinstance(o, dict):
+            if o.get("secureUrl") or (o.get("url") and o.get("id")
+                                      and "mlstatic" in str(o.get("url"))):
+                return o
+            for v in o.values():
+                r = buscar(v)
+                if r:
+                    return r
+        elif isinstance(o, list):
+            for v in o:
+                r = buscar(v)
+                if r:
+                    return r
+        return None
+    return buscar(datos)
 
 
 def _productos_de(datos):
@@ -211,17 +254,31 @@ def crear_kit(productos, precio, tienda, tipo="gold_special", sesion=None,
         return False, (f"no avanzó del paso 1: "
                        f"{_mensaje_de_error(d) or d.get('result_type')}")
 
-    # 4) FALTA: el paso 2 pide el titulo del kit y todavia no se como se
-    #    manda. `kit_detail_form/next_form` contesta CONTENT con
-    #    `focus: title_task`, o sea "completa el titulo". La captura de
-    #    Mariano no sirve de referencia porque termino en 422: **nunca se
-    #    creo un kit**, asi que no hay un flujo exitoso que copiar.
+    # 4) Paso 2: lo unico que pide es la **foto de portada**. El titulo lo
+    #    arma ML solo. Y la foto la sugiere con IA: se pide, se confirma y se
+    #    guarda — no hay que generar ni subir nada.
+    abrir_paso(ctx, "kit_detail_form")
+    cod, d = _evento(ctx, "PATCH",
+                     "kit_detail_form/ai-suggestions-picture-uploader-default",
+                     "")
+    foto = _foto_sugerida(d)
+    if not foto:
+        return False, "el asistente no sugirió una foto de portada"
+    cod, d = _evento(ctx, "PATCH",
+                     "kit_detail_form/ai-suggestions-picture-uploader-default",
+                     foto.get("secureUrl") or foto.get("url"))
+    cod, d = _evento(ctx, "PATCH", "kit_detail_form/picture-uploader-default",
+                     [foto])
+    if cod >= 400:
+        return False, f"al poner la foto: {_mensaje_de_error(d) or cod}"
+
     cod, d = _evento(ctx, "GET", "kit_detail_form/next_form")
     if d.get("result_type") != "REDIRECT":
-        return False, ("el paso 2 pide el título del kit y todavía no sé el "
-                       "campo: hace falta capturar una creación exitosa")
+        return False, (f"no avanzó del paso 2: "
+                       f"{_mensaje_de_error(d) or d.get('result_type')}")
 
     # 4) Tienda oficial, tipo de publicacion y precio.
+    abrir_paso(ctx, "sales_condition_form")
     for paso, valor in (
             ("sales_condition_form/official-store-default", str(tienda)),
             ("sales_condition_form/listing-fees-default",
