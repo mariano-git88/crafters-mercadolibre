@@ -80,6 +80,14 @@ MAX_PRODUCTOS = 4
 # Multipacks del mismo SKU: 2, 3 o 4 unidades.
 UNIDADES_MULTIPACK = (2, 3, 4)
 
+# Cuanto se puede descontar como maximo, decidido por Mariano el 8/8/2026.
+# Nuestras marcas se cuidan mas: el precio del kit es tambien una señal de
+# cuanto vale la marca. **Es un techo, no un objetivo**: si la economia del
+# kit no banca ni eso, manda lo que banca.
+MARCAS_PROPIAS = ("suprabond", "bulit", "somerset")
+TOPE_PROPIAS = 0.15
+TOPE_OTRAS = 0.25
+
 # Palabras que delatan que la publicacion YA es un kit. Proponer un kit de un
 # kit es armar un combo del combo: aparecio en la primera corrida con
 # "Combo Toallon Y Toalla ... Set Hotelero" + "Toallon".
@@ -89,6 +97,38 @@ YA_ES_KIT = ("combo", "kit", " set ", "set ", "pack", "x 2 uni", "x 3 uni",
 
 def _sku(p):
     return (sku_del_atributo(p) or p.get("seller_custom_field") or "").strip().upper()
+
+
+def _marca(pub):
+    for a in (pub.get("attributes") or []):
+        if a.get("id") == "BRAND":
+            return (a.get("value_name") or "").strip()
+    return ""
+
+
+def tope_descuento(pubs_del_kit):
+    """
+    El techo de descuento del kit segun las marcas que lo componen.
+
+    Si mezcla, manda **la mas restrictiva**: alcanza con que una sea nuestra
+    para que el kit no pueda descontarse mas del 15%.
+    """
+    for p in pubs_del_kit:
+        if _marca(p).lower() in MARCAS_PROPIAS:
+            return TOPE_PROPIAS
+    return TOPE_OTRAS
+
+
+def tipo_de_publicacion(pubs_del_kit):
+    """
+    Clasica o Premium. Si todos coinciden, ese; **si hay mezcla, Clasica**,
+    que es la barata: la Premium paga ~12 puntos mas de comision y no tiene
+    sentido pagarlos por arrastre de un solo componente.
+    """
+    tipos = {p.get("listing_type_id") for p in pubs_del_kit}
+    if tipos == {"gold_pro"}:
+        return "gold_pro"
+    return "gold_special"
 
 
 def _es_kit(titulo):
@@ -452,6 +492,12 @@ def multipacks(pubs=None, cargos=None, unidades=UNIDADES_MULTIPACK):
         ahorro, n, e = max(opciones)
         if ahorro <= 0:
             continue
+        # El descuento es el MENOR entre lo que la economia banca y el techo
+        # de la marca: nunca regalar mas de lo que el kit ahorra, ni mas de lo
+        # que la marca tolera.
+        banca = descuento_que_banca([precio] * n, pct)
+        tope = tope_descuento([p])
+        desc = min(banca, tope)
         ahorro_fijo = e["cargo_fijo_suelto"] - e["cargo_fijo_kit"]
         ahorro_envio = e["envio_suelto"] - e["envio_kit"]
         # De donde sale el ahorro cambia cuanto confiar en el:
@@ -475,11 +521,13 @@ def multipacks(pubs=None, cargos=None, unidades=UNIDADES_MULTIPACK):
             "precio_unidad": precio,
             "precio_suelto": e["precio_suelto"],
             "ahorro_ml": e["ahorro"],
-            "descuento_que_banca": round(
-                descuento_que_banca([precio] * n, pct), 4),
-            "precio_kit_sugerido": round(
-                e["precio_suelto"] * (1 - descuento_que_banca(
-                    [precio] * n, pct)), 2),
+            "descuento_que_banca": round(banca, 4),
+            "tope_marca": tope,
+            "marca": _marca(p),
+            "descuento": round(desc, 4),
+            "limita": "la marca" if tope < banca else "la economía del kit",
+            "tipo_publicacion": tipo_de_publicacion([p]),
+            "precio_kit_sugerido": round(e["precio_suelto"] * (1 - desc), 2),
             "motivo": (
                 f"{n} unidades en una venta ahorran {pes(e['ahorro'])} de "
                 + (f"cargo fijo ({pes(e['cargo_fijo_suelto'])} → "
@@ -599,7 +647,9 @@ def kits_de_varios(canastas_, cargos=None, pubs=None):
             continue
         pct = sum(pcts.get(s, pct_tipico) for s in skus) / len(skus)
         e = economia(precios, pct)
-        desc = descuento_que_banca(precios, pct)
+        banca = descuento_que_banca(precios, pct)
+        tope = tope_descuento(ps)
+        desc = min(banca, tope)
         filas.append({
             "origen": "se compran juntos", "productos": int(g["productos"]),
             "juntos": int(g["juntos"]), "lift": g["lift"],
@@ -613,7 +663,12 @@ def kits_de_varios(canastas_, cargos=None, pubs=None):
                           else "envío" if e["cargo_fijo_suelto"] -
                           e["cargo_fijo_kit"] <= 0 else "cargo fijo y envío"),
             "cruza_umbral": e["cruza_umbral"],
-            "descuento_que_banca": round(desc, 4),
+            "descuento_que_banca": round(banca, 4),
+            "tope_marca": tope,
+            "marcas": ", ".join(sorted({_marca(x) for x in ps if _marca(x)})),
+            "descuento": round(desc, 4),
+            "limita": "la marca" if tope < banca else "la economía del kit",
+            "tipo_publicacion": tipo_de_publicacion(ps),
             "precio_kit_sugerido": round(e["precio_suelto"] * (1 - desc), 2),
             "motivo": (f"{int(g['juntos'])} compras juntas, {g['lift']}× más "
                        f"de lo esperable, confianza {g['confianza']:.0%}"),
