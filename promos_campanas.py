@@ -366,3 +366,192 @@ if __name__ == "__main__":
     except MeliError as e:
         print(f"\nERROR: {e}\n")
         sys.exit(1)
+
+
+def por_regla_todas(ml, tope_descuento=0.05, piso_descuento=None,
+                    excluir_propias=True, callback=None):
+    """
+    La misma regla aplicada a **todas las campañas de MercadoLibre a la vez**.
+
+    Las campañas propias se saltean por defecto: ahi el descuento lo elige uno
+    y no tiene sentido "aceptar lo que pida ML". En el resto (LIGHTNING, DEAL,
+    SMART, PRICE_MATCHING...) el precio lo fija ML, asi que la unica decision
+    es si el descuento que pide entra o no en el tope.
+
+    La misma publicacion puede aparecer en varias campañas. **Se queda la que
+    pide menos descuento**: dar de alta la misma publicacion en dos campañas es
+    pisar una con la otra, y conviene que gane la mas barata para nosotros.
+    """
+    df = campanas(ml)
+    if not len(df):
+        return pd.DataFrame(columns=COLUMNAS)
+
+    if excluir_propias:
+        df = df[~df["tipo"].isin(ELIGE_EL_VENDEDOR)]
+    # Una campaña que todavia no arranco no acepta altas.
+    df = df[df["estado"].isin(["started", "active"])]
+
+    partes = []
+    for _, c in df.iterrows():
+        if callback:
+            callback(f"{c['nombre'] or c['id']} ({c['nombre_tipo']})...")
+        try:
+            p = por_regla(ml, c["id"], c["tipo"], tope_descuento,
+                          piso_descuento, callback=None)
+        except MeliError as e:
+            partes.append(pd.DataFrame([_fila(
+                "", "saltear", f"no pude leer {c['id']}: {str(e)[:90]}",
+                c["tipo"], c["id"])], columns=COLUMNAS))
+            continue
+        if len(p):
+            p = p.copy()
+            p["campana_nombre"] = c["nombre"] or c["id"]
+            partes.append(p)
+
+    if not partes:
+        return pd.DataFrame(columns=COLUMNAS)
+    todo = pd.concat(partes, ignore_index=True)
+
+    # Una publicacion en dos campañas: gana la de menor descuento.
+    altas = todo[todo["accion"] == "alta"].sort_values("descuento")
+    dup = altas.duplicated(subset=["item_id"], keep="first")
+    if dup.any():
+        perdedoras = altas[dup].index
+        todo.loc[perdedoras, "accion"] = "saltear"
+        todo.loc[perdedoras, "motivo"] = (
+            "la misma publicación entra en otra campaña con menos descuento")
+    return todo.reset_index(drop=True)
+
+
+def _nuestro_aporte(o):
+    """
+    Cuanto del descuento lo ponemos NOSOTROS.
+
+    En `SMART` y `PRICE_MATCHING` ML cofinancia y lo dice: `seller_percentage`
+    es nuestra parte y `meli_percentage` la suya. En el resto no hay
+    cofinanciacion, asi que **todo el descuento es nuestro**.
+    """
+    if o.get("seller_percentage") is not None:
+        return float(o["seller_percentage"]) / 100
+    orig, precio = o.get("original_price") or 0, o.get("price") or 0
+    return (1 - precio / orig) if (orig and precio) else None
+
+
+def _hasta(o):
+    d = (o.get("finish_date") or "")[:10]
+    return d or None
+
+
+def ofertas_del_item(ml, item):
+    """Todas las ofertas de una publicacion, en todas las campañas."""
+    try:
+        return ml.get(f"/seller-promotions/items/{item}",
+                      app_version="v2") or []
+    except MeliError:
+        return []
+
+
+def igualar_mejor_propia(ml, items, callback=None, tope_nuestro=None):
+    """
+    Lleva a todas las campañas el mayor descuento **puesto por nosotros**.
+
+    Para cada publicacion busca, entre todas sus ofertas activas, la que mas
+    descuento nuestro tiene —descontando lo que pone ML— y propone el mismo
+    porcentaje en las demas campañas donde podemos elegir el precio.
+
+    **La fecha no se puede fijar por oferta.** Medido el 8/8/2026: el POST
+    acepta `finish_date`, contesta 200 y lo ignora; la oferta hereda las fechas
+    de la campaña. Asi que la unica forma de respetar el vencimiento del
+    original es **no replicar en campañas que terminen despues**: si el 40%
+    vence en 7 dias y la campaña destino dura 30, el descuento seguiria
+    corriendo tres semanas de mas.
+
+    `tope_nuestro` corta las que pongan mas que eso de nuestro bolsillo.
+    """
+    filas = []
+    total = len(items)
+    for n, item in enumerate(items, start=1):
+        if callback and n % 10 == 0:
+            callback(f"{n} de {total}...")
+        ofertas_it = ofertas_del_item(ml, item)
+        if not ofertas_it:
+            continue
+
+        # La mejor NUESTRA entre las que ya estan corriendo.
+        activas = [o for o in ofertas_it
+                   if o.get("status") == "started" and _nuestro_aporte(o)]
+        if not activas:
+            continue
+        mejor = max(activas, key=_nuestro_aporte)
+        pct = _nuestro_aporte(mejor)
+        vence = _hasta(mejor)
+        if tope_nuestro is not None and pct > tope_nuestro:
+            filas.append(_fila(item, "no cumple",
+                               f"la mejor nuestra es {pct:.1%} y el tope es "
+                               f"{tope_nuestro:.1%}", mejor.get("type", ""),
+                               mejor.get("id", ""), desc=pct))
+            continue
+
+        for o in ofertas_it:
+            if o.get("id") == mejor.get("id") or not o.get("id"):
+                continue
+            if o.get("type") not in ELIGE_EL_VENDEDOR:
+                continue          # donde ML fija el precio no hay nada que poner
+            if o.get("status") == "started":
+                continue          # ya tiene algo; no se pisa sin pedirlo
+
+            orig = o.get("original_price") or 0
+            if not orig:
+                continue
+            hasta_dest = _hasta(o)
+            if vence and hasta_dest and hasta_dest > vence:
+                filas.append(_fila(
+                    item, "no cumple",
+                    f"«{o.get('name') or o.get('id')}» termina el "
+                    f"{hasta_dest} y la promo original vence el {vence}: "
+                    f"replicarla la estiraría", o.get("type", ""),
+                    o.get("id", ""), desc=pct))
+                continue
+            if vence and not hasta_dest:
+                filas.append(_fila(
+                    item, "no cumple",
+                    f"«{o.get('name') or o.get('id')}» no informa hasta cuándo "
+                    f"dura: no puedo garantizar que respete el {vence}",
+                    o.get("type", ""), o.get("id", ""), desc=pct))
+                continue
+
+            objetivo = round(orig * (1 - pct), 2)
+            lo, hi = o.get("min_discounted_price"), o.get("max_discounted_price")
+            nota = ""
+            if lo and objetivo < lo:
+                objetivo, nota = lo, " (recortado al máximo que acepta ML)"
+            elif hi and objetivo > hi:
+                objetivo, nota = hi, " (subido al mínimo que acepta ML)"
+
+            datos = {"oferta_id": o.get("ref_id") or "",
+                     "precio_original": orig,
+                     "min_precio": lo, "max_precio": hi,
+                     "stock_min": (o.get("stock") or {}).get("min"),
+                     "stock_max": (o.get("stock") or {}).get("max")}
+            filas.append(_fila(
+                item, "alta",
+                f"igualar el {pct:.1%} nuestro de "
+                f"«{mejor.get('name') or mejor.get('id')}»"
+                + (f", que vence el {vence}" if vence else "") + nota,
+                o.get("type", ""), o.get("id", ""), datos, objetivo,
+                1 - objetivo / orig))
+
+    df = pd.DataFrame(filas, columns=COLUMNAS)
+    return df.sort_values(["accion", "descuento"],
+                          ascending=[True, False]).reset_index(drop=True)
+
+
+def items_con_promo(ml, callback=None):
+    """Las publicaciones que hoy tienen alguna promocion corriendo."""
+    df = campanas(ml)
+    vistos = set()
+    for _, c in df[df["estado"].isin(["started", "active"])].iterrows():
+        if callback:
+            callback(f"{c['nombre'] or c['id']}...")
+        vistos |= set(ofertas(ml, c["id"], c["tipo"], ("started",)).keys())
+    return sorted(vistos)

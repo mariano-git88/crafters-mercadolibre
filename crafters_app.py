@@ -212,7 +212,7 @@ with enc_btn:
 seccion = st.segmented_control(
     "Sección", ["Plata sobre la mesa", "Reporte semanal", "Preguntas",
                 "Alertas", "Ganar la venta",
-                "Precios", "Mayoristas", "Promos por planilla",
+                "Precios", "Mayoristas", "PROMOS",
                 "Stock ML", "Control de stock",
                 "Rentabilidad", "Precio óptimo", "Competencia",
                 "Publicidad", "Oportunidades"],
@@ -4409,10 +4409,11 @@ elif seccion == "Publicidad":
 
 # ============================================================ promos por planilla
 
-elif seccion == "Promos por planilla":
+elif seccion == "PROMOS":
     st.markdown("#### Descuentos en lote")
     modo_pp = st.segmented_control(
-        "Modo", ["Desde planilla", "Replicar una campaña", "Activar por regla"],
+        "Modo", ["Desde planilla", "Replicar una campaña", "Activar por regla",
+                 "Igualar la mejor propia"],
         default="Desde planilla", key="modo_pp",
         label_visibility="collapsed") or "Desde planilla"
 
@@ -4653,21 +4654,99 @@ elif seccion == "Promos por planilla":
             st.dataframe(rres, use_container_width=True, height=260,
                          hide_index=True)
 
+    # ------------------------------------------- igualar la mejor propia
+    elif modo_pp == "Igualar la mejor propia":
+        st.caption(
+            "Busca, en todas las campañas, el mayor descuento **puesto por "
+            "nosotros** —descontando lo que pone MercadoLibre— y lo iguala en "
+            "las demás campañas donde podemos elegir el precio.\n\n"
+            "**Respeta el vencimiento.** La fecha no se puede fijar por "
+            "oferta: la promo dura lo que dura la campaña. Así que si el "
+            "descuento original vence antes que la campaña destino, **no se "
+            "replica** — replicarlo lo estiraría.")
+        t1, t2 = st.columns([2, 3])
+        tope_n = t1.number_input("Tope de lo que ponemos (%)", 0, 90, 40, 5,
+                                 key="tope_ig",
+                                 help="0 = sin tope. Corta las que nos "
+                                      "cuesten más que eso.")
+        if st.button("Ver qué se igualaría", key="sim_ig"):
+            caja = st.status("Buscando promociones activas...", expanded=True)
+            try:
+                its = promos_campanas.items_con_promo(ml, callback=caja.write)
+                caja.write(f"{len(its)} publicaciones con promo; comparando...")
+                st.session_state["plan_ig"] = \
+                    promos_campanas.igualar_mejor_propia(
+                        ml, its, callback=caja.write,
+                        tope_nuestro=(tope_n / 100) if tope_n else None)
+                caja.update(label="Listo", state="complete", expanded=False)
+            except Exception as e:
+                caja.update(label="Falló", state="error")
+                st.error(str(e))
+
+        plan_ig = st.session_state.get("plan_ig")
+        if plan_ig is None or not len(plan_ig):
+            st.stop()
+        ri = promos_campanas.resumen(plan_ig)
+        w1, w2, w3 = st.columns(3)
+        w1.metric("A igualar", ri.get("a dar de alta", 0))
+        w2.metric("Frenadas", ri.get("no cumplen la regla", 0))
+        w3.metric("Descuento promedio", f"{ri.get('descuento promedio', 0):.1%}")
+        st.caption("Las frenadas dicen por qué: casi siempre porque la "
+                   "campaña destino dura más que la promo original.")
+        st.dataframe(plan_ig, use_container_width=True, height=320,
+                     hide_index=True,
+                     column_config={
+                         "descuento": st.column_config.NumberColumn(
+                             "Descuento", format="percent"),
+                         "min_precio": None, "max_precio": None,
+                         "stock_min": None, "stock_max": None})
+
+        n_ig = ri.get("a dar de alta", 0)
+        if not n_ig:
+            st.info("No hay nada para igualar.")
+            st.stop()
+        st.error(f"**Esto da de alta {n_ig} promociones de verdad** y cambia "
+                 "el precio que ve el comprador.", icon="⚠️")
+        z1, z2 = st.columns([2, 3])
+        op_ig = z1.text_input("Tu nombre", key="op_ig")
+        cf_ig = z2.checkbox(f"Confirmo igualar {n_ig}", key="cf_ig")
+        if st.button("Igualar", key="go_ig",
+                     disabled=not (cf_ig and op_ig.strip())):
+            barra = st.progress(0.0, text="Aplicando...")
+            st.session_state["res_ig"] = promos_campanas.aplicar(
+                ml, plan_ig, operador=op_ig.strip(),
+                callback=lambda i, t, iid: barra.progress(
+                    i / t, text=f"{i} de {t}: {iid}"))
+            barra.empty()
+        rr = st.session_state.get("res_ig")
+        if rr is not None and len(rr):
+            ok = int((rr["resultado"] == "OK").sum())
+            (st.success if ok == len(rr) else st.error)(
+                f"{ok} igualadas, {len(rr) - ok} con error.")
+            st.dataframe(rr, use_container_width=True, height=260,
+                         hide_index=True)
+
     # ------------------------------------------------------------- por regla
     else:
         st.caption(
-            "Acepta de una todas las ofertas de una campaña que cumplan una "
-            "condición. Sirve para las que **MercadoLibre arma y fija el "
-            "precio** (relámpago, compartidas): ahí no hay nada que negociar, "
-            "lo único que decide es cuánto descuento te pide.")
+            "Acepta de una todas las ofertas que cumplan una condición. Sirve "
+            "para las que **MercadoLibre arma y fija el precio** (relámpago, "
+            "compartidas, de temporada): ahí no hay nada que negociar, lo "
+            "único que decide es cuánto descuento te pide.\n\nEligiendo "
+            "**TODAS** recorre todas las campañas de MercadoLibre de una vez. "
+            "Las campañas propias quedan afuera a propósito: ahí el descuento "
+            "lo elegís vos. Si una publicación entra en dos campañas, se "
+            "queda en la que pide **menos** descuento.")
         try:
             todas = _camps_todas(ml, sello_pp)
         except Exception as e:
             st.error(f"No pude traer las campañas: {e}")
             st.stop()
 
-        et = {f"{r['nombre'] or r['id']} · {r['nombre_tipo']}": r["id"]
-              for _, r in todas.iterrows()}
+        TODAS = "— TODAS las campañas de MercadoLibre —"
+        et = {TODAS: TODAS}
+        et.update({f"{r['nombre'] or r['id']} · {r['nombre_tipo']}": r["id"]
+                   for _, r in todas.iterrows()})
         g1, g2 = st.columns([3, 2])
         cid = et[g1.selectbox("Campaña", list(et), key="cid_rg")]
         tope = g2.number_input("Tope de descuento (%)", 1, 60, 5, 1,
@@ -4679,9 +4758,15 @@ elif seccion == "Promos por planilla":
         if st.button("Ver cuáles cumplen", key="sim_rg"):
             caja = st.status("Leyendo la campaña...", expanded=True)
             try:
-                st.session_state["plan_rg"] = promos_campanas.por_regla(
-                    ml, cid, tipos.get(cid, "LIGHTNING"),
-                    tope_descuento=tope / 100, callback=caja.write)
+                if cid == TODAS:
+                    st.session_state["plan_rg"] = \
+                        promos_campanas.por_regla_todas(
+                            ml, tope_descuento=tope / 100,
+                            callback=caja.write)
+                else:
+                    st.session_state["plan_rg"] = promos_campanas.por_regla(
+                        ml, cid, tipos.get(cid, "LIGHTNING"),
+                        tope_descuento=tope / 100, callback=caja.write)
                 caja.update(label="Listo", state="complete", expanded=False)
             except Exception as e:
                 caja.update(label="Falló", state="error")

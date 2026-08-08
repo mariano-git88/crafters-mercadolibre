@@ -1,5 +1,18 @@
 [
  {
+  "fecha": "2026-08-08",
+  "hora": "16:40",
+  "tipo": "nuevo",
+  "titulo": "PROMOS: activar en todas las campañas e igualar la mejor propia",
+  "puntos": [
+   "La sección pasa a llamarse **PROMOS**.",
+   "**Activar por regla** ahora puede recorrer **TODAS las campañas de MercadoLibre** de una vez. Si una publicación entra en dos, se queda en la que pide **menos** descuento. Medido: 108 altas, 25 pisadas por una campaña más barata.",
+   "**Igualar la mejor propia** (nuevo): busca el mayor descuento puesto por nosotros —descontando lo que pone MercadoLibre— y lo iguala en las demás campañas.",
+   "**Respeta el vencimiento**: la fecha no se puede fijar por oferta (el POST la acepta y la ignora), así que la promo dura lo que dura la campaña. Si el descuento original vence antes, **no se replica**, porque lo estiraría. Medido: de 62 casos, 20 se igualan y 42 se frenan por eso.",
+   "Planilla de **duplicados a revisar**: las 151 que hay que decidir a mano, con la hermana al lado y qué mirar en cada caso."
+  ]
+ },
+ {
   "fecha": "2026-08-07",
   "hora": "19:10",
   "tipo": "nuevo",

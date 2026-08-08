@@ -603,3 +603,106 @@ if __name__ == "__main__":
     except MeliError as e:
         print(f"\nERROR: {e}\n")
         sys.exit(1)
+
+
+# ------------------------------------------------------- planilla de revision
+
+# Para cada caso, la pregunta concreta y la decision que hay que tomar. La
+# columna `accion` sola no alcanza: "mirar a mano" no dice que mirar.
+GUIA = {
+    "vende parecido": (
+        "Las dos venden. Fijate si apuntan al MISMO comprador: mismo precio y "
+        "misma tienda oficial es competencia entre nosotros; precios o tiendas "
+        "distintas puede ser segmentación a propósito.",
+        "Si compiten: dejar en catálogo la que más factura y sacar la otra "
+        "(sigue viva como tradicional). Si segmentan: dejar las dos."),
+    "historia parecida": (
+        "Ésta no facturó en 30 días pero tiene tanta historia como la otra. "
+        "Mirá si es estacional, si se quedó sin stock, o si la otra le ganó el "
+        "Buy Box hace poco.",
+        "Si fue circunstancial: dejarla y revisar en un mes. Si está "
+        "definitivamente desplazada: sacarla del catálogo."),
+    "ninguna vendió nunca": (
+        "Ninguna del grupo vendió jamás. El problema puede no ser la "
+        "duplicación sino el producto, el precio o las fotos.",
+        "Dejar UNA sola en catálogo (la de mejor foto y título) y sacar el "
+        "resto. Si tampoco vende, el problema es otro."),
+}
+
+
+def _caso(motivo):
+    t = str(motivo or "")
+    if "única viva" in t:
+        return "es la única viva"
+    if "historia parecida" in t:
+        return "historia parecida"
+    if "vende parecido" in t:
+        return "vende parecido"
+    if "ninguna vendió nunca" in t:
+        return "ninguna vendió nunca"
+    return "otro"
+
+
+def para_revisar(df=None):
+    """
+    Planilla de las que hay que decidir a mano, con la otra al lado.
+
+    Cada fila es **una decision**: la publicacion dudosa y su hermana de la
+    misma ficha, para poder compararlas sin ir a buscar nada. Ordenada por
+    plata en juego, que es lo unico que hace recorrible una lista de 151.
+    """
+    if df is None:
+        df = por_catalogo()
+    dudosas = df[df["accion"] == "mirar a mano"]
+
+    filas = []
+    for _, r in dudosas.iterrows():
+        grupo = df[df["catalog_product_id"] == r["catalog_product_id"]]
+        otras = grupo[(grupo["item_id"] != r["item_id"]) &
+                      (grupo["accion"] == "dejar")]
+        otra = otras.iloc[0] if len(otras) else None
+        caso = _caso(r["motivo"])
+        mirar, decidir = GUIA.get(caso, ("", ""))
+        filas.append({
+            "ficha": r["catalog_product_id"],
+            "caso": caso,
+            "que_mirar": mirar,
+            "que_decidir": decidir,
+            "plata_en_juego_30d": round(float(grupo["importe_30d"].sum()), 2),
+            # --- la dudosa
+            "item_id": r["item_id"],
+            "tienda": r["tienda"],
+            "tipo": r["tipo"],
+            "estado": r["estado"],
+            "moderacion": r["moderacion"],
+            "precio": r["precio"],
+            "vendido_30d": r["importe_30d"],
+            "unidades_30d": r["unidades_30d"],
+            "historico": r["vendidas_historico"],
+            "titulo": r["titulo"],
+            "link": r["permalink"],
+            # --- contra quien compite
+            "otra_item_id": otra["item_id"] if otra is not None else "",
+            "otra_tienda": otra["tienda"] if otra is not None else "",
+            "otra_tipo": otra["tipo"] if otra is not None else "",
+            "otra_precio": otra["precio"] if otra is not None else None,
+            "otra_vendido_30d": otra["importe_30d"] if otra is not None else None,
+            "otra_historico": (otra["vendidas_historico"]
+                               if otra is not None else None),
+            "otra_link": otra["permalink"] if otra is not None else "",
+            # pistas que ahorran abrir las dos publicaciones
+            "misma_tienda": (bool(otra is not None and
+                                  r["tienda"] == otra["tienda"])),
+            "mismo_tipo": bool(otra is not None and r["tipo"] == otra["tipo"]),
+            "dif_precio": (round(float(r["precio"]) - float(otra["precio"]), 2)
+                           if otra is not None and pd.notna(r["precio"])
+                           and pd.notna(otra["precio"]) else None),
+            "decision": "",          # para completar
+            "quien": "",
+            "notas": "",
+        })
+    out = pd.DataFrame(filas)
+    if len(out):
+        out = out.sort_values(["plata_en_juego_30d", "ficha"],
+                              ascending=[False, True])
+    return out.reset_index(drop=True)
