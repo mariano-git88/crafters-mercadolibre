@@ -54,6 +54,7 @@ import pandas as pd
 
 from catalogo import sku_del_atributo
 from meli import Meli, MeliError
+from tramos import cargo_fijo, envio_a_cargo
 from ventas import traer_ordenes
 
 DIR = Path(__file__).resolve().parent
@@ -61,7 +62,7 @@ DIR = Path(__file__).resolve().parent
 PANEL_KIT = ("https://vendedores.mercadolibre.com.ar/publicar/kit"
              "?pre_charged_ups={up}")
 
-DIAS = 120
+DIAS = 365          # 12 meses: con 120 dias solo salian pares
 # Debajo de esto un par es ruido: dos coincidencias no son un patron.
 MINIMO_JUNTOS = 2
 # Cuanto mas seguido de lo esperable por azar. 1.0 = indiferente.
@@ -70,6 +71,12 @@ LIFT_MINIMO = 2.0
 # los productos de esas dos categorias.
 MINIMO_CATEGORIA = 3
 LIFT_CATEGORIA = 2.0
+
+# Hasta cuantos productos puede tener un kit.
+MAX_PRODUCTOS = 4
+
+# Multipacks del mismo SKU: 2, 3 o 4 unidades.
+UNIDADES_MULTIPACK = (2, 3, 4)
 
 # Palabras que delatan que la publicacion YA es un kit. Proponer un kit de un
 # kit es armar un combo del combo: aparecio en la primera corrida con
@@ -296,3 +303,170 @@ if __name__ == "__main__":
     except MeliError as e:
         print(f"\nERROR: {e}\n")
         sys.exit(1)
+
+
+# ------------------------------------------------------------------ economia
+
+def _comision_variable(precio_prom, comision_prom):
+    """
+    El porcentaje de comision SIN el cargo fijo.
+
+    `comision_prom` mezcla las dos cosas. Restar el cargo fijo del tramo en que
+    se vendio deja el porcentaje, que es lo unico que escala con el precio.
+    """
+    if not precio_prom:
+        return None
+    variable = (comision_prom or 0) - cargo_fijo(precio_prom)
+    return max(variable / precio_prom, 0.0)
+
+
+def economia(precios, pct, precio_kit=None):
+    """
+    Que se ahorra vendiendo junto en vez de por separado.
+
+    **El ahorro real es el cargo fijo, no la comision**: la comision es un
+    porcentaje y da igual cobrarla en una venta o en tres. El cargo fijo se
+    paga **por venta**, asi que un pack de tres paga uno en vez de tres.
+
+    **Pero cruzar $33.000 lo da vuelta.** Ahi el cargo fijo se hace cero y
+    aparecen ~$7.641 de envio a cargo nuestro. Un pack que cruza el umbral
+    puede costar mas que vender suelto — es la misma trampa de
+    `tramos.cruzar_escalon`, ahora del lado del armado.
+
+    Devuelve el detalle y el ahorro (positivo = conviene el kit).
+    """
+    suma = sum(precios)
+    kit = precio_kit if precio_kit is not None else suma
+
+    # Por separado: cada uno paga SU cargo fijo y SU envio.
+    fijo_sep = sum(cargo_fijo(x) for x in precios)
+    envio_sep = sum(envio_a_cargo(x) for x in precios)
+    var_sep = sum(x * pct for x in precios)
+
+    # Como kit: una sola venta.
+    fijo_kit = cargo_fijo(kit)
+    envio_kit = envio_a_cargo(kit)
+    var_kit = kit * pct
+
+    costo_sep = fijo_sep + envio_sep + var_sep
+    costo_kit = fijo_kit + envio_kit + var_kit
+    return {
+        "precio_suelto": round(suma, 2),
+        "precio_kit": round(kit, 2),
+        "cargo_fijo_suelto": round(fijo_sep, 2),
+        "cargo_fijo_kit": round(fijo_kit, 2),
+        "envio_suelto": round(envio_sep, 2),
+        "envio_kit": round(envio_kit, 2),
+        "costo_ml_suelto": round(costo_sep, 2),
+        "costo_ml_kit": round(costo_kit, 2),
+        # Lo que queda para financiar el descuento sin perder plata.
+        "ahorro": round(costo_sep - costo_kit, 2),
+        "cruza_umbral": bool(cargo_fijo(kit) == 0 and fijo_sep > 0),
+    }
+
+
+def descuento_que_banca(precios, pct, margen_extra=0.0):
+    """
+    Cuanto se puede descontar sin ganar menos que vendiendo suelto.
+
+    Es el ahorro convertido en porcentaje del precio. Poner mas que esto es
+    financiar el kit del propio bolsillo, que puede estar bien como gancho
+    pero **tiene que ser una decision, no un descuido**.
+    """
+    e = economia(precios, pct)
+    suma = e["precio_suelto"]
+    if not suma:
+        return 0.0
+    # El descuento tambien baja la comision variable, asi que se banca un poco
+    # mas que el ahorro nominal.
+    return max((e["ahorro"] + margen_extra) / (suma * (1 - pct)), 0.0)
+
+
+def multipacks(pubs=None, cargos=None, unidades=UNIDADES_MULTIPACK):
+    """
+    Packs del MISMO producto: 2, 3 o 4 unidades.
+
+    No necesitan historia de compra conjunta: la razon es puramente economica
+    —un pack paga un cargo fijo en vez de N— y por eso cubren productos que
+    nunca se vendieron acompañados.
+
+    Para cada SKU se prueban las cantidades y **se elige la que mas ahorra**,
+    descartando las que cruzan los $33.000.
+    """
+    if pubs is None:
+        pubs = json.loads((DIR / "catalogo.json").read_text(encoding="utf-8"))
+    activas = [p for p in pubs if p.get("status") == "active"]
+    mejor = {}
+    for p in sorted(activas, key=lambda x: x.get("price") or 0, reverse=True):
+        s = _sku(p)
+        if s:
+            mejor.setdefault(s, p)
+
+    pcts = {}
+    if cargos is not None and len(cargos):
+        for _, r in cargos.iterrows():
+            v = _comision_variable(r.get("precio_prom"), r.get("comision_prom"))
+            if v is not None:
+                pcts[str(r["sku"]).strip().upper()] = v
+    pct_tipico = (sum(pcts.values()) / len(pcts)) if pcts else 0.16
+
+    filas = []
+    for s, p in mejor.items():
+        precio = p.get("price") or 0
+        if not precio or _es_kit(p.get("title")):
+            continue
+        pct = pcts.get(s, pct_tipico)
+        opciones = []
+        for n in unidades:
+            e = economia([precio] * n, pct)
+            if e["cruza_umbral"]:
+                continue          # pasarse de $33.000 mete el envio
+            opciones.append((e["ahorro"], n, e))
+        if not opciones:
+            continue
+        ahorro, n, e = max(opciones)
+        if ahorro <= 0:
+            continue
+        ahorro_fijo = e["cargo_fijo_suelto"] - e["cargo_fijo_kit"]
+        ahorro_envio = e["envio_suelto"] - e["envio_kit"]
+        # De donde sale el ahorro cambia cuanto confiar en el:
+        #  - el CARGO FIJO se paga por venta y se ahorra siempre.
+        #  - el ENVIO se ahorra solo si el comprador, sin el pack, hubiera
+        #    hecho N compras separadas. Si igual se las llevaba todas juntas
+        #    en un carrito, ML ya cobraba un envio solo. Es real, pero apoyado
+        #    en un supuesto.
+        de_donde = ("cargo fijo" if ahorro_envio <= 0 else
+                    "envío" if ahorro_fijo <= 0 else "cargo fijo y envío")
+        pes = lambda v: f"${v:,.0f}".replace(",", ".")
+        filas.append({
+            "origen": "multipack", "unidades": n, "sku": s,
+            "ahorro_de": de_donde,
+            "ahorro_cargo_fijo": round(ahorro_fijo, 2),
+            "ahorro_envio": round(ahorro_envio, 2),
+            "supuesto": ("" if ahorro_envio <= 0 else
+                         "el ahorro de envío supone que, sin el pack, serían "
+                         "compras separadas"),
+            "producto": (p.get("title") or "")[:60],
+            "precio_unidad": precio,
+            "precio_suelto": e["precio_suelto"],
+            "ahorro_ml": e["ahorro"],
+            "descuento_que_banca": round(
+                descuento_que_banca([precio] * n, pct), 4),
+            "precio_kit_sugerido": round(
+                e["precio_suelto"] * (1 - descuento_que_banca(
+                    [precio] * n, pct)), 2),
+            "motivo": (
+                f"{n} unidades en una venta ahorran {pes(e['ahorro'])} de "
+                + (f"cargo fijo ({pes(e['cargo_fijo_suelto'])} → "
+                   f"{pes(e['cargo_fijo_kit'])})" if de_donde == "cargo fijo"
+                   else f"envío ({pes(e['envio_suelto'])} → "
+                        f"{pes(e['envio_kit'])})" if de_donde == "envío"
+                   else f"cargo fijo y envío")),
+            "vendidas": p.get("sold_quantity") or 0,
+            "item": p["id"], "user_product": p.get("user_product_id") or "",
+            "crear_kit": PANEL_KIT.format(up=p.get("user_product_id") or ""),
+        })
+    df = pd.DataFrame(filas)
+    if len(df):
+        df = df.sort_values(["ahorro_ml", "vendidas"], ascending=False)
+    return df.reset_index(drop=True)
