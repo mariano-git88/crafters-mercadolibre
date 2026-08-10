@@ -673,7 +673,10 @@ def kits_de_varios(canastas_, cargos=None, pubs=None):
             "motivo": (f"{int(g['juntos'])} compras juntas, {g['lift']}× más "
                        f"de lo esperable, confianza {g['confianza']:.0%}"),
             "items": ", ".join(x["id"] for x in ps),
-            "user_product": ps[0].get("user_product_id") or "",
+            # TODOS los user products, no solo el principal: el
+            # creador necesita cada componente para agregarlo.
+            "user_product": ", ".join(x.get("user_product_id") or ""
+                                      for x in ps),
             "crear_kit": PANEL_KIT.format(up=ps[0].get("user_product_id") or ""),
         })
     df = pd.DataFrame(filas)
