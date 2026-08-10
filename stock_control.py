@@ -29,6 +29,8 @@ from datetime import datetime, timedelta
 
 import pandas as pd
 
+import pathlib
+
 import almacen
 from meli import Meli, MeliError
 from ventas import traer_ordenes
@@ -53,6 +55,70 @@ DIAS_VENTANA = 7
 
 
 # ------------------------------------------------------------------ claves
+
+# ---------------------------------------------------------------- combos
+
+HOJA_COMBOS = "combos"
+COLS_COMBOS = ["combo", "componente", "multiplicador"]
+ARCHIVO_COMBOS = (pathlib.Path(__file__).resolve().parent
+                  / "composicion_combos.csv")
+
+
+def composicion():
+    """
+    SKU de combo -> [(componente, multiplicador), ...].
+
+    **Vender un combo descuenta stock de sus componentes, no del combo.** El
+    combo no existe en el depósito: es una forma de vender. Sin esto, el
+    candado que se fue dentro de 11 combos figura con 10 ventas en vez de 21,
+    y el stock queda alto — se sigue ofreciendo lo que ya no está.
+
+    Sale de la hoja `combos` si existe, y si no del CSV. **Ojo con el Excel
+    original**: las celdas de la columna combo vienen combinadas, o sea vacías
+    en las filas 2ª en adelante de cada grupo. Sin rellenar hacia abajo, los
+    149 kits de varios componentes parecen packs de uno solo.
+    """
+    filas = []
+    try:
+        filas = almacen.leer_hoja(HOJA_COMBOS, COLS_COMBOS)
+    except Exception:                              # noqa: BLE001
+        filas = []
+    if not filas and ARCHIVO_COMBOS.exists():
+        import csv
+        with open(ARCHIVO_COMBOS, encoding="utf-8") as f:
+            filas = list(csv.DictReader(f))
+
+    salida = {}
+    ultimo = ""
+    for f in filas:
+        combo = str(f.get("combo") or f.get("SKU Combo") or "").strip().upper()
+        combo = combo or ultimo          # celdas combinadas
+        ultimo = combo
+        comp = str(f.get("componente") or f.get("Composición") or "").strip().upper()
+        if not combo or not comp:
+            continue
+        try:
+            mult = int(float(f.get("multiplicador") or f.get("Multiplicador") or 1))
+        except (TypeError, ValueError):
+            mult = 1
+        salida.setdefault(combo, []).append((comp, max(mult, 1)))
+    return salida
+
+
+def explotar(sku, cantidad, comp=None):
+    """
+    Un SKU vendido -> lo que hay que descontar del depósito.
+
+    Devuelve [(sku_real, unidades), ...]. Si no es un combo, se devuelve tal
+    cual. **No es recursivo a propósito**: un combo de combos no existe hoy y
+    soportarlo invita a un bucle infinito si alguien carga mal la tabla.
+    """
+    comp = composicion() if comp is None else comp
+    partes = comp.get(str(sku).strip().upper())
+    if not partes:
+        return [(sku, cantidad)]
+    return [(c, cantidad * m) for c, m in partes]
+
 
 def clave_venta(order_id, item_id):
     return f"v:{order_id}:{item_id}"
@@ -152,6 +218,7 @@ def sincronizar(ml, dias=DIAS_VENTANA, operador="automatico", callback=None):
 
     nuevos, devoluciones_nuevas = [], []
     ahora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    combos = composicion()
 
     for o in ordenes:
         order_id = o.get("id")
@@ -169,23 +236,36 @@ def sincronizar(ml, dias=DIAS_VENTANA, operador="automatico", callback=None):
             k_cancel = clave_cancelacion(order_id, item_id)
 
             if estado in VENDIDAS and k_venta not in ya_estan:
-                nuevos.append({
-                    "id_mov": k_venta, "fecha": fecha or ahora, "sku": sku,
-                    "tipo": "venta", "cantidad": -cant,
-                    "referencia": f"orden {order_id}",
-                    "detalle": it["item"].get("title", "")[:60],
-                    "operador": operador})
+                # Un combo se descuenta de sus COMPONENTES. La clave del
+                # movimiento lleva el componente para que dos partes de la
+                # misma orden no se pisen entre si.
+                partes = explotar(sku, cant, combos)
+                for n, (real, unidades) in enumerate(partes):
+                    nuevos.append({
+                        "id_mov": k_venta if len(partes) == 1
+                                  else f"{k_venta}-{n}",
+                        "fecha": fecha or ahora, "sku": real,
+                        "tipo": "venta", "cantidad": -unidades,
+                        "referencia": f"orden {order_id}",
+                        "detalle": (it["item"].get("title", "")[:60]
+                                    if len(partes) == 1
+                                    else f"combo {sku}: {it['item'].get('title','')[:40]}"),
+                        "operador": operador})
                 ya_estan.add(k_venta)
 
             elif estado == "cancelled":
                 # Solo devolvemos al stock si la venta habia sido registrada.
                 if k_venta in ya_estan and k_cancel not in ya_estan:
-                    nuevos.append({
-                        "id_mov": k_cancel, "fecha": ahora, "sku": sku,
-                        "tipo": "cancelacion", "cantidad": cant,
-                        "referencia": f"orden {order_id}",
-                        "detalle": "orden cancelada, vuelve al stock",
-                        "operador": operador})
+                    partes = explotar(sku, cant, combos)
+                    for n, (real, unidades) in enumerate(partes):
+                        nuevos.append({
+                            "id_mov": k_cancel if len(partes) == 1
+                                      else f"{k_cancel}-{n}",
+                            "fecha": ahora, "sku": real,
+                            "tipo": "cancelacion", "cantidad": unidades,
+                            "referencia": f"orden {order_id}",
+                            "detalle": "orden cancelada, vuelve al stock",
+                            "operador": operador})
                     ya_estan.add(k_cancel)
 
     ok, detalle = almacen.append_hoja(HOJA_MOV, COLS_MOV, nuevos)
