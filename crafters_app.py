@@ -1827,26 +1827,43 @@ elif seccion == "Mayoristas":
             conf_may = st.checkbox(
                 f"Confirmo que quiero cargar los tramos en {len(aplicables)} "
                 "publicaciones", key="conf_may")
-            ya_hechas = st.session_state.get("may_ok", set())
+            # Las hechas se leen del DISCO, no del session_state: si la sesión
+            # se cortó, el session_state se fue con ella.
+            ya_hechas = mayoristas.ya_aplicadas()
+            faltan = [i for i in aplicables["item_id"] if i not in ya_hechas]
             if ya_hechas:
                 st.info(
-                    f"De una corrida anterior quedaron **{len(ya_hechas)} "
-                    "publicaciones ya cargadas**. Se van a saltear para no "
-                    "repetirlas.", icon="↩️")
+                    f"De corridas anteriores quedaron **{len(ya_hechas)} "
+                    f"publicaciones ya cargadas**. Faltan **{len(faltan)}**, "
+                    "y se retoma desde ahí.", icon="↩️")
+                if st.button("Empezar de cero (olvidar lo hecho)",
+                             key="reset_may"):
+                    mayoristas.olvidar_aplicadas()
+                    st.rerun()
 
-            if st.button("Aplicar en MercadoLibre", key="go_may",
-                         disabled=not (conf_may and op_may.strip())):
+            # De a tandas, y no todo junto: una corrida de 2.000 publicaciones
+            # tarda más de una hora y la sesión de Streamlit se corta mucho
+            # antes. Cada tanda termina, se guarda y vuelve a pintar la
+            # pantalla, así la conexión no se queda esperando en silencio.
+            POR_TANDA = 40
+
+            if st.button(f"Aplicar las próximas {min(POR_TANDA, len(faltan))} "
+                         f"(faltan {len(faltan)})", key="go_may",
+                         disabled=not (conf_may and op_may.strip() and faltan)):
                 barra = st.progress(0.0, text="Aplicando...")
                 res = mayoristas.aplicar(
-                    ml, sim, operador=op_may.strip(), omitir=ya_hechas,
+                    ml, sim, operador=op_may.strip(), tope=POR_TANDA,
                     callback=lambda i, t, f: barra.progress(
                         i / t, text=f"Aplicando {i} de {t}..."))
                 barra.empty()
-                # Se guarda para poder retomar: con miles de publicaciones,
-                # una corrida puede cortarse y repetir todo es carísimo.
-                st.session_state["may_res"] = res
-                st.session_state["may_ok"] = set(ya_hechas) | set(
-                    res[res["resultado"] == "OK"]["item_id"])
+                previo = st.session_state.get("may_res")
+                st.session_state["may_res"] = (
+                    pd.concat([previo, res]) if previo is not None
+                    and len(previo) else res)
+                st.rerun()
+
+            if not faltan and ya_hechas:
+                st.success(f"Están las {len(ya_hechas)}. No queda ninguna.")
 
             res = st.session_state.get("may_res")
             if res is not None and len(res):
@@ -1874,9 +1891,8 @@ elif seccion == "Mayoristas":
                         barra.empty()
                         st.session_state["may_res"] = pd.concat(
                             [res[res["resultado"] == "OK"], res2])
-                        st.session_state["may_ok"] = set(
-                            st.session_state.get("may_ok", set())) | set(
-                            res2[res2["resultado"] == "OK"]["item_id"])
+                        # Las que salieron bien ya quedaron anotadas en disco
+                        # por `aplicar`: acá no hace falta recordarlas.
                         st.rerun()
 
                 st.dataframe(res, use_container_width=True, height=260)

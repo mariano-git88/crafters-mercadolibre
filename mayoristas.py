@@ -335,13 +335,19 @@ def borrar_tramos(ml, item_id):
         return False, str(e)[:200]
 
 
-def aplicar_uno(ml, item_id, tramos_item, operador=""):
+def aplicar_uno(ml, item_id, tramos_item, operador="", buffer=None):
     """
     Carga los tramos mayoristas de UNA publicacion.
 
     OJO: la API borra los nodos de precio que no se envien. Por eso primero
     leemos los precios actuales y reenviamos el id del estandar: si no, se
     borraria el precio de venta de la publicacion.
+
+    Si viene `buffer`, la fila de auditoria se ACUMULA ahi en vez de
+    escribirse. Escribir una por una son tres llamadas a Google Sheets por
+    publicacion —abrir la planilla, buscar la hoja, escribir— y con 2.000
+    publicaciones eso son 6.000 llamadas contra una cuota de 60 por minuto:
+    la corrida se arrastra y termina en 429.
     """
     # Esta lectura tambien puede fallar (rate limit, publicacion borrada). Si
     # se escapa, se lleva puesta la corrida entera y se pierden los
@@ -378,12 +384,15 @@ def aplicar_uno(ml, item_id, tramos_item, operador=""):
     aplicados = [(p.get("conditions", {}).get("min_purchase_unit"), p.get("amount"))
                  for p in resp.get("prices", [])
                  if (p.get("conditions") or {}).get("min_purchase_unit")]
-    almacen.append_auditoria([{
-        "fecha": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "item_id": item_id, "campo": "precio_mayorista",
-        "valor_anterior": "", "valor_nuevo": str(aplicados),
-        "resultado": "OK", "operador": operador,
-        "nota": "carga masiva de precios mayoristas"}])
+    fila = {"fecha": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "item_id": item_id, "campo": "precio_mayorista",
+            "valor_anterior": "", "valor_nuevo": str(aplicados),
+            "resultado": "OK", "operador": operador,
+            "nota": "carga masiva de precios mayoristas"}
+    if buffer is None:
+        almacen.append_auditoria([fila])
+    else:
+        buffer.append(fila)
     return True, aplicados
 
 
@@ -392,9 +401,31 @@ def aplicar_uno(ml, item_id, tramos_item, operador=""):
 # 429, y sale mucho mas barata que esperar los backoff.
 PAUSA_ENTRE_ITEMS = 0.25
 
+# Cada cuantas publicaciones se vuelca la auditoria a la planilla.
+CADA = 50
+
+# Las que ya se aplicaron, en disco. **En disco y no en session_state**: si la
+# sesion de Streamlit se corta —y con miles de publicaciones se corta— el
+# session_state se va con ella y la proxima corrida repite todo desde cero.
+HECHAS = DIR / "mayoristas_hechas.txt"
+
+
+def ya_aplicadas():
+    """Los item_id de corridas anteriores. Vacio si no hay archivo."""
+    if not HECHAS.exists():
+        return set()
+    return {l.strip() for l in HECHAS.read_text(encoding="utf-8").splitlines()
+            if l.strip()}
+
+
+def olvidar_aplicadas():
+    """Arranca de cero. Se usa cuando cambian las reglas y hay que rehacer."""
+    if HECHAS.exists():
+        HECHAS.unlink()
+
 
 def aplicar(ml, sim, operador="", callback=None, omitir=None,
-            pausa=PAUSA_ENTRE_ITEMS):
+            pausa=PAUSA_ENTRE_ITEMS, tope=None):
     """
     Aplica los tramos de la simulacion a todas las publicaciones.
 
@@ -404,14 +435,35 @@ def aplicar(ml, sim, operador="", callback=None, omitir=None,
     a OK o ERROR y la corrida sigue.
 
     `omitir` es un conjunto de `item_id` que ya se aplicaron: sirve para
-    retomar una corrida cortada sin repetir lo hecho.
+    retomar una corrida cortada sin repetir lo hecho. Por defecto se suman las
+    que ya quedaron anotadas en disco.
+
+    **Cada publicacion que sale bien se anota en el momento**, no al final: si
+    la corrida se corta a la mitad —la sesion de Streamlit se cae mucho antes
+    de que terminen 2.000— lo hecho tiene que quedar hecho.
+
+    `tope` corta despues de N publicaciones y devuelve lo que hizo. Sirve para
+    procesar de a tandas y que la pantalla no se quede una hora esperando.
     """
     pendientes = sim[sim["accion"] == "aplicar"]
-    if omitir:
-        pendientes = pendientes[~pendientes["item_id"].isin(set(omitir))]
+    saltear = set(omitir or set()) | ya_aplicadas()
+    if saltear:
+        pendientes = pendientes[~pendientes["item_id"].isin(saltear)]
+    if tope:
+        pendientes = pendientes.head(int(tope))
 
-    resultados = []
+    resultados, pend_audit = [], []
     total = len(pendientes)
+
+    def volcar():
+        """La auditoria juntada, de a tandas. Nunca corta la corrida."""
+        if not pend_audit:
+            return
+        try:
+            almacen.append_auditoria(list(pend_audit))
+        except Exception:                              # noqa: BLE001
+            pass
+        pend_audit.clear()
 
     for i, (_, fila) in enumerate(pendientes.iterrows(), start=1):
         t = [(int(fila[f"q{n}_unidades"]), float(fila[f"q{n}_precio"]))
@@ -419,19 +471,32 @@ def aplicar(ml, sim, operador="", callback=None, omitir=None,
              if pd.notna(fila.get(f"q{n}_unidades"))
              and pd.notna(fila.get(f"q{n}_precio"))]
         try:
-            ok, detalle = aplicar_uno(ml, fila["item_id"], t, operador=operador)
+            ok, detalle = aplicar_uno(ml, fila["item_id"], t, operador=operador,
+                                      buffer=pend_audit)
         except Exception as e:                     # noqa: BLE001
             # Red que se cae, respuesta rara, lo que sea: se anota y se sigue.
             ok, detalle = False, f"{type(e).__name__}: {str(e)[:200]}"
+
+        if ok:
+            # Anotada YA. Si la sesion se muere en la proxima vuelta, esta
+            # publicacion no se vuelve a tocar.
+            try:
+                with open(HECHAS, "a", encoding="utf-8") as fh:
+                    fh.write(f"{fila['item_id']}\n")
+            except OSError:
+                pass
 
         resultados.append({**fila.to_dict(),
                            "resultado": "OK" if ok else "ERROR",
                            "detalle": "" if ok else str(detalle)[:200]})
         if callback:
             callback(i, total, fila)
+        if len(pend_audit) >= CADA:
+            volcar()
         if pausa:
             time.sleep(pausa)
 
+    volcar()
     return pd.DataFrame(resultados)
 
 

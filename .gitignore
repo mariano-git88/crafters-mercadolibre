@@ -81,3 +81,6 @@ secrets_para_github_actions.txt
 tokens_*.json
 canastas_kits.json
 sesion_kits.json
+
+# Progreso de la carga de precios mayoristas (local, se regenera)
+mayoristas_hechas.txt
