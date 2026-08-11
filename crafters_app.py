@@ -1841,11 +1841,19 @@ elif seccion == "Mayoristas":
                     mayoristas.olvidar_aplicadas()
                     st.rerun()
 
-            # De a tandas, y no todo junto: una corrida de 2.000 publicaciones
+            # De a tandas, y no todo junto: una corrida de 2.500 publicaciones
             # tarda más de una hora y la sesión de Streamlit se corta mucho
             # antes. Cada tanda termina, se guarda y vuelve a pintar la
             # pantalla, así la conexión no se queda esperando en silencio.
-            POR_TANDA = 40
+            #
+            # 150 son unos 2 minutos y medio: entra cómodo antes de que la
+            # conexión se caiga, y evita tener que apretar 60 veces.
+            POR_TANDA = st.select_slider(
+                "Cuántas por tanda", [50, 150, 300, 500], value=150,
+                key="tanda_may",
+                help="Más grandes van más rápido pero, si se corta la sesión, "
+                     "se pierde el progreso de la tanda en curso. Lo ya "
+                     "aplicado nunca se pierde.")
 
             if st.button(f"Aplicar las próximas {min(POR_TANDA, len(faltan))} "
                          f"(faltan {len(faltan)})", key="go_may",

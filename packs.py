@@ -198,6 +198,10 @@ def crear_pack(ml, item_base, unidades, precio=None, descuento=0.15,
         "family_name": _nombre(d.get("title") or "", unidades),
         "pictures": [{"id": p["id"]} for p in (d.get("pictures") or [])[:6]],
         "attributes": att,
+        # La garantia NO va en `attributes` sino en `sale_terms`: buscarla
+        # entre los atributos da "no tiene garantia" y es mentira. Sin esto el
+        # pack nace sin garantia aunque el suelto la tenga —paso con 281.
+        "sale_terms": copy.deepcopy(d.get("sale_terms") or []),
         "shipping": copy.deepcopy(d.get("shipping") or {}),
     }
     r = ml.post("/items", payload=cuerpo)
