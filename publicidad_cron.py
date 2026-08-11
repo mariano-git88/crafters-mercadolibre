@@ -190,12 +190,18 @@ def correr(aplicar=False, verbose=True, log=None, conv=None, ml=None):
     sesion = panel_ads.leer_sesion()
     auditoria = []
 
+    # Se cuenta TODO lo que se intento escribir, no solo lo que se apago: si
+    # todo falla, es la sesion y hay que gritarlo.
+    intentos = exitos = 0
+
     ok, res = 0, pd.DataFrame()
     if len(apagar):
         res = panel_ads.aplicar(sesion, ml, apagar, accion="pausar",
                                 callback=lambda i, t, d: log(f"  {i}/{t} {d}"))
         ok = int((res["resultado"] == "OK").sum())
         log(f"\nApagados {ok} de {len(res)}.")
+        intentos += len(res)
+        exitos += ok
         auditoria += _auditar(res, "active", "paused")
 
     # Los que estan fuera de campana se agregan; los que ya estan adentro
@@ -212,15 +218,33 @@ def correr(aplicar=False, verbose=True, log=None, conv=None, ml=None):
                                  callback=lambda i, t, d: log(f"  {i}/{t} {d}"))
         ok2 = int((res2["resultado"] == "OK").sum())
         log(f"{acc.capitalize()}: {ok2} de {len(res2)}.")
+        intentos += len(res2)
+        exitos += ok2
         auditoria += _auditar(res2, antes, "active")
 
     guardado, detalle = almacen.append_auditoria(auditoria)
     if not guardado:
         log(f"AVISO: no se pudo escribir la auditoría: {detalle}")
 
-    if ok < len(res):
-        log("\nLos que fallaron suelen ser benignos: anuncios en `hold` que "
-            "ML deshabilitó, o que el listado trae desactualizados.")
+    # Si NADA entro, no es un anuncio raro: es la sesion.
+    #
+    # La cookie del panel dura ~1 hora y la de los secrets se guarda una vez y
+    # queda vieja. Pasaba esto: la corrida terminaba en verde, decia "Apagados
+    # 0 de 35" y agregaba que las fallas "suelen ser benignas". Parecia que
+    # andaba y no apagaba nada — quedaron $1.261.770 de gasto corriendo.
+    if intentos and not exitos:
+        log(f"\nERROR: no entró NINGUNA de las {intentos} escrituras.")
+        log("Casi seguro la sesión del panel está vencida: la cookie dura")
+        log("alrededor de una hora y la de los secrets es de la última vez")
+        log("que se cargó a mano. Hay que renovar [ads] en los secrets.")
+        log("La corrida queda en ROJO a propósito: en verde parecía que")
+        log("funcionaba y no apagaba nada.")
+        return 1
+
+    if exitos < intentos:
+        log(f"\nEntraron {exitos} de {intentos}. Los que fallaron suelen ser "
+            "benignos: anuncios en `hold` que ML deshabilitó, o que el "
+            "listado trae desactualizados.")
     return 0
 
 
