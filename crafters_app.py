@@ -243,6 +243,70 @@ def pesos(v):
         return "—"
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def _sesion_panel_viva(sello):
+    """Si la cookie del panel entra. Se cachea: es una llamada a ML."""
+    return panel_ads.sesion_viva()
+
+
+def _sesion_del_panel():
+    """
+    El cartel de la cookie del panel, arriba de todo en Publicidad.
+
+    **Existe porque no tenerla no se notaba.** La escritura de publicidad no
+    va por la API pública —ML no se la habilitó a la app— sino por el panel,
+    que necesita la cookie `ssid`. Cuando vence, los pedidos no fallan con un
+    error de permisos: contestan como si el anuncio no existiera. El cron del
+    martes terminaba en verde diciendo "Apagados 0 de 35" y nadie se enteraba
+    de que había $1.261.770 de gasto que se tenía que haber cortado.
+    """
+    viva, motivo = _sesion_panel_viva(st.session_state.get("sesion_sello", 0))
+
+    if viva:
+        st.success("Sesión del panel activa: se puede aplicar.", icon="🔓")
+        with st.expander("Cambiar la cookie"):
+            _pegar_cookie()
+        return True
+
+    st.error(
+        f"**No se puede aplicar nada: {motivo}.**\n\n"
+        "Leer anda igual —los números de abajo son de verdad— pero *apagar, "
+        "encender, agregar a campaña y crear campañas* necesita la cookie del "
+        "panel. Sin ella el proceso corre, dice que hizo todo y no hace nada.",
+        icon="🔒")
+    _pegar_cookie()
+    return False
+
+
+def _pegar_cookie():
+    st.markdown(
+        "**Cómo sacarla:** entrá al [panel de "
+        "Publicidad](https://ads.mercadolibre.com.ar) → `F12` → pestaña "
+        "**Network** → pausá y despausá cualquier anuncio → click derecho en "
+        "el pedido que aparece → **Copy as cURL**. Pegalo acá: de todo eso "
+        "se guarda **solo el `ssid`**, que es lo único que hace falta.")
+    txt = st.text_area(
+        "Pegá el cURL (o el ssid pelado)", height=110, key="ck_txt",
+        placeholder="curl 'https://pa.mercadolibre.com.ar/...' -H 'cookie: ...ssid=...'")
+    c1, c2 = st.columns([1, 3])
+    if c1.button("Guardar cookie", key="ck_go", disabled=not txt.strip()):
+        ok, det = panel_ads.guardar_sesion(txt)
+        if ok:
+            # Se limpia el pegado: es una credencial, no tiene por qué quedar
+            # a la vista en la pantalla.
+            st.session_state["ck_txt"] = ""
+            st.session_state["sesion_sello"] = \
+                st.session_state.get("sesion_sello", 0) + 1
+            st.success(det)
+            st.rerun()
+        else:
+            st.error(det)
+    c2.caption(
+        "La cookie es tu sesión de MercadoLibre: sirve para todo lo que vos "
+        "podés hacer. Se guarda en este servidor y se pierde al reiniciar la "
+        "app. Para invalidarla, cambiá la contraseña de MercadoLibre.")
+
+
 def pesos_md(v):
     """
     Igual que `pesos()` pero con el `$` escapado, para textos en markdown.
@@ -3998,6 +4062,8 @@ elif seccion == "Publicidad":
         "Vista", _VISTAS_PUB, default=_VISTAS_PUB[0],
         key="pub_vista", label_visibility="collapsed") or _VISTAS_PUB[0]
 
+    _sesion_del_panel()
+
     if vista_pub == "Cómo va":
         if st.button("Traer campañas"):
             try:
@@ -4023,9 +4089,10 @@ elif seccion == "Publicidad":
                 st.divider()
 
             with st.expander("Crear una campaña"):
-                if not panel_ads.hay_sesion():
-                    st.caption("Hace falta la sesión del panel (`[ads] ssid` "
-                               "en los secrets).")
+                if not _sesion_panel_viva(
+                        st.session_state.get("sesion_sello", 0))[0]:
+                    st.caption("Hace falta la cookie del panel: cargala en el "
+                               "cartel de arriba.")
                 else:
                     nom = st.text_input("Nombre", key="nc_nombre")
                     d1, d2, d3 = st.columns(3)
@@ -4177,7 +4244,7 @@ elif seccion == "Publicidad":
             st.divider()
             st.markdown("##### Aplicar en MercadoLibre")
 
-            if panel_ads.hay_sesion():
+            if _sesion_panel_viva(st.session_state.get('sesion_sello', 0))[0]:
                 st.info(
                     "Los cambios se aplican por el **panel de publicidad**, "
                     "no por la API: MercadoLibre no habilitó la escritura de "
@@ -4256,7 +4323,8 @@ elif seccion == "Publicidad":
                 "publicidad de MercadoLibre", key="pub_conf")
             if st.button(f"Aplicar {cuantas} cambios", key="pub_go",
                          disabled=not (conf_pub and op_pub.strip() and cuantas
-                                       and panel_ads.hay_sesion())):
+                                       and _sesion_panel_viva(
+                                           st.session_state.get('sesion_sello', 0))[0])):
                 barra = st.progress(0.0, text="Aplicando...")
                 try:
                     sesion_ads = panel_ads.leer_sesion()
@@ -4347,7 +4415,8 @@ elif seccion == "Publicidad":
 
         if st.button("Correr el proceso ahora", key="cron_go",
                      type="primary" if aplicar_pub else "secondary",
-                     disabled=aplicar_pub and not panel_ads.hay_sesion()):
+                     disabled=aplicar_pub and not _sesion_panel_viva(
+                         st.session_state.get('sesion_sello', 0))[0]):
             caja = st.empty()
             lineas = []
 

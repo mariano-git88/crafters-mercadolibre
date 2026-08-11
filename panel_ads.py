@@ -40,6 +40,7 @@ Dos cosas que costaron encontrar:
 """
 
 import json
+import re
 import sys
 import time
 import urllib.parse
@@ -103,11 +104,81 @@ def leer_sesion():
 
 
 def hay_sesion():
-    """Si se puede escribir por el panel, sin lanzar."""
+    """Si HAY una cookie cargada. **No dice si sirve** — ver `sesion_viva`."""
     try:
         return bool(leer_sesion().get("ssid"))
     except SystemExit:
         return False
+
+
+def sesion_viva(sesion=None, advertiser_id=872):
+    """
+    Si la cookie todavia entra. Devuelve (viva, motivo).
+
+    **Tener la cookie no es tenerla viva.** El `ssid` trae vencimiento 2029,
+    asi que parece eterno, pero ML lo invalida del lado del servidor y desde
+    afuera no se nota: los PUT contestan como si el anuncio no existiera.
+
+    Eso hizo que el cron del martes terminara en verde diciendo "Apagados 0
+    de 35" durante semanas. Por eso esto se pregunta ANTES de escribir, con
+    una lectura barata, y no se deduce de que el archivo exista.
+    """
+    import requests
+    try:
+        sesion = sesion or leer_sesion()
+    except SystemExit:
+        return False, "no hay ninguna cookie cargada"
+    url = (f"{BASE_PANEL}/pa/api/admin-growth-campaigns/rest/campaigns/"
+           f"{SITIO}/{advertiser_id}")
+    try:
+        r = requests.get(url, headers=_headers(sesion, advertiser_id, ""),
+                         timeout=45)
+    except Exception as e:                             # noqa: BLE001
+        return False, f"no pude preguntarle al panel: {type(e).__name__}"
+    if r.status_code == 200:
+        return True, "la sesión entra"
+    if "user not found" in r.text.lower() or r.status_code in (401, 403):
+        return False, "la cookie venció: ML ya no la reconoce"
+    return False, f"el panel contestó HTTP {r.status_code}"
+
+
+def guardar_sesion(texto):
+    """
+    Guarda la cookie que pegue el usuario. Devuelve (ok, detalle).
+
+    Se le puede pegar cualquiera de estas tres y sale igual:
+
+      - el `ssid` pelado
+      - el `Copy as cURL` entero del navegador
+      - el bloque `cookie: ...` de las cabeceras
+
+    **Se guarda solo el `ssid`, no la cookie entera.** Es lo unico que hace
+    falta y es lo menos que se puede guardar: el resto de la sesion no aporta
+    nada aca y de mas serviria para mas cosas.
+    """
+    txt = (texto or "").strip()
+    if not txt:
+        return False, "no pegaste nada"
+
+    m = re.search(r"ssid=([^;'\"\s]+)", txt)
+    ssid = m.group(1) if m else None
+    if not ssid and "=" not in txt and len(txt.split()) == 1:
+        ssid = txt                                     # el ssid pelado
+    if not ssid:
+        return False, ("no encontré `ssid=` en lo que pegaste. Fijate de "
+                       "copiar el pedido con click derecho → Copy as cURL.")
+
+    # Se prueba ANTES de guardar: al reves, una cookie mala pisa a una que
+    # estaba funcionando y hay que ir a buscar otra al navegador.
+    viva, motivo = sesion_viva({"ssid": ssid})
+    if not viva:
+        return False, f"esa cookie no entra ({motivo}). No la guardé."
+
+    try:
+        SESION.write_text(json.dumps({"ssid": ssid}), encoding="utf-8")
+    except OSError as e:
+        return False, f"no pude guardarla: {e}"
+    return True, "sesión guardada y verificada contra el panel"
 
 
 def _cookies(sesion, advertiser_id):
