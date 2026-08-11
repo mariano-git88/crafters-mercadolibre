@@ -84,10 +84,12 @@ def leer_sesion():
         ssid = "ghy-073112-...-__-422682314-__-..."
     """
     import almacen
-    desde_secrets = almacen._seccion("ads")
-    if desde_secrets.get("ssid"):
-        return {"ssid": desde_secrets["ssid"]}
 
+    # **Primero el archivo, despues los secrets.** Al reves, pegar una cookie
+    # nueva en la app no servia para nada: se guardaba bien y todo lo demas
+    # seguia usando la de los secrets, que se cargo una vez y quedo vieja. El
+    # archivo lo escribe alguien a proposito recien; los secrets son de hace
+    # semanas.
     if SESION.exists():
         d = json.loads(SESION.read_text(encoding="utf-8"))
         if d.get("ssid"):
@@ -96,6 +98,10 @@ def leer_sesion():
         for trozo in (d.get("cookie") or "").split("; "):
             if trozo.startswith("ssid="):
                 return {"ssid": trozo[5:]}
+
+    desde_secrets = almacen._seccion("ads")
+    if desde_secrets.get("ssid"):
+        return {"ssid": desde_secrets["ssid"]}
 
     raise SystemExit(
         "Falta la sesión del panel. Sacá la cookie `ssid` (F12 → Application "
@@ -122,24 +128,35 @@ def sesion_viva(sesion=None, advertiser_id=872):
     Eso hizo que el cron del martes terminara en verde diciendo "Apagados 0
     de 35" durante semanas. Por eso esto se pregunta ANTES de escribir, con
     una lectura barata, y no se deduce de que el archivo exista.
+
+    **Se mira la firma de la falta de sesion, no el codigo de estado.** Un 404
+    o un 400 NO significan que la cookie este mal: el panel contesta 400 con
+    un error de validacion de parametros cuando la sesion **si** entro. Guiarse
+    por "solo 200 vale" da falso negativo y manda a buscar una cookie nueva
+    que no hacia falta —me paso—. Cuando no hay sesion, en cambio, siempre
+    aparece una de estas dos:
+
+        500 "User not found"
+        500 "Cannot destructure property 'userId' of 'req.padsContext'"
     """
     import requests
     try:
         sesion = sesion or leer_sesion()
     except SystemExit:
         return False, "no hay ninguna cookie cargada"
-    url = (f"{BASE_PANEL}/pa/api/admin-growth-campaigns/rest/campaigns/"
-           f"{SITIO}/{advertiser_id}")
+    url = (f"{BASE_PANEL}/pa/api/admin-pads/ajax/ads"
+           f"?advertiser_id={advertiser_id}&limit=1")
     try:
         r = requests.get(url, headers=_headers(sesion, advertiser_id, ""),
                          timeout=45)
     except Exception as e:                             # noqa: BLE001
         return False, f"no pude preguntarle al panel: {type(e).__name__}"
-    if r.status_code == 200:
-        return True, "la sesión entra"
-    if "user not found" in r.text.lower() or r.status_code in (401, 403):
+
+    cuerpo = r.text.lower()
+    if (r.status_code in (401, 403) or "user not found" in cuerpo
+            or "padscontext" in cuerpo):
         return False, "la cookie venció: ML ya no la reconoce"
-    return False, f"el panel contestó HTTP {r.status_code}"
+    return True, "la sesión entra"
 
 
 def guardar_sesion(texto):
@@ -287,6 +304,12 @@ def campana(sesion, advertiser_id, campaign_id, cambios):
     """
     Modifica una campana: `{"status": "paused"}` o
     `{"budget": 110000, "automaticBudget": False}`. Va por PATCH.
+
+    **Encender una campana pide segundo factor.** Crearla no, moverla si. Y
+    cuando lo pide, ML no contesta 401: devuelve **200 con la pagina HTML del
+    TOTP**, asi que mirar solo el codigo de estado da por hecho un cambio que
+    no ocurrio —me paso: dijo que la encendio y siguio pausada—. Por eso se
+    revisa que la respuesta sea JSON y no una pantalla de login.
     """
     import requests
     try:
@@ -298,6 +321,13 @@ def campana(sesion, advertiser_id, campaign_id, cambios):
         return False, f"{type(e).__name__}: {e}"
     if r.status_code >= 400:
         return False, f"HTTP {r.status_code}: {r.text[:150]}"
+
+    cuerpo = r.text.lstrip()[:400].lower()
+    if cuerpo.startswith("<!doctype") or "<html" in cuerpo:
+        if "totp" in cuerpo or "auth" in cuerpo:
+            return False, ("MercadoLibre pidió el segundo factor para este "
+                           "cambio. Hay que hacerlo desde el panel.")
+        return False, "MercadoLibre devolvió una pantalla, no la confirmación."
     return True, r.text[:200]
 
 

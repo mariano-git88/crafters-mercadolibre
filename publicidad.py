@@ -755,10 +755,18 @@ ENFRIAMIENTO_DIAS = 21
 
 def tocados_hace_poco(dias=ENFRIAMIENTO_DIAS):
     """
-    item_id -> fecha, de todo lo que tocamos dentro del enfriamiento.
+    item_id -> fecha, de todo lo que **efectivamente cambiamos** dentro del
+    enfriamiento.
 
     Sale de la auditoria, que ya es el registro de que cambiamos y cuando. No
     hace falta llevar otro estado en paralelo.
+
+    **Solo cuentan las filas OK.** La auditoria guarda tambien los intentos
+    que fallaron —sirve para saber que se probo— pero un intento fallido no
+    es un cambio: si contara, una corrida que no pudo escribir nada dejaria a
+    esos anuncios congelados 21 dias por haber fallado. Paso de verdad el
+    11 ago 2026: la corrida del martes fallo las 35 escrituras por la cookie
+    vencida y a la hora quedaban 3 candidatos en vez de 35.
     """
     try:
         filas = almacen.leer_hoja(almacen.HOJA_AUDITORIA,
@@ -771,6 +779,8 @@ def tocados_hace_poco(dias=ENFRIAMIENTO_DIAS):
     recientes = {}
     for f in filas:
         if str(f.get("campo")) != "ad_status":
+            continue
+        if str(f.get("resultado") or "").upper() != "OK":
             continue
         try:
             cuando = pd.Timestamp(str(f.get("fecha")))
