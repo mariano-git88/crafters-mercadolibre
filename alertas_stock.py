@@ -15,15 +15,21 @@ cada semana sin stock. Quedarse sin el producto que factura $2M por semana
 importa mucho mas que quedarse sin el que factura $8.000, aunque los dos
 tengan la misma cobertura en dias.
 
-Dos precauciones sobre el stock:
+Sobre el stock, dos cosas que cuestan una llamada por producto y valen la pena
+(ver `stock_por_sku`):
 
-  - Se agrupa por `user_product_id`. Las publicaciones espejo comparten el
-    stock, asi que sumar `available_quantity` de todas contaria varias veces
-    las mismas unidades — es el mismo motivo por el que `resolver_stock()`
-    devuelve un solo destino.
-  - El stock en **Full** se cuenta aparte. Reponerlo no es lo mismo: hay que
-    despachar mercaderia al deposito de ML y eso tarda, asi que un producto
-    en Full necesita mas dias de aviso que uno del deposito propio.
+  - **El stock sale de `/user-products/{id}/stock`, no de
+    `available_quantity`.** Ese campo no dice donde esta la mercaderia y
+    `logistic_type: fulfillment` tampoco: hubo publicaciones declaradas de
+    Full con todas sus unidades en el deposito propio. Deducirlo daba 3.158
+    unidades en Full cuando habia 126.
+  - **El stock propio va por maximo entre los `user_product` del SKU**, que
+    comparten las mismas unidades fisicas; el de Full va por suma, porque ahi
+    cada uno tiene su inventario. Sumar el propio lo inflaba 2,2 veces.
+
+El stock en **Full** se cuenta aparte porque reponerlo no es lo mismo: hay que
+despachar mercaderia al deposito de ML y eso tarda, asi que un producto en
+Full necesita mas dias de aviso que uno del deposito propio.
 """
 
 import json
@@ -34,7 +40,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from catalogo import es_full, sku_del_atributo
+from catalogo import sku_del_atributo
 from meli import Meli, MeliError
 
 DIR = Path(__file__).resolve().parent
@@ -76,16 +82,44 @@ def referencias(pubs):
     return ref
 
 
-def stock_por_sku(pubs):
+def stock_por_sku(pubs, ml, callback=None):
     """
-    SKU -> stock real disponible, sin contar dos veces las publicaciones que
-    comparten stock.
+    SKU -> cuanto hay en el deposito propio y cuanto en Full.
 
     Solo cuenta publicaciones ACTIVAS: el stock de una pausada no se puede
     vender. Los SKU que quedaron sin ninguna activa no aparecen aca — los
     recupera `analizar()` cruzando contra las ventas.
+
+    ----------------------------------------------------------------------
+    Por que hace una llamada por producto en vez de leer `available_quantity`
+    ----------------------------------------------------------------------
+
+    **`available_quantity` no dice DONDE esta la mercaderia, y
+    `logistic_type: fulfillment` tampoco.** Una publicacion puede declararse
+    de Full y tener todas sus unidades en el deposito propio. Medido el 11 ago
+    2026 contra el reporte de Full de ML:
+
+        MLAU208145887  ->  available_quantity 1353,  en Full: CERO
+        MLAU208267467  ->  available_quantity 1353,  en Full: 9
+
+    Deducirlo de ahi daba **3.158 unidades en Full cuando habia 126** — 25
+    veces de mas.
+
+    La fuente que si distingue es `/user-products/{id}/stock`:
+
+        locations: [{"type": "selling_address", "quantity": 1353},   <- propio
+                    {"type": "meli_facility",   "quantity": 9}]      <- Full
+
+    **El propio va por MAXIMO y el de Full por SUMA.** Varios `user_product`
+    del mismo SKU comparten las mismas unidades fisicas del deposito y las
+    reportan repetidas: sumarlas inflaba el stock propio **2,2 veces** (13.512
+    contra 6.251 reales). En Full, en cambio, cada uno tiene su propio
+    inventario y ahi la suma es correcta.
+
+    Son ~1.700 llamadas y unos 4 minutos. Es caro, pero es la diferencia entre
+    saber el stock y adivinarlo.
     """
-    grupos = defaultdict(lambda: {"propio": {}, "full": {}, "pubs": 0,
+    grupos = defaultdict(lambda: {"ups": set(), "pubs": 0,
                                   "precio": None, "titulo": ""})
     for p in pubs:
         if p.get("status") != "active":
@@ -102,23 +136,41 @@ def stock_por_sku(pubs):
         # es el de la publicacion principal, no el de una oferta puntual.
         if precio and (g["precio"] is None or precio > g["precio"]):
             g["precio"] = precio
+        if p.get("user_product_id"):
+            g["ups"].add(p["user_product_id"])
 
-        destino = g["full"] if es_full(p) else g["propio"]
-        clave = p.get("user_product_id") or p["id"]
-        # Dentro del grupo el stock es el mismo numero repetido; nos quedamos
-        # con el mayor por si alguna publicacion quedo desactualizada.
-        destino[clave] = max(destino.get(clave, 0),
-                             p.get("available_quantity") or 0)
+    todos = {u for g in grupos.values() for u in g["ups"]}
+    if callback:
+        callback(f"Leyendo el stock real de {len(todos)} productos...")
+
+    ubicacion, n = {}, 0
+    for up in todos:
+        n += 1
+        if callback and n % 200 == 0:
+            callback(f"  stock {n}/{len(todos)}...")
+        try:
+            st = ml.get(f"/user-products/{up}/stock")
+        except MeliError:
+            continue
+        propio = full = 0
+        for l in st.get("locations") or []:
+            if l.get("type") == "selling_address":
+                propio = max(propio, l.get("quantity") or 0)
+            elif l.get("type") == "meli_facility":
+                full += l.get("quantity") or 0
+        ubicacion[up] = (propio, full)
 
     salida = {}
     for sku, g in grupos.items():
+        propios = [ubicacion[u][0] for u in g["ups"] if u in ubicacion]
+        fulls = [ubicacion[u][1] for u in g["ups"] if u in ubicacion]
         salida[sku] = {
-            "stock_propio": sum(g["propio"].values()),
-            "stock_full": sum(g["full"].values()),
+            "stock_propio": max(propios) if propios else 0,
+            "stock_full": sum(fulls),
             "publicaciones": g["pubs"],
             "precio": g["precio"],
             "titulo": g["titulo"],
-            "en_full": bool(g["full"]),
+            "en_full": bool(sum(fulls)),
         }
     return salida
 
@@ -155,7 +207,7 @@ def analizar(ml, dias=60, pubs=None, ordenes=None, callback=None):
             callback("Trayendo ventas del período...")
         ordenes = rent.traer_historico(ml, dias)
 
-    stocks = stock_por_sku(pubs)
+    stocks = stock_por_sku(pubs, ml, callback=callback)
     vel = velocidad_por_sku(ordenes, dias)
     ref = referencias(pubs)
 
