@@ -11,7 +11,9 @@ services:
   - type: web
     name: crafters-whatsapp
     runtime: python
-    region: oregon
+    # Virginia es la region de Render mas cercana a Argentina: menos viaje
+    # para el webhook que llega y para la respuesta que sale.
+    region: virginia
     plan: starter
     branch: main
     buildCommand: pip install -r requirements.txt
