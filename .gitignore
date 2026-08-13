@@ -80,6 +80,9 @@ secrets_para_github_actions.txt
 # Respaldos: si el original tiene credenciales, la copia tambien
 *.bak
 
+# Token de WhatsApp pegado a mano para guardar_token_wa.py (el script lo borra)
+token_nuevo.txt
+
 # Tokens de cuentas adicionales (fallback local sin Sheet)
 tokens_*.json
 canastas_kits.json

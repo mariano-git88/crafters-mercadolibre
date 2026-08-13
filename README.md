@@ -726,6 +726,7 @@ seguro, deriva a una persona.
 | `whatsapp.py` | El transporte: recibe y manda mensajes por la Cloud API de Meta |
 | `wa_webhook.py` | El servidor que junta las dos cosas y corre en Render |
 | `test_wa_webhook.py` | El transporte, probado sin Meta ni modelo (correr después de tocarlo) |
+| `guardar_token_wa.py` | Cambia el token en los tres archivos donde vive, probándolo antes |
 
 ```bash
 python ventas_wa.py --casos              # el cerebro, por consola
@@ -782,6 +783,14 @@ WA_SIMULAR=1 python wa_webhook.py        # el servidor sin contestarle a nadie
 - **El número de prueba de Meta solo le escribe a 5 destinatarios** cargados a
   mano. El asistente puede estar perfecto y no contestarle a nadie. `/salud` lo
   avisa con `numero_de_prueba`.
+- **El token que da la pantalla de API Setup dura 24 horas.** Al día siguiente
+  el asistente deja de contestar sin avisar nada. El definitivo se genera en
+  *business.facebook.com > Configuración del negocio > Usuarios del sistema*,
+  con los permisos `whatsapp_business_messaging` y
+  `whatsapp_business_management` y caducidad **Nunca**. Para cambiarlo:
+  `python guardar_token_wa.py`, que lo prueba antes de pisar el que hay y lo
+  deja en los tres archivos. Para saber si el de ahora sigue vivo:
+  `python -c "import whatsapp; print(whatsapp.verificar_token())"`.
 - **La ventana de 24 horas.** Fuera de las 24 h del último mensaje del cliente,
   Meta solo deja mandar plantillas aprobadas. Contestando siempre se está
   adentro, pero cualquier seguimiento posterior necesita plantilla.

@@ -297,6 +297,36 @@ def marcar_leido(message_id, escribiendo=False):
         return False, str(e)
 
 
+def verificar_token(token=None):
+    """
+    Si el token sirve para operar este numero. Devuelve (ok, detalle).
+
+    Es una lectura, no manda ningun mensaje. Sirve para darse cuenta de que el
+    token se vencio ANTES de que un cliente escriba y no reciba respuesta: los
+    temporales de Meta duran 24 horas y se caen sin avisar.
+    """
+    cfg = config()
+    token = token or cfg["token"]
+    if not token or not cfg["phone_number_id"]:
+        return False, "falta el token o el phone_number_id"
+    try:
+        r = requests.get(
+            f"{BASE}/{cfg['version']}/{cfg['phone_number_id']}",
+            params={"fields": "display_phone_number,verified_name,quality_rating"},
+            headers={"Authorization": f"Bearer {token}"}, timeout=30)
+    except requests.RequestException as e:
+        return False, f"no pude llegar a Meta: {e}"
+    datos = r.json() if r.content else {}
+    if r.status_code >= 300 or datos.get("error"):
+        err = datos.get("error") or {}
+        codigo = err.get("code")
+        return False, (f"codigo {codigo}: "
+                       f"{ERRORES.get(codigo, err.get('message') or r.text[:200])}")
+    return True, (f"{datos.get('verified_name', '')} · "
+                  f"{datos.get('display_phone_number', '')} · calidad "
+                  f"{datos.get('quality_rating', '?')}")
+
+
 def numero_de_prueba():
     """
     Si el phone_number_id es el del numero de prueba que da Meta.
