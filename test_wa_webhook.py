@@ -21,18 +21,21 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 SECRETO = "secreto-de-prueba"
-os.environ.update({
-    "WA_SIMULAR": "1",
-    "WA_SIN_MOTOR": "1",
-    "WHATSAPP_APP_SECRET": SECRETO,
-    "WHATSAPP_VERIFY_TOKEN": "token-de-alta",
-    "WHATSAPP_TOKEN": "token-falso",
-    "WHATSAPP_PHONE_NUMBER_ID": "1296822553514864",
-})
+os.environ.update({"WA_SIMULAR": "1", "WA_SIN_MOTOR": "1"})
 
 import ventas_wa                                            # noqa: E402
 import wa_webhook                                           # noqa: E402
 import whatsapp                                             # noqa: E402
+
+# La configuracion se reemplaza entera, no con variables de entorno: los
+# secrets del archivo le ganan al entorno (bien, es lo que corresponde en
+# produccion), asi que apenas se cargo la seccion [whatsapp] de verdad la
+# prueba empezo a firmar con un secreto y el servidor a validar con otro.
+# Todo daba 403 y parecia que estaba roto el webhook.
+whatsapp.config = lambda: {
+    "token": "token-falso", "phone_number_id": "1296822553514864",
+    "verify_token": "token-de-alta", "app_secret": SECRETO,
+    "version": "v23.0"}
 
 enviados, derivaciones, vistos_por_el_modelo = [], [], []
 

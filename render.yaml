@@ -19,9 +19,20 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn wa_webhook:app --bind 0.0.0.0:$PORT --workers 1 --threads 8 --timeout 120
     healthCheckPath: /salud
+    # El catalogo (~3700 publicaciones, unas 220 llamadas a ML) tarda varios
+    # minutos en bajar. Sin disco, el disco del servicio se borra en cada
+    # deploy y hay que bajarlo de nuevo: mientras tanto el asistente no puede
+    # contestarle a nadie. Con el disco se baja una sola vez y sobrevive a los
+    # reinicios; el refresco cada 6 horas lo actualiza en segundo plano.
+    disk:
+      name: catalogo
+      mountPath: /var/data
+      sizeGB: 1
     envVars:
       - key: PYTHON_VERSION
         value: "3.12"
+      - key: CATALOGO_CACHE
+        value: /var/data/catalogo.json
       # El mismo bloque de secrets que usan los GitHub Actions, entero. Se
       # carga a mano en el panel de Render (Environment > Secret) y de ahi el
       # servicio escribe .streamlit/secrets.toml al arrancar.

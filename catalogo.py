@@ -13,13 +13,20 @@ Por eso se cachea. Cualquier herramienta que necesite el catalogo usa:
 """
 
 import json
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
 
 from meli import Meli, MeliError
 
-CACHE = Path(__file__).resolve().parent / "catalogo.json"
+# Donde queda el cache. `CATALOGO_CACHE` lo mueve a otro lado, que es lo que
+# necesita el webhook de WhatsApp en Render: ahi el disco del servicio se borra
+# en cada deploy, y volver a bajar 3700 publicaciones en cada arranque deja al
+# asistente sin poder contestar por varios minutos. Apuntandolo a un disco
+# persistente, se baja una sola vez.
+CACHE = Path(os.environ.get("CATALOGO_CACHE")
+             or Path(__file__).resolve().parent / "catalogo.json")
 
 # En Streamlit Cloud el contenedor corre en UTC, asi que formatear la fecha
 # con la hora local mostraria 3 horas de mas. La zona va fija.

@@ -69,6 +69,7 @@ from flask import Flask, request                            # noqa: E402
 
 import ventas_wa                                            # noqa: E402
 import whatsapp                                             # noqa: E402
+from catalogo import CACHE as CACHE_CATALOGO                # noqa: E402
 from catalogo import cargar_catalogo                        # noqa: E402
 from meli import Meli                                       # noqa: E402
 
@@ -86,7 +87,11 @@ VIDA_CONVERSACION = 6 * 3600
 REFRESCO_CATALOGO = 6 * 3600
 
 # Cuanto se le da al motor para terminar de cargar antes de rendirse.
-ESPERA_MOTOR = 150
+#
+# Corto a proposito. Del otro lado hay alguien mirando el celular: si el
+# catalogo todavia no esta, es mejor decirselo en 20 segundos y pasarlo a una
+# persona que dejarlo dos minutos y medio en visto.
+ESPERA_MOTOR = 20
 
 MAX_VISTOS = 1000
 
@@ -99,6 +104,10 @@ SIN_TEXTO = ("Recibí tu mensaje. Como no es texto, lo va a ver una persona "
 
 NO_PUDE = ("Perdón, tuve un problema para responderte. Ya avisé al equipo y "
            "una persona te contesta en un rato.")
+
+ARRANCANDO = ("¡Hola! Te leí. Estoy terminando de arrancar y todavía no puedo "
+              "consultar precios. Ya le pasé tu mensaje a una persona del "
+              "equipo, que te contesta enseguida.")
 
 
 # -------------------------------------------------------------------- motor
@@ -120,13 +129,24 @@ class Motor:
         self.listo = threading.Event()
         self.error = ""
         self.cargado_en = 0
+        self.etapa = "sin arrancar"
 
     def cargar(self, refrescar=False):
         try:
-            ml = Meli(verbose=False)
+            # `verbose=True` a proposito: es lo que hace que los avisos de rate
+            # limit de ML salgan en el log de Render. Con verbose=False una
+            # bajada frenada por 429 se ve igual que un servicio colgado.
+            self.etapa = "leyendo los tokens"
+            ml = Meli(verbose=True)
+            self.etapa = ("bajando el catálogo de MercadoLibre"
+                          if refrescar or not CACHE_CATALOGO.exists()
+                          else "leyendo el catálogo del disco")
             pubs = cargar_catalogo(ml, refrescar=refrescar)
+            self.etapa = "armando el buscador"
             cat = ventas_wa.Catalogo(pubs)
+            self.etapa = "leyendo las reglas de precio mayorista"
             pre = ventas_wa.Precios(pubs)
+            self.etapa = "listo"
             # Recien aca se reemplaza lo que habia: mientras baja el catalogo
             # nuevo, las consultas siguen contestandose con el anterior.
             self.ml, self.cat, self.pre = ml, cat, pre
@@ -137,6 +157,7 @@ class Motor:
                   f"{len(pre.regs)} reglas mayoristas", flush=True)
         except Exception as e:                              # noqa: BLE001
             self.error = f"{type(e).__name__}: {e}"
+            self.etapa = f"falló {self.etapa}"
             print(f"[wa] ERROR cargando el catalogo: {self.error}", flush=True)
             traceback.print_exc()
 
@@ -276,8 +297,9 @@ def _procesar(telefono):
 
         if not motor.esperar():
             _derivar(telefono, nombre, mensajes,
-                     {"motivo": f"el catálogo no cargó: {motor.error}"},
-                     texto_al_cliente=NO_PUDE)
+                     {"motivo": f"el asistente estaba {motor.etapa}"
+                                + (f" · {motor.error}" if motor.error else "")},
+                     texto_al_cliente=ARRANCANDO)
             _contadores["fallados"] += 1
             return
 
@@ -350,6 +372,10 @@ def salud():
     cfg = whatsapp.config()
     return {
         "catalogo_listo": motor.listo.is_set(),
+        # En que anda mientras no esta listo. Sin esto, "todavia no" y "se
+        # colgo" se ven exactamente igual desde afuera.
+        "etapa": motor.etapa,
+        "catalogo_en_disco": CACHE_CATALOGO.exists(),
         "productos": len(motor.cat.items) if motor.cat else 0,
         "catalogo_cargado_hace_min": (
             round((time.time() - motor.cargado_en) / 60) if motor.cargado_en
