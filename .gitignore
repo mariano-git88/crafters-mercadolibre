@@ -77,6 +77,9 @@ sesion_ads.json
 # Bloque de secrets para el cron: NO subir
 secrets_para_github_actions.txt
 
+# Respaldos: si el original tiene credenciales, la copia tambien
+*.bak
+
 # Tokens de cuentas adicionales (fallback local sin Sheet)
 tokens_*.json
 canastas_kits.json

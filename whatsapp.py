@@ -115,10 +115,13 @@ def describir():
     lineas = []
     for clave in ["token", "phone_number_id", "verify_token", "app_secret"]:
         v = cfg[clave]
-        if clave in ("token", "app_secret"):
-            estado = f"cargado ({len(v)} caracteres)" if v else "FALTA"
-        else:
+        # El unico que se muestra entero es el phone_number_id, que no es
+        # secreto. Del resto solo si esta y cuanto mide: alcanza para darse
+        # cuenta de un typo y no deja el valor pegado en la pantalla.
+        if clave == "phone_number_id":
             estado = v or "FALTA"
+        else:
+            estado = f"cargado ({len(v)} caracteres)" if v else "FALTA"
         lineas.append(f"  {clave:<16} {estado}")
     lineas.append(f"  {'version':<16} {cfg['version']}")
     return "\n".join(lineas)
