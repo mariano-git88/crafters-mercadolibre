@@ -223,6 +223,7 @@ class Meli:
         url = path if path.startswith("http") else f"{BASE}{path}"
         espera = 2
         vistos_429 = 0
+        vistos_5xx = 0
 
         for intento in range(1, intentos + intentos_429 + 1):
             cabeceras = {"Authorization": f"Bearer {self.token}",
@@ -230,13 +231,46 @@ class Meli:
                          "Content-Type": "application/json"}
             if headers:
                 cabeceras.update(headers)
-            resp = self.sesion.request(
-                metodo, url,
-                headers=cabeceras,
-                params=params,
-                json=json_body,
-                timeout=60,
-            )
+            try:
+                resp = self.sesion.request(
+                    metodo, url,
+                    headers=cabeceras,
+                    params=params,
+                    json=json_body,
+                    timeout=60,
+                )
+            except requests.RequestException as e:
+                # La conexion se corto antes de tener respuesta. En una corrida
+                # de miles de llamadas pasa, y no es un error de la llamada.
+                vistos_5xx += 1
+                if vistos_5xx > intentos:
+                    raise MeliError(
+                        f"{metodo} {url} -> no pude conectarme despues de "
+                        f"{intentos} intentos: {e}") from e
+                if self.verbose:
+                    print(f"[meli] se corto la conexion, reintento en "
+                          f"{espera:.0f}s ({vistos_5xx}/{intentos}): {e}")
+                time.sleep(espera)
+                espera = min(espera * 2, 60)
+                continue
+
+            # Un 5xx es la API con un problema momentaneo, no la llamada mal
+            # hecha. Reventar de una hacia que un solo 503 matara una bajada
+            # entera del catalogo: 4000 publicaciones perdidas por un segundo
+            # malo de MercadoLibre.
+            if resp.status_code >= 500:
+                vistos_5xx += 1
+                if vistos_5xx > intentos:
+                    raise MeliError(
+                        f"{metodo} {url} -> MercadoLibre sigue devolviendo "
+                        f"HTTP {resp.status_code} despues de {intentos} "
+                        f"intentos: {resp.text[:300]}")
+                if self.verbose:
+                    print(f"[meli] HTTP {resp.status_code}, reintento en "
+                          f"{espera:.0f}s ({vistos_5xx}/{intentos})")
+                time.sleep(espera)
+                espera = min(espera * 2, 60)
+                continue
 
             if resp.status_code == 429:
                 vistos_429 += 1

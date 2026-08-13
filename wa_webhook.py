@@ -163,10 +163,28 @@ class Motor:
 
     def arrancar(self):
         def ciclo():
-            self.cargar()
+            # Hasta que cargue, se reintenta con esperas cada vez mas largas.
+            # Antes, si la primera carga fallaba, el asistente quedaba
+            # inservible hasta el refresco: seis horas mudo por un mal momento
+            # de MercadoLibre.
+            espera = 30
+            while not self.listo.is_set():
+                self.cargar()
+                if self.listo.is_set():
+                    break
+                print(f"[wa] reintento la carga en {espera}s", flush=True)
+                time.sleep(espera)
+                espera = min(espera * 2, 600)
+
             while True:
                 time.sleep(REFRESCO_CATALOGO)
+                antes = self.cargado_en
                 self.cargar(refrescar=True)
+                if self.cargado_en == antes:
+                    # El refresco fallo. No es grave —se sigue contestando con
+                    # el catalogo que ya estaba— pero conviene reintentar antes
+                    # de las seis horas.
+                    time.sleep(1800)
         threading.Thread(target=ciclo, daemon=True, name="catalogo").start()
 
     def esperar(self, segundos=ESPERA_MOTOR):
