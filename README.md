@@ -714,6 +714,93 @@ Requiere el secret **`CRAFTERS_SECRETS_TOML`** en el repositorio, con el mismo
 contenido que los secrets de Streamlit Cloud (service account **inline**, no
 como ruta a un archivo, porque el `sa.json` no está en el repo).
 
+## Asistente de WhatsApp
+
+Atiende las consultas comerciales que llegan por WhatsApp: busca el producto,
+da precio y stock, aplica el tramo mayorista si corresponde y, cuando no está
+seguro, deriva a una persona.
+
+| Archivo | Qué hace |
+|---|---|
+| `ventas_wa.py` | El cerebro: entiende, busca en el catálogo y decide si contesta o deriva |
+| `whatsapp.py` | El transporte: recibe y manda mensajes por la Cloud API de Meta |
+| `wa_webhook.py` | El servidor que junta las dos cosas y corre en Render |
+| `test_wa_webhook.py` | El transporte, probado sin Meta ni modelo (correr después de tocarlo) |
+
+```bash
+python ventas_wa.py --casos              # el cerebro, por consola
+python whatsapp.py                       # qué hay configurado
+python whatsapp.py --a 549… --texto "…"  # mandar un mensaje de prueba
+WA_SIMULAR=1 python wa_webhook.py        # el servidor sin contestarle a nadie
+```
+
+### Las reglas que lo hacen seguro
+
+- **El precio y el stock nunca los dice el modelo.** Se leen del sistema y
+  entran como contexto cerrado. Si un producto no está ahí, para el asistente
+  no tiene precio ni disponibilidad.
+- **El catálogo cacheado sirve para buscar, no para cotizar.** Antes de cada
+  respuesta se releen precio y stock en vivo de las publicaciones que van a
+  entrar (una llamada al multiget). Una publicación pausada no se ofrece.
+- **El mayorista se detecta por la cantidad**, no por lo que el cliente diga
+  de sí mismo.
+- **Derivar avisa por mail** a clientes@crafters.com.ar con la conversación
+  entera. También se deriva cuando falla el modelo, cuando no sale el link de
+  pago o cuando el mensaje al cliente no se pudo enviar.
+
+### Conectarlo a Meta
+
+1. En la app de Meta, **WhatsApp > Configuración de la API**: anotar el
+   *Phone number ID*, generar un token y, en **Configuración > Básica**, copiar
+   el *App secret*.
+2. Cargar la sección en los secrets (local, Streamlit Cloud y el bloque de
+   Render son el mismo texto):
+
+   ```toml
+   [whatsapp]
+   token           = "EAA..."
+   phone_number_id = "1296822553514864"
+   verify_token    = "lo-que-vos-quieras"
+   app_secret      = "..."
+   ```
+3. Desplegar el servicio (`render.yaml` ya está en el repo) y cargar en Render
+   la variable **`CRAFTERS_SECRETS_TOML`** con el bloque entero de secrets, el
+   mismo que usan los GitHub Actions. El servicio lo escribe a
+   `.streamlit/secrets.toml` al arrancar.
+4. En Meta, **Webhooks > WhatsApp**: URL `https://<servicio>.onrender.com/webhook`,
+   el mismo `verify_token`, y suscribir el campo **`messages`**.
+5. Verificar con `https://<servicio>.onrender.com/salud`.
+
+### Las trampas
+
+- **El plan gratuito de Render no sirve.** El servicio se duerme a los 15
+  minutos y despertarlo tarda casi un minuto: el primer mensaje de cada cliente
+  llegaría tardísimo o se perdería.
+- **Un solo worker de gunicorn.** Las conversaciones, los mensajes ya vistos y
+  los temporizadores viven en memoria del proceso; con dos, cada uno ve media
+  conversación.
+- **El número de prueba de Meta solo le escribe a 5 destinatarios** cargados a
+  mano. El asistente puede estar perfecto y no contestarle a nadie. `/salud` lo
+  avisa con `numero_de_prueba`.
+- **La ventana de 24 horas.** Fuera de las 24 h del último mensaje del cliente,
+  Meta solo deja mandar plantillas aprobadas. Contestando siempre se está
+  adentro, pero cualquier seguimiento posterior necesita plantilla.
+- **Se contesta al número exacto que manda Meta**, sin normalizar: el 9 de los
+  números argentinos aparece y desaparece según el caso.
+- **Un HTTP 200 de Meta no es un mensaje enviado.** La respuesta buena trae un
+  `wamid`; si no viene, no salió.
+- Se espera **7 segundos** desde el último mensaje antes de contestar: el
+  cliente que escribe en tres renglones es una consulta, no tres.
+- Al reiniciarse el servicio **se olvida las conversaciones abiertas**. Quedan
+  registradas en la hoja `wa_conversaciones`, pero el hilo arranca de nuevo.
+
+### Lo que falta probar
+
+El **link de pago** (`ventas_wa.link_de_pago`) crea la preferencia de Mercado
+Pago con el token de MercadoLibre. Todavía no se probó contra la cuenta real:
+si la API lo rechaza, el asistente no promete el link, avisa que lo va a mandar
+y deriva a una persona.
+
 ## Deploy en Streamlit Cloud
 
 ### Por qué hace falta la Google Sheet

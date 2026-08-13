@@ -1,0 +1,27 @@
+# Servicio del webhook de WhatsApp.
+#
+# El plan es `starter` a proposito: en el gratuito el servicio se DUERME
+# despues de 15 minutos sin trafico, y despertarlo tarda casi un minuto. Para
+# un webhook eso significa que el primer mensaje de cada cliente se contesta
+# tardisimo o directamente se pierde.
+#
+# Un solo worker: las conversaciones y los mensajes ya vistos viven en memoria
+# del proceso (ver wa_webhook.py).
+services:
+  - type: web
+    name: crafters-whatsapp
+    runtime: python
+    region: oregon
+    plan: starter
+    branch: main
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn wa_webhook:app --bind 0.0.0.0:$PORT --workers 1 --threads 8 --timeout 120
+    healthCheckPath: /salud
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12"
+      # El mismo bloque de secrets que usan los GitHub Actions, entero. Se
+      # carga a mano en el panel de Render (Environment > Secret) y de ahi el
+      # servicio escribe .streamlit/secrets.toml al arrancar.
+      - key: CRAFTERS_SECRETS_TOML
+        sync: false

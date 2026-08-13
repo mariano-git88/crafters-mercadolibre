@@ -213,14 +213,55 @@ class Precios:
 
 # ------------------------------------------------------------------- contexto
 
-def contexto_de(consulta, catalogo, precios=None, cantidad=None):
+def refrescar(ml, items, precios=None):
+    """
+    Le vuelve a preguntar a MercadoLibre el precio y el stock de los productos
+    que van a entrar en la respuesta. Devuelve los que siguen vendibles.
+
+    **El catalogo cacheado sirve para BUSCAR, no para cotizar.** Se baja cada
+    tanto, y entre una bajada y la siguiente un precio puede haber cambiado o
+    una publicacion haberse pausado. En una planilla eso es un dato viejo; por
+    WhatsApp es un precio que la empresa despues tiene que sostener.
+
+    Son a lo sumo 6 publicaciones, o sea UNA llamada al multiget. Si ML no
+    contesta, se sigue con lo cacheado: es preferible una respuesta con un
+    precio de hace unas horas que dejar al cliente sin respuesta.
+    """
+    if not ml or not items:
+        return items
+    try:
+        frescos = {d["id"]: d for d in ml.items_detalle(
+            [i["item_id"] for i in items],
+            ["id", "price", "available_quantity", "status"])}
+    except Exception:                                      # noqa: BLE001
+        return items
+
+    vivos = []
+    for i in items:
+        d = frescos.get(i["item_id"])
+        if not d:                       # no vino: sigue con lo que sabiamos
+            vivos.append(i)
+            continue
+        if d.get("status") != "active":
+            continue                    # pausada o cerrada: no se ofrece
+        i["precio"] = float(d.get("price") or i["precio"])
+        i["stock"] = int(d.get("available_quantity") or 0)
+        if precios is not None:
+            pub = precios.por_sku.get(i["sku"])
+            if pub:                     # que el tramo mayorista parta del
+                pub["price"] = i["precio"]          # precio de hoy
+        vivos.append(i)
+    return vivos
+
+
+def contexto_de(consulta, catalogo, precios=None, cantidad=None, ml=None):
     """
     Los productos que pueden estar en juego, con precio y stock REALES.
 
     Si el cliente dijo una cantidad, se calcula ademas el precio que le
     corresponde: asi el modelo lo lee del contexto en vez de estimarlo.
     """
-    encontrados = catalogo.buscar(consulta)
+    encontrados = refrescar(ml, catalogo.buscar(consulta), precios)
     lineas = []
     for i in encontrados:
         linea = (f"- {i['titulo']}\n"
@@ -319,17 +360,20 @@ una respuesta que la empresa va a tener que sostener.\
 """
 
 
-def responder(conversacion, catalogo, precios=None, cliente=None):
+def responder(conversacion, catalogo, precios=None, cliente=None, ml=None):
     """
     Le pide a Claude la respuesta. `conversacion` es una lista de
     {"de": "cliente"|"nosotros", "texto": ...}, del mas viejo al mas nuevo.
+
+    Con `ml` se releen precio y stock en vivo antes de contestar (ver
+    `refrescar`). Sin `ml` se usa el catalogo cacheado.
     """
     import anthropic
 
     ultimo = next((m["texto"] for m in reversed(conversacion)
                    if m["de"] == "cliente"), "")
     cant = cantidad_pedida(ultimo)
-    encontrados, ctx = contexto_de(ultimo, catalogo, precios, cant)
+    encontrados, ctx = contexto_de(ultimo, catalogo, precios, cant, ml)
 
     hilo = "\n".join(
         f"{'Cliente' if m['de'] == 'cliente' else 'Nosotros'}: {m['texto']}"
@@ -455,7 +499,7 @@ def main():
             continue
         print("─" * 66)
         print(f"CLIENTE: {c}")
-        s = responder([{"de": "cliente", "texto": c}], cat, pre)
+        s = responder([{"de": "cliente", "texto": c}], cat, pre, ml=ml)
         print(f"  contesta: {s['responder']} · {s['confianza']} · "
               f"acción: {s['accion']}")
         if s["respuesta"]:

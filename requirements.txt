@@ -7,3 +7,8 @@ anthropic>=0.120
 rank_bm25>=0.2
 pypdf>=5.0
 beautifulsoup4>=4.12
+
+# Solo para el webhook de WhatsApp (wa_webhook.py). La app de Streamlit no
+# los usa, pero van en el mismo archivo para que Render instale una sola cosa.
+flask>=3.0
+gunicorn>=23.0
