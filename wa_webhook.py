@@ -414,6 +414,11 @@ def raiz():
 def salud():
     cfg = whatsapp.config()
     return {
+        # Que version esta corriendo y que hilos quedaron vivos. Sin esto, un
+        # arreglo que no aparece deja la duda de si no funciono o si no llego
+        # a desplegarse, y son dos problemas muy distintos.
+        "version": (os.environ.get("RENDER_GIT_COMMIT") or "local")[:7],
+        "hilos": sorted(t.name for t in threading.enumerate()),
         "catalogo_listo": motor.listo.is_set(),
         # En que anda mientras no esta listo. Sin esto, "todavia no" y "se
         # colgo" se ven exactamente igual desde afuera.
