@@ -66,6 +66,15 @@ CODIGOS_TRANSITORIOS = {429, 500, 502, 503, 504}
 INTENTOS = 4
 ESPERA_BASE = 2.0        # espera 2, 4 y 8 segundos: 14 en total
 
+# Cuanto se espera a Google antes de dar la llamada por perdida.
+#
+# **Sin esto gspread espera para siempre.** En un script de terminal se nota
+# (uno ve que no vuelve y corta); en un servicio que corre solo, una conexion
+# que queda colgada bloquea el hilo sin error, sin log y sin fin. Con timeout,
+# la llamada falla, `_es_transitorio` la reconoce como corte de red y
+# `_reintentar` la vuelve a intentar.
+TIMEOUT_SHEETS = 30
+
 
 def _es_transitorio(e):
     """True si conviene reintentar: Google hipo, no configuracion mal puesta."""
@@ -164,6 +173,10 @@ def _abrir():
         credenciales = json.loads(ruta.read_text(encoding="utf-8"))
 
     cliente = gspread.service_account_from_dict(credenciales)
+    try:
+        cliente.set_timeout(TIMEOUT_SHEETS)
+    except AttributeError:          # gspread viejo: sin timeout, como antes
+        pass
     try:
         return _reintentar(lambda: cliente.open_by_key(cfg["spreadsheet_id"]))
     except Exception as e:

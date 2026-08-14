@@ -95,6 +95,16 @@ ESPERA_MOTOR = 20
 
 MAX_VISTOS = 1000
 
+# Si a los diez minutos el catalogo no cargo, el proceso se mata y Render lo
+# levanta de nuevo.
+#
+# Es un martillo, y es a proposito: una conexion colgada no lanza excepcion, no
+# escribe en el log y no se puede interrumpir desde otro hilo. Reintentar por
+# dentro no sirve, porque el hilo que tendria que reintentar es justamente el
+# que quedo trabado. Un arranque limpio si sirve, y con el catalogo en disco
+# cuesta segundos.
+WATCHDOG_ARRANQUE = 600
+
 SIMULAR = bool(os.environ.get("WA_SIMULAR"))
 
 SIN_TEXTO = ("Recibí tu mensaje. Como no es texto, lo va a ver una persona "
@@ -130,23 +140,29 @@ class Motor:
         self.error = ""
         self.cargado_en = 0
         self.etapa = "sin arrancar"
+        self.etapa_desde = time.time()
+
+    def _paso(self, etapa):
+        self.etapa = etapa
+        self.etapa_desde = time.time()
+        print(f"[wa] {etapa}", flush=True)
 
     def cargar(self, refrescar=False):
         try:
             # `verbose=True` a proposito: es lo que hace que los avisos de rate
             # limit de ML salgan en el log de Render. Con verbose=False una
             # bajada frenada por 429 se ve igual que un servicio colgado.
-            self.etapa = "leyendo los tokens"
+            self._paso("leyendo los tokens")
             ml = Meli(verbose=True)
-            self.etapa = ("bajando el catálogo de MercadoLibre"
-                          if refrescar or not CACHE_CATALOGO.exists()
-                          else "leyendo el catálogo del disco")
+            self._paso("bajando el catálogo de MercadoLibre"
+                       if refrescar or not CACHE_CATALOGO.exists()
+                       else "leyendo el catálogo del disco")
             pubs = cargar_catalogo(ml, refrescar=refrescar)
-            self.etapa = "armando el buscador"
+            self._paso("armando el buscador")
             cat = ventas_wa.Catalogo(pubs)
-            self.etapa = "leyendo las reglas de precio mayorista"
+            self._paso("leyendo las reglas de precio mayorista")
             pre = ventas_wa.Precios(pubs)
-            self.etapa = "listo"
+            self._paso("listo")
             # Recien aca se reemplaza lo que habia: mientras baja el catalogo
             # nuevo, las consultas siguen contestandose con el anterior.
             self.ml, self.cat, self.pre = ml, cat, pre
@@ -185,7 +201,16 @@ class Motor:
                     # el catalogo que ya estaba— pero conviene reintentar antes
                     # de las seis horas.
                     time.sleep(1800)
+
+        def watchdog():
+            if not self.listo.wait(WATCHDOG_ARRANQUE):
+                print(f"[wa] el catálogo no cargó en "
+                      f"{WATCHDOG_ARRANQUE // 60} minutos (quedó en "
+                      f"'{self.etapa}'). Me reinicio.", flush=True)
+                os._exit(1)
+
         threading.Thread(target=ciclo, daemon=True, name="catalogo").start()
+        threading.Thread(target=watchdog, daemon=True, name="watchdog").start()
 
     def esperar(self, segundos=ESPERA_MOTOR):
         return self.listo.wait(timeout=segundos)
@@ -393,6 +418,7 @@ def salud():
         # En que anda mientras no esta listo. Sin esto, "todavia no" y "se
         # colgo" se ven exactamente igual desde afuera.
         "etapa": motor.etapa,
+        "hace_seg_en_esta_etapa": round(time.time() - motor.etapa_desde),
         "catalogo_en_disco": CACHE_CATALOGO.exists(),
         "productos": len(motor.cat.items) if motor.cat else 0,
         "catalogo_cargado_hace_min": (
