@@ -176,6 +176,53 @@ def main():
              "costo_efectivo sin descuento = costo pleno")
 
     print("\n" + "=" * 70)
+    print("No se publicita lo que pierde plata")
+    print("=" * 70)
+    # Portado de MercadoLibre UY el 18/08/2026. Antes `tope_acos` metia en el
+    # mismo saco "sin margen conocido" y "margen conocido y negativo", y a un
+    # producto que pierde plata en cada unidad se le permitia gastar hasta el
+    # tope general. Ademas la regla vivia adentro del bloque que exige datos
+    # suficientes, asi que uno que perdia pero todavia no habia gastado se
+    # quedaba prendido juntando clics pagos.
+    import pandas as pd
+
+    import publicidad
+
+    cfg = publicidad.config()
+    m = {"PIERDE": -12.5, "GANA": 40.0}
+
+    chequear(publicidad.tope_acos("PIERDE", m, cfg) == (0.0, True),
+             "margen negativo -> tope 0, o sea no publicitar")
+    chequear(publicidad.tope_acos("GANA", m, cfg)[1] is True,
+             "margen positivo -> tope propio del SKU")
+    chequear(publicidad.tope_acos("NO_ESTA", m, cfg) == (cfg["acos_max"], False),
+             "sin margen conocido -> tope general, que no es lo mismo")
+
+    def _ad(item, sku):
+        return {"item_id": item, "sku": sku, "ad_group_id": 1, "titulo": "t",
+                "marca": "", "estado_ad": "active", "clicks": 0, "gasto": 0.0,
+                "acos": 0.0, "roas": 0.0, "unidades": 0, "impresiones": 0,
+                "facturado": 0.0, "campaign_id": 9, "advertiser_id": 1,
+                "precio": 100, "catalogo": False, "gana_buybox": False,
+                "ctr": 0, "cvr": 0}
+
+    def _pub_sku(item, sku):
+        return {"id": item, "status": "active", "available_quantity": 5,
+                "attributes": [{"id": "SELLER_SKU", "value_name": sku}]}
+
+    salida = publicidad.analizar(
+        pd.DataFrame([_ad("A", "PIERDE"), _ad("B", "GANA")]),
+        [_pub_sku("A", "PIERDE"), _pub_sku("B", "GANA")],
+        cfg=cfg, estrat={}, margenes=m)
+    por_id = dict(zip(salida["item_id"], salida["accion"]))
+    chequear(por_id.get("A") == "pausar",
+             "se pausa aunque no tenga ni un clic",
+             f"quedó en {por_id.get('A')}")
+    chequear(por_id.get("B") != "pausar",
+             "y al que gana no se lo toca por falta de datos",
+             f"quedó en {por_id.get('B')}")
+
+    print("\n" + "=" * 70)
     if fallas:
         print(f"FALLARON {len(fallas)}:")
         for f in fallas:
