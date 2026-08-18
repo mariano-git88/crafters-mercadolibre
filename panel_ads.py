@@ -177,7 +177,10 @@ def guardar_sesion(texto):
     if not txt:
         return False, "no pegaste nada"
 
-    m = re.search(r"ssid=([^;'\"\s]+)", txt)
+    # El `^` va en la lista negra por el "Copy as cURL (cmd)" de Windows, que
+    # escapa las comillas como `^"`: sin eso, un ssid que quede al final de la
+    # cookie se guarda con la basura pegada atrás.
+    m = re.search(r"ssid=([^;'\"\s^]+)", txt)
     ssid = m.group(1) if m else None
     if not ssid and "=" not in txt and len(txt.split()) == 1:
         ssid = txt                                     # el ssid pelado

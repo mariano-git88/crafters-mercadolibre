@@ -285,18 +285,21 @@ def _pegar_cookie():
         "**Network** → pausá y despausá cualquier anuncio → click derecho en "
         "el pedido que aparece → **Copy as cURL**. Pegalo acá: de todo eso "
         "se guarda **solo el `ssid`**, que es lo único que hace falta.")
+    # El `key` lleva el sello adentro a propósito. Hay que vaciar el cuadro
+    # después de guardar —es una credencial, no tiene por qué quedar a la
+    # vista— y Streamlit **no deja** escribir `session_state["ck_txt"] = ""`
+    # una vez que el widget se dibujó en este run: tira StreamlitAPIException.
+    # Al mover el sello, el `key` cambia, el widget es otro y nace vacío solo.
+    sello = st.session_state.get("sesion_sello", 0)
     txt = st.text_area(
-        "Pegá el cURL (o el ssid pelado)", height=110, key="ck_txt",
+        "Pegá el cURL (o el ssid pelado)", height=110, key=f"ck_txt_{sello}",
         placeholder="curl 'https://pa.mercadolibre.com.ar/...' -H 'cookie: ...ssid=...'")
     c1, c2 = st.columns([1, 3])
-    if c1.button("Guardar cookie", key="ck_go", disabled=not txt.strip()):
+    if c1.button("Guardar cookie", key=f"ck_go_{sello}", disabled=not txt.strip()):
         ok, det = panel_ads.guardar_sesion(txt)
         if ok:
-            # Se limpia el pegado: es una credencial, no tiene por qué quedar
-            # a la vista en la pantalla.
-            st.session_state["ck_txt"] = ""
-            st.session_state["sesion_sello"] = \
-                st.session_state.get("sesion_sello", 0) + 1
+            st.session_state["sesion_sello"] = sello + 1
+            st.session_state.pop(f"ck_txt_{sello}", None)
             st.success(det)
             st.rerun()
         else:
