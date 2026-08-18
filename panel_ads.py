@@ -440,19 +440,34 @@ def aplicar(sesion, ml, plan, accion="pausar", callback=None, verificar=True):
                 estado = "paused" if accion == "pausar" else "active"
                 ok, fallidos = cambiar(sesion, lote, adv, camp, estado)
 
-            detalle = ((fallidos or [{}])[0].get("message")
-                       or (fallidos or [{}])[0].get("error") or "")
+            # **El error se mapea por id, no se copia del primero.** Antes se
+            # tomaba `fallidos[0]` y se pegaba igual en las 50 filas del lote,
+            # asi que la tabla mostraba 856 veces el mismo texto y no se podia
+            # saber por que habia fallado cada uno. Cuando el fallo es del
+            # lote entero (un HTTP 4xx, la sesion vencida) no hay ids y ahi si
+            # vale para todos, pero se dice que es del lote.
+            por_id, del_lote = {}, ""
+            for f in (fallidos or []):
+                msg = f.get("message") or f.get("error") or ""
+                fid = f.get("id") or f.get("adGroupId") or f.get("ad_group_id")
+                if fid is not None:
+                    por_id[str(fid)] = msg
+                elif not del_lote:
+                    del_lote = f"todo el lote: {msg}" if msg else ""
             for ag in lote:
                 fila = g[g["ad_group_id"] == ag].iloc[0]
+                bien = str(ag) in ok
                 salida.append({
                     "item_id": fila.get("item_id"), "ad_group_id": ag,
                     "titulo": fila.get("titulo", ""),
                     "gasto": fila.get("gasto", 0),
                     "motivo": fila.get("motivo", ""),
-                    "resultado": "OK" if str(ag) in ok else "ERROR",
-                    "detalle": "" if str(ag) in ok else str(detalle)[:150],
-                    "estado_real": (estado_real(ml, ag)
-                                    if verificar and str(ag) in ok else ""),
+                    "resultado": "OK" if bien else "ERROR",
+                    "detalle": "" if bien else str(
+                        por_id.get(str(ag))
+                        or del_lote
+                        or "el panel no lo aceptó y no dijo por qué")[:200],
+                    "estado_real": estado_real(ml, ag) if verificar and bien else "",
                 })
             hechos += len(lote)
             if callback:
