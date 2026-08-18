@@ -4319,13 +4319,92 @@ elif seccion == "Publicidad":
                         "empezar a gastar en mil quinientos anuncios que "
                         "nadie revisó, no sumar 24.", icon="🚨")
 
+            # ---- Revisar contra ML antes de escribir -------------------
+            # **El plan de la tabla no sirve para escribir tal cual.** Sale de
+            # `ads/search`, que viene atrasado y trae el `ad_group` del
+            # anunciante donde el anuncio está *delegado* —sin campaña— en vez
+            # del que realmente corre. Aplicar así devolvía 409 en 856 de
+            # 1.104. Acá se le vuelve a preguntar a ML uno por uno.
+            revisables = tuple(a for a in elegidas if a in ("pausar", "activar"))
+            firma = (elegidas, cuantas, como_apagar)
+            if st.session_state.get("pub_firma") != firma:
+                for k in ("pub_plan", "pub_desc", "pub_arr"):
+                    st.session_state.pop(k, None)
+
+            if revisables and st.button(
+                    "Revisar contra MercadoLibre", key="pub_rev"):
+                b2 = st.progress(0.0, text="Resolviendo...")
+                plan_r, desc_r = [], []
+                for acc in revisables:
+                    f_acc = ejecutar[ejecutar["accion"] == acc]
+                    if not len(f_acc):
+                        continue
+                    pr, de = panel_ads.resolver_para_escribir(
+                        ml, f_acc, accion=acc,
+                        callback=lambda i, t, d: b2.progress(
+                            min(i / max(t, 1), 1.0), text=f"{acc}: {i} de {t}"))
+                    plan_r.append(pr)
+                    desc_r.append(de)
+                plan_r = (pd.concat(plan_r, ignore_index=True)
+                          if plan_r else pd.DataFrame())
+                b2.progress(1.0, text="Buscando publicaciones de arrastre...")
+                st.session_state["pub_arr"] = panel_ads.hermanos_arrastrados(
+                    ml, plan_r)
+                b2.empty()
+                st.session_state["pub_plan"] = plan_r
+                st.session_state["pub_desc"] = (
+                    pd.concat(desc_r, ignore_index=True)
+                    if desc_r else pd.DataFrame())
+                st.session_state["pub_firma"] = firma
+
+            plan_rev = st.session_state.get("pub_plan")
+            if plan_rev is not None:
+                desc = st.session_state.get("pub_desc")
+                arr = st.session_state.get("pub_arr")
+                n_ag = (plan_rev["ad_group_id"].nunique()
+                        if len(plan_rev) else 0)
+                st.info(
+                    f"**Quedan {len(plan_rev)} publicaciones para tocar, en "
+                    f"{n_ag} anuncios de MercadoLibre.**", icon="🔍")
+
+                if desc is not None and len(desc):
+                    st.warning(
+                        f"**{len(desc)} se descartaron**: pedírselas al panel "
+                        "devuelve error y no cambia nada.", icon="🧹")
+                    with st.expander(f"Ver las {len(desc)} descartadas"):
+                        st.dataframe(
+                            desc["descarte"].value_counts()
+                            .rename_axis("motivo").reset_index(name="cuántas"),
+                            use_container_width=True, hide_index=True)
+                        st.dataframe(desc, use_container_width=True,
+                                     hide_index=True)
+
+                if arr is not None and len(arr):
+                    st.error(
+                        f"**Se van a apagar {len(arr)} publicaciones más que "
+                        "no están en el plan.** Un anuncio de MercadoLibre no "
+                        "es una publicación: es una *familia*, y el estado "
+                        "vive en la familia. Apagar los "
+                        f"{n_ag} de arriba arrastra a estas {len(arr)} "
+                        "hermanas, que hoy están corriendo.", icon="👨‍👩‍👧")
+                    with st.expander(f"Ver las {len(arr)} de arrastre"):
+                        st.dataframe(arr, use_container_width=True,
+                                     hide_index=True)
+
             op_pub = st.text_input("Tu nombre (queda en el registro)",
                                    key="pub_op")
             conf_pub = st.checkbox(
                 f"Confirmo que quiero aplicar {cuantas} cambios en la "
                 "publicidad de MercadoLibre", key="pub_conf")
+            # Sin revisar no se aplica: es el paso que evita mandarle al
+            # panel 856 anuncios que no puede tocar.
+            falta_revisar = bool(revisables) and plan_rev is None
+            if falta_revisar:
+                st.caption("Primero **Revisar contra MercadoLibre**: sin eso "
+                           "no se sabe qué anuncio hay que tocar.")
             if st.button(f"Aplicar {cuantas} cambios", key="pub_go",
                          disabled=not (conf_pub and op_pub.strip() and cuantas
+                                       and not falta_revisar
                                        and _sesion_panel_viva(
                                            st.session_state.get('sesion_sello', 0))[0])):
                 barra = st.progress(0.0, text="Aplicando...")
@@ -4344,7 +4423,12 @@ elif seccion == "Publicidad":
                     # Cada acción va por separado: el endpoint de sacar de
                     # campaña es otro y acepta lotes mucho más chicos.
                     for acc in elegidas:
-                        filas = ejecutar[ejecutar["accion"] == acc]
+                        # Para pausar y activar va el plan ya resuelto contra
+                        # ML, con el ad_group que de verdad corre; para sacar
+                        # y agregar, el original (tienen sus propias reglas).
+                        base_acc = (plan_rev if acc in revisables
+                                    and plan_rev is not None else ejecutar)
+                        filas = base_acc[base_acc["accion"] == acc]
                         if not len(filas):
                             continue
                         partes.append(panel_ads.aplicar(
