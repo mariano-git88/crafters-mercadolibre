@@ -74,9 +74,13 @@ def leer_sesion():
 
     **Alcanza con la cookie `ssid`.** Medido el 2026-08-05: sin `_csrf`, sin
     `nsa_rotok`, sin el header `x-csrf-token` y sin `x-requested-with`
-    funciona igual. Y el `ssid` trae fecha 2029, asi que se pega una vez y
-    dura — que es lo que permite correr esto desde Streamlit Cloud en vez de
-    depender de una sesion de navegador abierta.
+    funciona igual.
+
+    **Pero NO dura.** Aca decia que el `ssid` trae fecha 2029 y que por eso se
+    pegaba una vez y listo. Es falso: la fecha de la cookie no dice nada
+    porque **ML la invalida del lado del servidor**. El que se cargo el 5 de
+    agosto estaba muerto el 11. Por eso `sesion_viva()` se pregunta antes de
+    escribir, en vez de dar por buena la que este guardada.
 
     En secrets va como:
 
@@ -500,7 +504,16 @@ def resolver_para_escribir(ml, plan, accion="pausar", callback=None):
             pd.DataFrame(descartes))
 
 
-def hermanos_arrastrados(ml, plan, callback=None):
+# Que estados de hermana importan segun lo que se va a hacer. Apagando, el
+# riesgo es tumbar a una que **corre**; encendiendo, es prender a una que
+# esta **quieta** y ponerla a gastar. Mirar la lista equivocada no avisa nada.
+ARRASTRE = {"pausar": ("active", "delegated"),
+            "agregar": ("idle", "paused"),
+            "activar": ("idle", "paused")}
+
+
+def hermanos_arrastrados(ml, plan, estados=("active", "delegated"),
+                         callback=None):
     """
     Las publicaciones que se van a apagar **de arrastre**, sin estar en el plan.
 
@@ -552,10 +565,10 @@ def hermanos_arrastrados(ml, plan, callback=None):
             off += 50
 
     df = pd.DataFrame(fuera)
-    # `hold` y `deleted` ya no corren: apagarlos no cambia nada, y contarlos
-    # como danio colateral asusta con algo que no pasa.
+    # `hold` y `deleted` no se mueven en ningun sentido: contarlos como danio
+    # colateral asusta con algo que no pasa.
     if len(df):
-        df = df[~df["estado_ad"].isin(["hold", "deleted", "idle"])]
+        df = df[df["estado_ad"].isin(estados)]
     return df.reset_index(drop=True)
 
 

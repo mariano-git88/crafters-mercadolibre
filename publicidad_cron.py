@@ -241,6 +241,19 @@ def correr(aplicar=False, verbose=True, log=None, conv=None, ml=None):
         filas = sumar[sumar["accion"] == acc]
         if not len(filas):
             continue
+        # Mismo freno que para apagar, y aca importa mas: encender de
+        # arrastre es poner a gastar publicaciones que nadie evaluo.
+        arr2 = panel_ads.hermanos_arrastrados(
+            ml, filas, estados=panel_ads.ARRASTRE[acc])
+        if len(arr2):
+            con_familia = set(arr2["ad_group_id"])
+            n_frena = int(filas["ad_group_id"].isin(con_familia).sum())
+            filas = filas[~filas["ad_group_id"].isin(con_familia)]
+            log(f"\n{acc}: frenados {n_frena} porque encenderlos arrancaria "
+                f"{len(arr2)} publicaciones que hoy estan quietas y no estan "
+                "en el plan.")
+        if not len(filas):
+            continue
         res2 = panel_ads.aplicar(sesion, ml, filas, accion=acc,
                                  callback=lambda i, t, d: log(f"  {i}/{t} {d}"))
         ok2 = int((res2["resultado"] == "OK").sum())
