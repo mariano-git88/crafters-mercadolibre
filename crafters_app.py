@@ -4328,7 +4328,7 @@ elif seccion == "Publicidad":
             revisables = tuple(a for a in elegidas if a in ("pausar", "activar"))
             firma = (elegidas, cuantas, como_apagar)
             if st.session_state.get("pub_firma") != firma:
-                for k in ("pub_plan", "pub_desc", "pub_arr"):
+                for k in ("pub_plan_rev", "pub_desc", "pub_arr"):
                     st.session_state.pop(k, None)
 
             if revisables and st.button(
@@ -4351,13 +4351,13 @@ elif seccion == "Publicidad":
                 st.session_state["pub_arr"] = panel_ads.hermanos_arrastrados(
                     ml, plan_r)
                 b2.empty()
-                st.session_state["pub_plan"] = plan_r
+                st.session_state["pub_plan_rev"] = plan_r
                 st.session_state["pub_desc"] = (
                     pd.concat(desc_r, ignore_index=True)
                     if desc_r else pd.DataFrame())
                 st.session_state["pub_firma"] = firma
 
-            plan_rev = st.session_state.get("pub_plan")
+            plan_rev = st.session_state.get("pub_plan_rev")
             if plan_rev is not None:
                 desc = st.session_state.get("pub_desc")
                 arr = st.session_state.get("pub_arr")
@@ -4444,6 +4444,10 @@ elif seccion == "Publicidad":
                     st.stop()
                 barra.empty()
                 st.session_state["pub_res"] = res_pub
+                # La revisión ya se usó: dejarla en pantalla invita a
+                # aplicarla de nuevo sobre estados que acaban de cambiar.
+                for k in ("pub_plan_rev", "pub_desc", "pub_arr", "pub_firma"):
+                    st.session_state.pop(k, None)
 
             prendidas = st.session_state.get("pub_prendidas")
             if prendidas:
@@ -4523,7 +4527,10 @@ elif seccion == "Publicidad":
             st.session_state["cron_log"] = "\n".join(lineas)
             if aplicar_pub:
                 # Los estados cambiaron: lo que estaba en pantalla quedó viejo.
-                st.session_state.pop("pub_plan", None)
+                # La revisión también: apunta a ad_groups que ya se movieron.
+                for k in ("pub_plan", "pub_plan_rev", "pub_desc", "pub_arr",
+                          "pub_firma"):
+                    st.session_state.pop(k, None)
 
         if st.session_state.get("cron_log"):
             st.download_button(
