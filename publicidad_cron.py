@@ -196,6 +196,33 @@ def correr(aplicar=False, verbose=True, log=None, conv=None, ml=None):
 
     ok, res = 0, pd.DataFrame()
     if len(apagar):
+        # **El plan no se manda tal cual.** Sale de `ads/search`, que viene
+        # atrasado y ademas trae el ad_group del anunciante donde el anuncio
+        # esta *delegado* —sin campana— en vez del que corre. Mandarlo asi
+        # devolvia 409: la corrida terminaba en verde sin apagar nada.
+        apagar, descartes = panel_ads.resolver_para_escribir(
+            ml, apagar, accion="pausar",
+            callback=lambda i, t, d: log(f"  resolviendo {i}/{t}"))
+        if len(descartes):
+            log(f"\nDescartados {len(descartes)} que el panel no puede tocar:")
+            for motivo, n in descartes["descarte"].value_counts().items():
+                log(f"  {n:>5}  {motivo}")
+
+        # **No se apaga nada que arrastre a un tercero.** Un ad_group es una
+        # familia, no una publicacion: apagarlo apaga a todas sus hermanas.
+        # Sin nadie mirando, eso puede tirar abajo publicaciones que rinden
+        # bien y que ninguna regla evaluo. Quedan listadas para revisarlas a
+        # mano en la app, que es donde se ve a quien se lleva puesto.
+        arr = panel_ads.hermanos_arrastrados(ml, apagar)
+        if len(arr):
+            con_familia = set(arr["ad_group_id"])
+            frenados = apagar[apagar["ad_group_id"].isin(con_familia)]
+            apagar = apagar[~apagar["ad_group_id"].isin(con_familia)]
+            log(f"\nFrenados {len(frenados)} porque apagarlos arrastraria "
+                f"{len(arr)} publicaciones que corren y no estan en el plan. "
+                "Revisalos en la app → Publicidad.")
+
+    if len(apagar):
         res = panel_ads.aplicar(sesion, ml, apagar, accion="pausar",
                                 callback=lambda i, t, d: log(f"  {i}/{t} {d}"))
         ok = int((res["resultado"] == "OK").sum())
