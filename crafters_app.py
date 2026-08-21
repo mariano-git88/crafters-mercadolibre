@@ -3097,16 +3097,7 @@ elif seccion == "Oportunidades":
                 st.caption("*Igualar el neto* calcula el precio exacto contra "
                            "los escalones reales, así que ignora el slider.")
 
-            techo_fin = st.slider(
-                "Cuánto se acepta subir un precio de una vez", 5, 60,
-                int(financiacion.TECHO_DE_SUBIDA * 100), 5, format="%d%%",
-                key="fin_techo",
-                help="Las que necesitan más que esto quedan en «revisar» en "
-                     "vez de aplicarse. Es el freno que más sorprende: con "
-                     "base «Clásica» hay publicaciones que necesitan +30% "
-                     "para empatar el neto.") / 100
-            plan_fin = financiacion.plan(dfin, base=modo, spread=spread_fin,
-                                         techo=techo_fin)
+            plan_fin = financiacion.plan(dfin, base=modo, spread=spread_fin)
             listas = plan_fin[plan_fin["accion"] == "aplicar"]
             revisar = plan_fin[plan_fin["accion"] == "revisar"]
             quietas = plan_fin[plan_fin["accion"] == "ninguna"]
@@ -3118,6 +3109,15 @@ elif seccion == "Oportunidades":
                       pesos(listas["gana_por_unidad"].sum()) if len(listas) else "—",
                       help="Suma de lo que gana cada publicación en cada venta "
                            "después del cambio")
+
+            fuertes = listas[listas["cambio"] > financiacion.SUBIDA_LLAMATIVA]
+            if len(fuertes):
+                st.warning(
+                    f"**{len(fuertes)} suben más de "
+                    f"{financiacion.SUBIDA_LLAMATIVA:.0%}.** No están "
+                    "frenadas —el precio que empata el neto es ese— pero "
+                    "conviene mirarlas: un salto así también aparece cuando "
+                    "el precio sugerido del SKU está mal cargado.", icon="📈")
 
             vista = plan_fin[["sku", "titulo", "item_id", "precio_actual",
                               "precio_clasica", "sugerido", "precio_nuevo",
