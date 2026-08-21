@@ -366,8 +366,50 @@ def precios_reales(ml, item_ids, callback=None):
 # resto. Ahora vive en COSTO_FLEX, como monto por unidad.
 #
 # Impuestos 5%: IIBB + impuesto al cheque sobre ventas, confirmado por Mariano.
-# General 5%: estructura. **Es el unico de los tres sin una medicion atras.**
-OTROS_CONCEPTOS = {"impuestos": 0.05, "general": 0.05}
+#
+# General: sale de prorratear el gasto de estructura sobre la venta. Ver
+# `GENERAL` y `general_pct()`.
+# `general` se completa mas abajo, apenas `general_pct()` esta definida: es
+# un prorrateo, no una constante, pero tiene que quedar como numero para que
+# los otros modulos lo usen sin saber de donde salio.
+OTROS_CONCEPTOS = {"impuestos": 0.05}
+
+# El gasto de estructura y sobre que se reparte. Medido el 21/08/2026.
+#
+# **La base es la venta de MercadoLibre mas un 10% que se vende por fuera**,
+# porque el gasto sostiene las dos cosas. Facturacion ML medida sobre los
+# meses completos de mayo, junio y julio de 2026.
+#
+# OJO CON EL DOBLE CONTEO: si adentro de los $16M estan el sueldo del chofer
+# y la Kangoo, esos ya se cobran aparte en COSTO_FLEX (~$3,6M/mes a 22 dias
+# habiles) y aca no tienen que estar. Sin resolver eso el general queda
+# inflado.
+GENERAL = {
+    "gasto_mensual": 16_000_000.0,
+    "venta_ml_mensual": 72_252_633.0,
+    "parte_fuera_ml": 0.10,
+}
+
+
+def general_pct(g=None):
+    """
+    Que porcentaje del **ingreso sin IVA** representa el gasto de estructura.
+
+    Se prorratea contra la venta con IVA —que es la base que uso el negocio
+    para pensarlo— y despues se lleva a la misma base contra la que se compara
+    el costo, que es el ingreso sin IVA. Con los numeros de agosto 2026 da
+    **24,4%**, no el 5% que estaba puesto a ojo.
+    """
+    c = dict(GENERAL)
+    if g:
+        c.update(g)
+    base = c["venta_ml_mensual"] * (1 + c["parte_fuera_ml"])
+    if not base:
+        return 0.0
+    return c["gasto_mensual"] / (base / 1.21)
+
+
+OTROS_CONCEPTOS["general"] = general_pct()
 
 # Lo que cuesta entregar, medido en agosto 2026. **Solo aplica a Flex**: en
 # Colecta y Full el flete ya lo cobra ML y sale en `senders.cost`.
@@ -379,8 +421,17 @@ OTROS_CONCEPTOS = {"impuestos": 0.05, "general": 0.05}
 # salieron todos de publicaciones marcadas cross_docking. Por eso se carga
 # como **valor esperado**: el costo de una entrega por la probabilidad de que
 # la venta salga por ahi.
+# **El chofer y la Kangoo van en CERO** (decision de Mariano, 21/08/2026).
+# Eran $165.672 por dia de fijos. Se sacan de aca a proposito, y eso ademas
+# resuelve el doble conteo: si estan adentro de los $16M de gasto general, se
+# cobran ahi y solo ahi. Queda el variable por entrega, que es combustible y
+# mantenimiento, y lo que se le paga al tercero.
+#
+# Consecuencia: **el logistico da negativo**, o sea que Flex deja plata. ML
+# bonifica $7.502 promedio y entregar cuesta $5.960 sin la flota. No es un
+# error de signo: es lo que sale de tratar la flota como hundida.
 COSTO_FLEX = {
-    "fijo_diario": 165672.0,    # sueldo + vehiculo de la Kangoo, por dia
+    "fijo_diario": 0.0,         # chofer + Kangoo: se tratan como hundidos
     "entregas_dia": 15,         # lo que hace hoy
     "variable_entrega": 2280.0,
     "tercero_entrega": 14545.0,  # Moova desde el 16/07
@@ -463,7 +514,8 @@ def otros_conceptos_monto(ingreso, otros=None, unidades=1, flex=None):
     """
     o = dict(OTROS_CONCEPTOS)
     if otros:
-        o.update({k: v for k, v in otros.items() if k in OTROS_CONCEPTOS})
+        o.update({k: v for k, v in otros.items()
+                  if k in OTROS_CONCEPTOS and v is not None})
     log_unidad = (otros or {}).get("logistico")
     if log_unidad is None:
         log_unidad = costo_logistico_unidad(flex)

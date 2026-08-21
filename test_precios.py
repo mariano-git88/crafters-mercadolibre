@@ -167,9 +167,14 @@ def main():
     print("\n" + "=" * 70)
     print("4. Los costos de estructura")
     print("=" * 70)
-    total = sum(rent.OTROS_CONCEPTOS.values())
-    chequear(abs(total - 0.10) < 1e-9,
-             f"impuestos + general = 10% porcentual (dio {total:.0%})")
+    gen = rent.general_pct()
+    chequear(0.15 < gen < 0.35,
+             f"el general sale de prorratear ${rent.GENERAL['gasto_mensual']:,.0f} "
+             f"sobre la venta (dio {gen:.1%})")
+    chequear(rent.COSTO_FLEX["fijo_diario"] == 0,
+             "chofer + Kangoo van en cero: se cobran en el general, no acá")
+    chequear(rent.costo_logistico_unidad() < 0,
+             "sin la flota, Flex deja plata: ML bonifica más de lo que cuesta")
     chequear("logistico" not in rent.OTROS_CONCEPTOS,
              "el logístico NO es porcentual: es monto por unidad")
 
@@ -184,8 +189,12 @@ def main():
              "la entrega cuesta lo mismo en un producto de $3.170 que en uno "
              "de $200.000",
              f"barato {d_barato:.0f} vs caro {d_caro:.0f}")
-    chequear(rent.costo_logistico_unidad({"entregas_dia": 30}) < log,
-             "con más entregas por día el fijo se prorratea mejor y baja")
+    # Con la flota en cero el volumen de entregas ya no mueve el costo: eso es
+    # lo esperado, y si algún día vuelve a haber fijo el test lo va a marcar.
+    chequear(rent.costo_logistico_unidad({"entregas_dia": 30}) == log,
+             "sin fijos de flota, el volumen de entregas no cambia el costo")
+    chequear(rent.costo_logistico_unidad({"fijo_diario": 165672.0}) > log,
+             "y si se vuelve a contar la flota, el costo sube")
     chequear(rent.otros_conceptos_monto(10000, unidades=3)[0]["logistico"]
              == 3 * log, "tres unidades pagan tres entregas")
     chequear(rent.costo_efectivo(1000, True) == 800.0,
