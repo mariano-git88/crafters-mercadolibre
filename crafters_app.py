@@ -562,15 +562,20 @@ def controles_otros_conceptos(clave):
             key=f"imp_{clave}",
             help="IIBB + impuesto al cheque sobre ventas.") / 100,
         "logistico": o2.number_input(
-            "Logístico $/unidad", 0, 100000, int(round(log_def)), 50,
+            # **El mínimo es negativo a propósito.** Con la flota tratada
+            # como hundida, ML bonifica más de lo que cuesta entregar: el
+            # logístico da −$318 y con mínimo en 0 la pantalla reventaba.
+            "Logístico $/unidad", -100000, 100000, int(round(log_def)), 50,
             key=f"log_{clave}",
             help="Lo que cuesta la entrega por Flex, neto de lo que bonifica "
                  "MercadoLibre, por la probabilidad de que la venta salga por "
                  "ahí. Colecta y Full van en cero: ese flete ya lo cobra ML y "
                  "se lee de cada venta."),
         "general": o3.number_input(
-            "General %", 0, 100,
-            int(rent.OTROS_CONCEPTOS["general"] * 100), 1,
+            # Con decimal: el prorrateo da 24,36% y redondear a 24 movía el
+            # piso de todo el catálogo por un problema de widget.
+            "General %", 0.0, 100.0,
+            round(rent.OTROS_CONCEPTOS["general"] * 100, 2), 0.5,
             key=f"gen_{clave}",
             help="Estructura. Es el único de los tres sin una medición "
                  "atrás.") / 100,
@@ -592,12 +597,21 @@ def controles_otros_conceptos(clave):
 | ÷ {c['unidades_envio']} unidades por envío | {pesos((mezcla - c['bonificacion']) / c['unidades_envio'])} |
 | × {c['prob_flex']:.0%} de chance de salir por Flex | **{pesos(log_def)}** |
 """)
+        if log_def < 0:
+            st.info(
+                "**Da negativo, y no es un error:** con el chofer y la Kangoo "
+                "tratados como costo hundido, MercadoLibre bonifica más de lo "
+                "que cuesta entregar. Flex deja plata. Ese costo de flota se "
+                "cobra en el **general**, que sale de prorratear "
+                f"{pesos_md(rent.GENERAL['gasto_mensual'])} mensuales.",
+                icon="↩️")
+        g = rent.GENERAL
         st.caption(
-            "El fijo de la flota se prorratea, así que el número es muy "
-            "sensible al volumen: a 13,5 entregas por día son "
-            f"{pesos_md(rent.costo_logistico_unidad({'entregas_dia': 13.5}))} "
-            "por unidad y a 30 son "
-            f"{pesos_md(rent.costo_logistico_unidad({'entregas_dia': 30}))}.")
+            f"**El general no es un 5% puesto a ojo:** sale de prorratear "
+            f"{pesos_md(g['gasto_mensual'])} de gasto mensual sobre la venta "
+            f"de MercadoLibre ({pesos_md(g['venta_ml_mensual'])}/mes medidos) "
+            f"más un {g['parte_fuera_ml']:.0%} que se vende por fuera. Da "
+            f"**{rent.general_pct():.1%}** del ingreso sin IVA.")
     return valores
 
 
