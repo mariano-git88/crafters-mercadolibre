@@ -1,6 +1,19 @@
 [
   {
     "fecha": "2026-08-21",
+    "hora": "16:20",
+    "titulo": "Activar por regla ahora se puede acotar por marca",
+    "tipo": "nuevo",
+    "puntos": [
+      "En **Promos → Activar por regla** hay un selector de **Marca**. Vacío es todas, como hasta ahora; eligiendo una o varias, la regla se aplica solo a esas.",
+      "Sirve para armar una campaña por marca sin tocar el resto del catálogo: en DESCUENTAZOS, con tope 10%, entran **840 publicaciones de Bulit**, 326 de Suprabond y 55 de La Gauchita.",
+      "El catálogo tiene **50 marcas**. Las cinco más grandes: Bulit (1.067 publicaciones), Suprabond (591), La Gauchita (71), Crafters (60) y Sica (44).",
+      "La tabla del plan tiene ahora una **columna Marca**, y se llena aunque no filtres, para poder mirar el reparto antes de decidir.",
+      "**Ojo con el catálogo viejo:** las publicaciones que no están en el archivo local salen como \"(no está en el catálogo)\" y, si filtrás por marca, quedan afuera. Hoy son 268 en DESCUENTAZOS porque el catálogo se bajó el 8 de agosto. Conviene refrescarlo antes de usar el filtro."
+    ]
+  },
+  {
+    "fecha": "2026-08-21",
     "hora": "13:20",
     "titulo": "La herramienta pedía más descuento del que las campañas exigen",
     "tipo": "arreglo",
