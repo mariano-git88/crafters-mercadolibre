@@ -38,6 +38,7 @@ import salud
 import espejos
 import financiacion
 import reclamos as rec
+import redondear_precios
 import rentabilidad as rent
 import lista_precios as LP
 import mayoristas
@@ -52,7 +53,7 @@ import tramos
 import tutorial_crafters
 import ventana
 from catalogo import (CACHE as CACHE_CATALOGO, actualizado_en as catalogo_al,
-                      bajar_catalogo)
+                      bajar_catalogo, marcas_del_catalogo)
 from meli import Meli, MeliError, es_error_de_api
 
 _ASSETS = Path(__file__).resolve().parent / "_assets"
@@ -2741,6 +2742,81 @@ elif seccion == "Oportunidades":
             "vendió: arreglar la ficha de algo que vende 3.000 unidades vale "
             "más que la de algo que nunca vendió.")
 
+        with st.expander("Precios con centavos"):
+            st.caption(
+                "Las herramientas ya publican sin decimales, pero eso no "
+                "arregla lo que ya está. Acá se sacan los centavos de las "
+                "publicaciones que los tienen.")
+            st.info(
+                "**Redondear no es inofensivo cerca de un escalón.** Desde "
+                f"{pesos_md(tramos.UMBRAL_ENVIO_GRATIS)} el envío gratis lo "
+                "paga el vendedor, y ahí también salta el cargo fijo. Una "
+                "publicación en \\$32.999,60 redondeada «al más próximo» "
+                "cruzaría los dos escalones de una: ganás 40 centavos y "
+                "perdés miles. Por eso se redondea al más próximo **salvo "
+                "que eso cruce un escalón**, y ahí se baja.", icon="🪜")
+
+            if st.button("Buscar precios con centavos", key="red_go"):
+                paso = st.empty()
+                try:
+                    with st.spinner("Leyendo precios en vivo..."):
+                        st.session_state["red_df"] = redondear_precios.analizar(
+                            ml, pubs=pubs,
+                            callback=lambda m: paso.caption(str(m)))
+                except Exception as e:                 # noqa: BLE001
+                    paso.empty()
+                    st.error(f"No pude leer: {type(e).__name__}: {e}")
+                    st.stop()
+                paso.empty()
+                st.session_state.pop("red_res", None)
+
+            dred = st.session_state.get("red_df")
+            if dred is not None and len(dred):
+                listas_red = dred[dred["accion"] == "aplicar"]
+                bajadas = listas_red[listas_red["bajado_por_escalon"]]
+                r1, r2, r3 = st.columns(3)
+                r1.metric("Con centavos", len(listas_red))
+                r2.metric("Bajadas para no cruzar", len(bajadas),
+                          help="Redondear para arriba les habría hecho cruzar "
+                               "un escalón de costo")
+                r3.metric("Movimiento total",
+                          pesos(listas_red["diferencia"].sum()),
+                          help="La suma de todos los cambios de precio")
+                st.dataframe(dred, use_container_width=True, hide_index=True)
+
+                op_red = st.text_input("Tu nombre (queda en el registro)",
+                                       key="red_op")
+                conf_red = st.checkbox(
+                    f"Confirmo que quiero redondear {len(listas_red)} precios",
+                    key="red_conf")
+                if st.button(f"Redondear {len(listas_red)} precios",
+                             key="red_apply",
+                             disabled=not (conf_red and op_red.strip())):
+                    barra = st.progress(0.0, text="Redondeando...")
+                    try:
+                        st.session_state["red_res"] = redondear_precios.aplicar(
+                            ml, dred, operador=op_red.strip(),
+                            callback=lambda i, t, f: barra.progress(
+                                min(i / max(t, 1), 1.0), text=f"{i} de {t}"))
+                    except Exception as e:             # noqa: BLE001
+                        barra.empty()
+                        st.error(f"Se cortó: {type(e).__name__}: {e}")
+                        st.stop()
+                    barra.empty()
+                    st.session_state.pop("red_df", None)
+            elif dred is not None:
+                st.success("No hay ningún precio con centavos. 🎉")
+
+            res_red = st.session_state.get("red_res")
+            if res_red is not None and len(res_red):
+                ok_red = int((res_red["resultado"] == "OK").sum())
+                if ok_red == len(res_red):
+                    st.success(f"{ok_red} precios redondeados.")
+                else:
+                    st.error(f"{ok_red} de {len(res_red)} salieron bien.")
+                    st.dataframe(res_red[res_red["resultado"] != "OK"],
+                                 use_container_width=True, hide_index=True)
+
         if st.button("Revisar el catálogo"):
             st.session_state["salud"] = salud.analizar(pubs)
 
@@ -5276,6 +5352,18 @@ elif seccion == "PROMOS":
                                help="Solo entran las que piden hasta ese "
                                     "descuento.")
         tipos = dict(zip(todas["id"], todas["tipo"]))
+        # `pubs` es el catálogo que la app ya tiene cargado y cacheado: no se
+        # vuelve a bajar solo para llenar el selector.
+        _marcas_cat = marcas_del_catalogo(pubs)
+        _mapa_marcas = promos_campanas.mapa_marcas(ml, pubs)
+        sel_marcas = st.multiselect(
+            "Marca", list(_marcas_cat),
+            format_func=lambda m: f"{m} ({_marcas_cat.get(m, 0)})",
+            key="marcas_rg",
+            help="Vacío = todas. Acota la regla a esas marcas, así se puede "
+                 "hacer una campaña por marca sin tocar el resto del "
+                 "catálogo. La marca sale del atributo del catálogo de "
+                 "MercadoLibre.")
         dar_tope = st.checkbox(
             "Entrar con el tope, no con el mínimo", key="tope_full_rg",
             help="Por defecto se entra con el descuento MÍNIMO que pide cada "
@@ -5288,18 +5376,20 @@ elif seccion == "PROMOS":
         if st.button("Ver cuáles cumplen", key="sim_rg"):
             caja = st.status("Leyendo la campaña...", expanded=True)
             objetivo = (tope / 100) if dar_tope else None
+            marcas = sel_marcas or None
             try:
                 if cid == TODAS:
                     st.session_state["plan_rg"] = \
                         promos_campanas.por_regla_todas(
                             ml, tope_descuento=tope / 100,
                             callback=caja.write,
-                            descuento_objetivo=objetivo)
+                            descuento_objetivo=objetivo, marcas=marcas)
                 else:
                     st.session_state["plan_rg"] = promos_campanas.por_regla(
                         ml, cid, tipos.get(cid, "LIGHTNING"),
                         tope_descuento=tope / 100, callback=caja.write,
-                        descuento_objetivo=objetivo)
+                        descuento_objetivo=objetivo, marcas=marcas,
+                        mapa=_mapa_marcas)
                 caja.update(label="Listo", state="complete", expanded=False)
             except Exception as e:
                 caja.update(label="Falló", state="error")
