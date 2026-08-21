@@ -2999,6 +2999,73 @@ elif seccion == "Oportunidades":
 
             st.divider()
             st.markdown("##### Cómo corregirlo")
+            salida_fin = st.radio(
+                "Qué hacer con las que no cubren",
+                ["Subir el precio de la Premium",
+                 "Apagar la Premium y quedarse con la Clásica"],
+                key="fin_salida", horizontal=True)
+
+        if dfin is not None and len(dfin) and salida_fin.startswith("Apagar"):
+            st.warning(
+                "**Apagar la Premium pierde las cuotas sin interés** para ese "
+                "producto, que suele ser lo que la hace vender. Es reversible "
+                "—queda pausada y se puede reactivar— pero mirá la columna de "
+                "unidades antes: si la Premium vende bastante más que la "
+                "Clásica, subirle el precio probablemente convenga más.",
+                icon="🔌")
+            plan_off = financiacion.plan_apagado(dfin)
+            listas_off = plan_off[plan_off["accion"] == "apagar"]
+            frenadas = plan_off[plan_off["accion"] == "revisar"]
+
+            o1, o2, o3 = st.columns(3)
+            o1.metric("Se pueden apagar", len(listas_off))
+            o2.metric("Frenadas", len(frenadas),
+                      help="La Clásica no está activa o no tiene stock, así "
+                           "que no puede tomar la venta")
+            o3.metric("Deja de perder por unidad",
+                      pesos(listas_off["gana_por_unidad"].sum())
+                      if len(listas_off) else "—")
+
+            st.dataframe(
+                plan_off[["sku", "titulo", "item_id", "precio_actual",
+                          "clasica", "precio_clasica", "vendidas_premium",
+                          "vendidas_clasica", "stock_clasica",
+                          "gana_por_unidad", "accion", "motivo"]],
+                use_container_width=True, hide_index=True)
+
+            gana_pr = listas_off[
+                listas_off["vendidas_premium"] > listas_off["vendidas_clasica"]]
+            if len(gana_pr):
+                st.info(
+                    f"En **{len(gana_pr)} de las {len(listas_off)}** la Premium "
+                    "vendió más que la Clásica. Ahí apagarla puede costar "
+                    "ventas: son las candidatas naturales a subirles el precio "
+                    "en vez de apagarlas.", icon="⚖️")
+
+            if len(listas_off):
+                op_off = st.text_input("Tu nombre (queda en el registro)",
+                                       key="fin_op_off")
+                conf_off = st.checkbox(
+                    f"Confirmo que quiero pausar {len(listas_off)} "
+                    "publicaciones Premium", key="fin_conf_off")
+                if st.button(f"Apagar {len(listas_off)} Premium",
+                             key="fin_off_go",
+                             disabled=not (conf_off and op_off.strip())):
+                    barra = st.progress(0.0, text="Apagando...")
+                    try:
+                        st.session_state["fin_res"] = financiacion.apagar(
+                            ml, plan_off, operador=op_off.strip(),
+                            callback=lambda i, t, f: barra.progress(
+                                min(i / max(t, 1), 1.0),
+                                text=f"{i} de {t}: {f['sku']}"))
+                    except Exception as e:             # noqa: BLE001
+                        barra.empty()
+                        st.error(f"La corrida se cortó: {type(e).__name__}: {e}")
+                        st.stop()
+                    barra.empty()
+                    st.session_state.pop("fin_df", None)
+
+        if dfin is not None and len(dfin) and salida_fin.startswith("Subir"):
             b1, b2 = st.columns([1.4, 2])
             base_fin = b1.radio(
                 "Precio de partida",
@@ -3103,16 +3170,18 @@ elif seccion == "Oportunidades":
                     # Los precios cambiaron: el análisis quedó viejo.
                     st.session_state.pop("fin_df", None)
 
-            res_fin = st.session_state.get("fin_res")
-            if res_fin is not None and len(res_fin):
-                ok_fin = int((res_fin["resultado"] == "OK").sum())
-                if ok_fin == len(res_fin):
-                    st.success(f"{ok_fin} precios actualizados.")
-                else:
-                    st.error(f"{ok_fin} de {len(res_fin)} aplicados.")
-                st.dataframe(res_fin, use_container_width=True, hide_index=True)
+        # El resultado va afuera de las dos salidas: se muestra igual hayas
+        # subido precios o apagado publicaciones.
+        res_fin = st.session_state.get("fin_res")
+        if res_fin is not None and len(res_fin):
+            ok_fin = int((res_fin["resultado"] == "OK").sum())
+            if ok_fin == len(res_fin):
+                st.success(f"{ok_fin} publicaciones actualizadas.")
+            else:
+                st.error(f"{ok_fin} de {len(res_fin)} salieron bien.")
+            st.dataframe(res_fin, use_container_width=True, hide_index=True)
 
-        elif dfin is not None:
+        if dfin is not None and not len(dfin):
             st.success("No hay ningún SKU con Premium y Clásica a la vez. 🎉")
 
     elif op == "Precios espejo":
@@ -5187,19 +5256,30 @@ elif seccion == "PROMOS":
                                help="Solo entran las que piden hasta ese "
                                     "descuento.")
         tipos = dict(zip(todas["id"], todas["tipo"]))
+        dar_tope = st.checkbox(
+            "Entrar con el tope, no con el mínimo", key="tope_full_rg",
+            help="Por defecto se entra con el descuento MÍNIMO que pide cada "
+                 "campaña, que es lo más barato. Tildado, se entra con el "
+                 "tope de arriba: si la campaña se conforma con 3% y el tope "
+                 "es 10%, va 10%. Sirve para pelear posición, porque ML "
+                 "ordena las ofertas por descuento. Nunca se pasa del máximo "
+                 "que ML permite en cada publicación.")
 
         if st.button("Ver cuáles cumplen", key="sim_rg"):
             caja = st.status("Leyendo la campaña...", expanded=True)
+            objetivo = (tope / 100) if dar_tope else None
             try:
                 if cid == TODAS:
                     st.session_state["plan_rg"] = \
                         promos_campanas.por_regla_todas(
                             ml, tope_descuento=tope / 100,
-                            callback=caja.write)
+                            callback=caja.write,
+                            descuento_objetivo=objetivo)
                 else:
                     st.session_state["plan_rg"] = promos_campanas.por_regla(
                         ml, cid, tipos.get(cid, "LIGHTNING"),
-                        tope_descuento=tope / 100, callback=caja.write)
+                        tope_descuento=tope / 100, callback=caja.write,
+                        descuento_objetivo=objetivo)
                 caja.update(label="Listo", state="complete", expanded=False)
             except Exception as e:
                 caja.update(label="Falló", state="error")

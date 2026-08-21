@@ -211,6 +211,12 @@ def analizar(ml, pubs=None, sugeridos=None, callback=None):
                 "sugerido": (sugeridos.get(sku) or {}).get("sugerido"),
                 "vendidas_premium": pr.get("sold_quantity") or 0,
                 "vendidas_clasica": ref.get("sold_quantity") or 0,
+                # Hace falta para decidir si se puede apagar la Premium: si
+                # la Clasica no tiene stock, apagarla deja el producto sin
+                # ninguna publicacion que venda.
+                "stock_premium": pr.get("available_quantity") or 0,
+                "stock_clasica": ref.get("available_quantity") or 0,
+                "estado_clasica": ref.get("status"),
                 # El neto real cambia mas cuando la logistica difiere: el
                 # envio no es el mismo y esta cuenta no lo separa por deposito.
                 "misma_logistica": ((pr.get("shipping") or {}).get("logistic_type")
@@ -367,6 +373,86 @@ def aplicar(ml, plan_df, operador="", callback=None):
                 "detalle": ("al cruzar $33.000 ML prendió el envío gratis y se "
                             "comía la mejora; se volvió al precio anterior"
                             if vok else f"la vuelta atrás falló: {str(vdet)[:120]}")})
+        except Exception as e:                         # noqa: BLE001
+            salida.append({**fila, "resultado": "ERROR",
+                           "detalle": f"{type(e).__name__}: {str(e)[:150]}"})
+    return pd.DataFrame(salida)
+
+
+# ------------------------------------------------------------------- apagar
+
+def plan_apagado(df, minimo_stock=1):
+    """
+    La otra salida: en vez de subir el precio, apagar la Premium.
+
+    Sirve cuando el producto no aguanta el recargo. **Es reversible** —la
+    publicacion queda `paused` y se puede reactivar— pero se pierden las
+    cuotas sin interes para ese producto, que es justamente lo que la hacia
+    vender.
+
+    No se apaga si la Clasica no puede tomar la venta: sin stock del otro
+    lado el producto queda sin ninguna publicacion vendiendo, que es peor que
+    venderlo con menos margen.
+    """
+    if df is None or not len(df):
+        return df
+    out = df[df["brecha"] <= 0].copy()
+    if not len(out):
+        return out
+
+    def decidir(f):
+        if str(f.get("estado_clasica") or "active") != "active":
+            return "revisar", "la Clásica no está activa: no puede tomar la venta"
+        if (f.get("stock_clasica") or 0) < minimo_stock:
+            return "revisar", "la Clásica no tiene stock: quedaría sin vender"
+        return "apagar", ""
+
+    d = [decidir(f) for _, f in out.iterrows()]
+    out["accion"] = [x[0] for x in d]
+    out["motivo"] = [x[1] for x in d]
+    # Lo que se deja de perder por unidad si la venta se muda a la Clasica.
+    out["gana_por_unidad"] = -out["brecha"]
+    return out.sort_values("gana_por_unidad", ascending=False)
+
+
+def apagar(ml, plan_df, operador="", callback=None):
+    """
+    Pausa las Premium marcadas. Cada una en su propio try.
+
+    **Se relee el estado despues de escribir.** `PUT /items/{id}` puede
+    devolver 200 y dejar la publicacion como estaba: mirar solo el codigo da
+    por hecho un cambio que no ocurrio. Ver `feedback_exito_falso`.
+    """
+    if plan_df is None or not len(plan_df):
+        return pd.DataFrame()
+
+    pendientes = plan_df[plan_df["accion"] == "apagar"]
+    nota = f"apagada por spread de financiación {pd.Timestamp.now():%Y-%m-%d %H:%M}"
+    salida, total = [], len(pendientes)
+
+    for i, (_, f) in enumerate(pendientes.iterrows(), start=1):
+        if callback:
+            callback(i, total, f)
+        item = f["item_id"]
+        fila = {"item_id": item, "sku": f.get("sku", ""),
+                "titulo": f.get("titulo", ""),
+                "precio": f.get("precio_actual"),
+                "clasica": f.get("clasica"),
+                "gana_por_unidad": f.get("gana_por_unidad", 0)}
+        try:
+            ok, detalle = ml.actualizar_publicacion(
+                item, {"status": "paused"}, {"status": "active"},
+                operador=operador, nota=nota)
+            if not ok:
+                salida.append({**fila, "resultado": "ERROR",
+                               "detalle": str(detalle)[:200]})
+                continue
+            vivo = ml.get(f"/items/{item}", attributes="status")
+            real = (vivo or {}).get("status")
+            salida.append({
+                **fila,
+                "resultado": "OK" if real == "paused" else "NO QUEDÓ PAUSADA",
+                "detalle": "" if real == "paused" else f"quedó en '{real}'"})
         except Exception as e:                         # noqa: BLE001
             salida.append({**fila, "resultado": "ERROR",
                            "detalle": f"{type(e).__name__}: {str(e)[:150]}"})
