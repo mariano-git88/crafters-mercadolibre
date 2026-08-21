@@ -24,6 +24,7 @@ import alertas_stock
 import almacen
 import buybox
 import cambios
+import piso_precio
 import plata as plata_mod
 import competencia
 import conciliacion
@@ -2697,8 +2698,8 @@ elif seccion == "Competencia":
 
 elif seccion == "Oportunidades":
     st.markdown("#### Dónde hay plata sobre la mesa")
-    op = st.radio("Vista", ["Visitas vs ventas", "Tramos de comisión",
-                            "Premium vs Clásica",
+    op = st.radio("Vista", ["Visitas vs ventas", "Piso de precio",
+                            "Tramos de comisión", "Premium vs Clásica",
                             "Precios espejo", "Duplicados", "Factura de ML",
                             "Envíos", "Candidatos a Full",
                             "Salud del catálogo"],
@@ -3081,6 +3082,137 @@ elif seccion == "Oportunidades":
                                dfk.to_csv(index=False).encode("utf-8"),
                                f"conciliacion_{datetime.now():%Y%m%d}.csv",
                                "text/csv")
+
+    elif op == "Piso de precio":
+        st.caption(
+            "El precio mínimo de cada publicación de **ERPA** (Suprabond, "
+            "Bulit y Somerset, las únicas con precio sugerido). Nunca baja "
+            "precios: sólo marca las que están por debajo del piso.")
+        st.info(
+            "**La regla.** Si el sugerido alcanza para cubrir los costos con "
+            "el margen objetivo, va el sugerido — menos que eso no se publica "
+            "nunca. Si no alcanza, se calcula el precio que cubre **costo + "
+            "lo que cobra MercadoLibre + 5% de impuestos + 5% de generales**.",
+            icon="📏")
+
+        pi1, pi2 = st.columns([1.3, 3])
+        obj_piso = pi1.number_input(
+            "Margen objetivo %", 0.0, 60.0, 0.0, 1.0, key="piso_obj",
+            help="0% es «que no pierda plata». Con un objetivo mayor el piso "
+                 "sube y entran más publicaciones.") / 100
+        pi2.caption(
+            "El piso sale de la misma estructura de costos que Rentabilidad "
+            "—se edita ahí— y contempla el escalón de "
+            f"{pesos_md(tramos.UMBRAL_ENVIO_GRATIS)}: arriba de ese precio el "
+            "envío lo paga el vendedor y el piso ya lo tiene adentro.")
+
+        if st.button("Calcular el piso", key="piso_go"):
+            paso = st.empty()
+            try:
+                with st.spinner("Releyendo precios en vivo..."):
+                    st.session_state["piso_df"] = piso_precio.analizar(
+                        ml, pubs=pubs, objetivo=obj_piso,
+                        callback=lambda m: paso.caption(str(m)))
+                    st.session_state["piso_obj_usado"] = obj_piso
+            except Exception as e:                     # noqa: BLE001
+                paso.empty()
+                st.error(f"No pude calcular: {type(e).__name__}: {e}")
+                st.stop()
+            paso.empty()
+            st.session_state.pop("piso_res", None)
+
+        dpiso = st.session_state.get("piso_df")
+        if dpiso is not None and len(dpiso):
+            usado = st.session_state.get("piso_obj_usado", 0.0)
+            if abs(usado - obj_piso) > 1e-9:
+                st.warning(
+                    f"La tabla es con margen objetivo **{usado:.0%}** y arriba "
+                    f"dice {obj_piso:.0%}. Volvé a calcular.", icon="🔄")
+
+            ap = dpiso[dpiso["accion"] == "aplicar"]
+            rev = dpiso[dpiso["accion"] == "revisar"]
+            q1, q2, q3, q4 = st.columns(4)
+            q1.metric("Publicaciones de ERPA", len(dpiso))
+            q2.metric("Por debajo del piso", len(ap))
+            q3.metric("Manda el sugerido",
+                      int((ap["manda"] == "sugerido").sum()) if len(ap) else 0,
+                      help="Están por debajo del precio que fijó ERPA. No hay "
+                           "interpretación de costos de por medio.")
+            q4.metric("Suba mediana",
+                      f"{ap['sube_pct'].median():.1%}" if len(ap) else "—")
+
+            cruzan = ap[ap["cruza_umbral"]] if len(ap) else ap
+            if len(cruzan):
+                st.warning(
+                    f"**{len(cruzan)} cruzan los "
+                    f"{pesos_md(tramos.UMBRAL_ENVIO_GRATIS)}.** Arriba de ese "
+                    "precio el envío pasa a pagarlo el vendedor, así que el "
+                    "piso da un salto: son las subas más grandes de la lista "
+                    "y conviene mirarlas de a una.", icon="🪜")
+
+            vista = dpiso[["sku", "marca", "titulo", "item_id", "precio_actual",
+                           "sugerido", "costo", "piso", "manda", "sube_pct",
+                           "cruza_umbral", "accion", "motivo"]]
+            st.dataframe(vista, use_container_width=True, hide_index=True,
+                         column_config={
+                             "sube_pct": st.column_config.NumberColumn(
+                                 "sube", format="%.1f%%")})
+            st.download_button(
+                "Descargar", vista.to_csv(index=False).encode("utf-8"),
+                f"piso_precio_{datetime.now():%Y%m%d}.csv", "text/csv",
+                key="piso_csv")
+
+            if len(rev):
+                with st.expander(f"{len(rev)} sin datos para calcular el piso"):
+                    st.caption(
+                        "Son de marca ERPA pero les falta algo. Cargando el "
+                        "dato entran en la regla.")
+                    st.dataframe(
+                        rev["motivo"].value_counts().rename_axis("qué falta")
+                        .reset_index(name="cuántas"),
+                        use_container_width=True, hide_index=True)
+                    st.dataframe(rev[["sku", "marca", "titulo", "item_id",
+                                      "precio_actual", "motivo"]],
+                                 use_container_width=True, hide_index=True)
+
+            if len(ap):
+                st.divider()
+                st.markdown("##### Subir al piso")
+                st.caption(
+                    "Sube el precio de las que están por debajo. Las que ya "
+                    "están en el piso o arriba no se tocan.")
+                op_piso = st.text_input("Tu nombre (queda en el registro)",
+                                        key="piso_op")
+                conf_piso = st.checkbox(
+                    f"Confirmo que quiero subir {len(ap)} precios",
+                    key="piso_conf")
+                if st.button(f"Subir {len(ap)} al piso", key="piso_apply",
+                             disabled=not (conf_piso and op_piso.strip())):
+                    barra = st.progress(0.0, text="Aplicando...")
+                    try:
+                        st.session_state["piso_res"] = piso_precio.aplicar(
+                            ml, dpiso, operador=op_piso.strip(),
+                            callback=lambda i, t, f: barra.progress(
+                                min(i / max(t, 1), 1.0),
+                                text=f"{i} de {t}: {f['sku']}"))
+                    except Exception as e:             # noqa: BLE001
+                        barra.empty()
+                        st.error(f"Se cortó: {type(e).__name__}: {e}")
+                        st.stop()
+                    barra.empty()
+                    st.session_state.pop("piso_df", None)
+
+        res_piso = st.session_state.get("piso_res")
+        if res_piso is not None and len(res_piso):
+            ok_piso = int((res_piso["resultado"] == "OK").sum())
+            if ok_piso == len(res_piso):
+                st.success(f"{ok_piso} precios subidos al piso.")
+            else:
+                st.error(f"{ok_piso} de {len(res_piso)} salieron bien.")
+            st.dataframe(res_piso, use_container_width=True, hide_index=True)
+
+        if dpiso is not None and not len(dpiso):
+            st.success("No hay publicaciones de ERPA para revisar. 🎉")
 
     elif op == "Premium vs Clásica":
         st.caption(
