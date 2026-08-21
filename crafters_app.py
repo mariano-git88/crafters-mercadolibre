@@ -2978,10 +2978,12 @@ elif seccion == "Oportunidades":
 
         dfin = st.session_state.get("fin_df")
         if dfin is not None and len(dfin):
-            malos = dfin[dfin["brecha"] <= 0]
+            malos = financiacion.no_cubre(dfin)
             f1, f2, f3, f4 = st.columns(4)
             f1.metric("Pares Premium/Clásica", len(dfin))
-            f2.metric("No cubren la financiación", len(malos))
+            f2.metric("No cubren la financiación", len(malos),
+                      help="Las corregidas quedan con la brecha en cero y "
+                           "salen de esta cuenta.")
             f3.metric("Al mismo precio o más baratas",
                       int((malos["dif_precio"] <= financiacion.TOLERANCIA).sum()))
             f4.metric("Se deja por unidad",
@@ -3095,7 +3097,16 @@ elif seccion == "Oportunidades":
                 st.caption("*Igualar el neto* calcula el precio exacto contra "
                            "los escalones reales, así que ignora el slider.")
 
-            plan_fin = financiacion.plan(dfin, base=modo, spread=spread_fin)
+            techo_fin = st.slider(
+                "Cuánto se acepta subir un precio de una vez", 5, 60,
+                int(financiacion.TECHO_DE_SUBIDA * 100), 5, format="%d%%",
+                key="fin_techo",
+                help="Las que necesitan más que esto quedan en «revisar» en "
+                     "vez de aplicarse. Es el freno que más sorprende: con "
+                     "base «Clásica» hay publicaciones que necesitan +30% "
+                     "para empatar el neto.") / 100
+            plan_fin = financiacion.plan(dfin, base=modo, spread=spread_fin,
+                                         techo=techo_fin)
             listas = plan_fin[plan_fin["accion"] == "aplicar"]
             revisar = plan_fin[plan_fin["accion"] == "revisar"]
             quietas = plan_fin[plan_fin["accion"] == "ninguna"]

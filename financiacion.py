@@ -54,6 +54,20 @@ SITE_ID = "MLA"
 # Diferencias de menos de esto son redondeo, no una decision de precio.
 TOLERANCIA = 1.0
 
+
+def no_cubre(df):
+    """
+    Las que **de verdad** no cubren la financiacion.
+
+    **El corte no es `brecha <= 0`, es `brecha < -TOLERANCIA`.** Corregir una
+    publicacion la deja con la brecha en **cero exacto** —ese es el objetivo:
+    que el neto empate— y con el corte en `<= 0` las corregidas seguian
+    contando como problema. Despues de una corrida que aplico 143 precios, la
+    pantalla mostraba los mismos 106 casos que antes y parecia que no habia
+    servido de nada, cuando los netos habian quedado igualados al centavo.
+    """
+    return df[df["brecha"] < -TOLERANCIA] if df is not None and len(df) else df
+
 # Cuanto se acepta mover un precio de una sola vez. Subir 16,6% ya es un
 # salto grande; mas que esto se muestra pero no se aplica sin mirarlo.
 TECHO_DE_SUBIDA = 0.25
@@ -229,7 +243,7 @@ def analizar(ml, pubs=None, sugeridos=None, callback=None):
 
 # --------------------------------------------------------------------- plan
 
-def plan(df, base="sugerido", spread=None, solo_negativos=True):
+def plan(df, base="sugerido", spread=None, solo_negativos=True, techo=None):
     """
     Que precio poner en cada Premium. Devuelve el mismo df con `precio_nuevo`.
 
@@ -243,6 +257,12 @@ def plan(df, base="sugerido", spread=None, solo_negativos=True):
       - `'igualar'`: el precio exacto que empata el neto, resuelto contra los
         escalones reales. Ignora `spread`.
 
+    `techo` es cuanto se acepta subir un precio de una vez; con `None` va
+    `TECHO_DE_SUBIDA` (25%). **Es el freno que mas confunde**: con base
+    'clasica' o 'igualar' hay publicaciones que necesitan +30% para empatar el
+    neto, quedan en 'revisar' y parece que el proceso las ignoro. Por eso se
+    puede mover desde la pantalla en vez de estar clavado.
+
     `spread` es la fraccion a sumarle a la base (0,166 = +16,6%). Con `None`
     se usa **el que iguala el neto en esa categoria**, que es distinto por
     categoria porque las comisiones lo son. Con `0` se publica la base tal
@@ -253,7 +273,7 @@ def plan(df, base="sugerido", spread=None, solo_negativos=True):
         return df
     out = df.copy()
     if solo_negativos:
-        out = out[out["brecha"] <= 0].copy()
+        out = no_cubre(out).copy()
     if not len(out):
         return out
 
@@ -290,14 +310,16 @@ def plan(df, base="sugerido", spread=None, solo_negativos=True):
         round(nn - na, 2) if nn is not None else 0
         for nn, na in zip(out["neto_nuevo"], out["neto_premium"])]
 
+    tope = TECHO_DE_SUBIDA if techo is None else float(techo)
+
     def decidir(f):
         if not f["precio_nuevo"]:
             return "revisar", "no encontré un precio que iguale el neto"
         if abs(f["precio_nuevo"] - f["precio_actual"]) < TOLERANCIA:
             return "ninguna", "ya está en el precio propuesto"
-        if f["cambio"] > TECHO_DE_SUBIDA:
+        if f["cambio"] > tope:
             return "revisar", (f"sube {f['cambio']:.0%}, más que el tope de "
-                               f"{TECHO_DE_SUBIDA:.0%}")
+                               f"{tope:.0%}")
         if f["precio_nuevo"] < f["precio_actual"]:
             return "revisar", "el precio propuesto es MENOR que el actual"
         return "aplicar", ""
@@ -396,7 +418,7 @@ def plan_apagado(df, minimo_stock=1):
     """
     if df is None or not len(df):
         return df
-    out = df[df["brecha"] <= 0].copy()
+    out = no_cubre(df).copy()
     if not len(out):
         return out
 
@@ -475,7 +497,7 @@ def main():
         print("No hay SKU con Premium y Clásica a la vez.")
         return 0
 
-    malos = df[df["brecha"] <= 0]
+    malos = no_cubre(df)
     pes = lambda v: f"${v:,.0f}".replace(",", ".")
     print(f"\n{len(df)} pares Premium/Clásica en {df['sku'].nunique()} SKU.")
     print(f"{len(malos)} no cubren la financiación "
