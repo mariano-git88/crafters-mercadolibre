@@ -41,6 +41,7 @@ import sys
 from pathlib import Path
 
 import pandas as pd
+import precios_redondeo
 
 from meli import Meli, MeliError
 
@@ -384,7 +385,8 @@ def planilla_de_precios(seleccion):
     """La planilla que consume `actualizador.simular()`."""
     return pd.DataFrame({
         "sku": seleccion["sku"],
-        "precio": seleccion["precio_sugerido"].round(2),
+        # Sin centavos: es una sugerencia, no un limite duro.
+        "precio": seleccion["precio_sugerido"].map(precios_redondeo.cerca),
     })
 
 

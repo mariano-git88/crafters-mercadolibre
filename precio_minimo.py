@@ -41,6 +41,7 @@ import sys
 from pathlib import Path
 
 import pandas as pd
+import precios_redondeo
 
 from meli import Meli, MeliError
 
@@ -390,7 +391,9 @@ def planilla_de_precios(seleccion, columna="precio_objetivo"):
     col = columna if columna in seleccion else "precio_minimo"
     return pd.DataFrame({
         "sku": seleccion["sku"],
-        "precio": seleccion[col].round(2),
+        # Sin centavos, y hacia ARRIBA: es un minimo, redondear para
+        # abajo lo perforaria.
+        "precio": seleccion[col].map(precios_redondeo.piso),
     })
 
 

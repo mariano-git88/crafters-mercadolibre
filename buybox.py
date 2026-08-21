@@ -43,6 +43,7 @@ from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
+import precios_redondeo
 
 from catalogo import sku_del_atributo
 from meli import Meli, MeliError
@@ -553,7 +554,9 @@ def aplicar(ml, seleccion, operador="", callback=None):
     filas = []
     total = len(seleccion)
     for n, (_, f) in enumerate(seleccion.iterrows(), start=1):
-        nuevo = round(float(f["precio_para_ganar"]), 2)
+        # Sin centavos, y hacia ABAJO: es el precio para ganar el Buy
+        # Box, o sea un maximo. Un peso de mas y lo perdes.
+        nuevo = precios_redondeo.techo(float(f["precio_para_ganar"]))
         try:
             ok, detalle = ml.actualizar_publicacion(
                 f["item_id"], {"price": nuevo},

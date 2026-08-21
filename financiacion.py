@@ -44,6 +44,7 @@ from pathlib import Path
 
 import pandas as pd
 
+import precios_redondeo
 import tramos
 from catalogo import sku_del_atributo
 from resolver import CON_FINANCIACION, SIN_FINANCIACION
@@ -83,6 +84,17 @@ def no_cubre(df):
 # un precio, la tabla se ve entera antes de aplicar, y despues de escribir se
 # verifica el envio y se revierte si se come la mejora.
 SUBIDA_LLAMATIVA = 0.30    # no frena: solo se avisa cuantas pasan de aca
+
+
+def redondear(precio):
+    """
+    Precios **sin decimales**, siempre para arriba.
+
+    El precio que se busca es el que **empata el neto** con la Clasica, o sea
+    un minimo: redondear para abajo lo deja un peso corto y la publicacion
+    sigue —por poco— del lado equivocado. Por eso `piso` y no `cerca`.
+    """
+    return precios_redondeo.piso(precio)
 
 
 # ------------------------------------------------------------------ tarifas
@@ -148,7 +160,7 @@ def precio_para_igualar(objetivo, pct_pro, tope=None):
             lo = mid
         else:
             hi = mid
-    return round(hi, 2)
+    return redondear(hi)
 
 
 # ----------------------------------------------------------------- analisis
@@ -301,7 +313,7 @@ def plan(df, base="sugerido", spread=None, solo_negativos=True):
                     + (" (el SKU no tiene sugerido)" if base == "sugerido" else ""))
             origen = f"{origen} + {usa:.1%}"
 
-        nuevos.append(None if p is None else round(float(p), 2))
+        nuevos.append(None if p is None else redondear(p))
         bases.append(origen)
         motivos.append("")
 
@@ -315,6 +327,13 @@ def plan(df, base="sugerido", spread=None, solo_negativos=True):
     out["gana_por_unidad"] = [
         round(nn - na, 2) if nn is not None else 0
         for nn, na in zip(out["neto_nuevo"], out["neto_premium"])]
+    # **Mejorar no es lo mismo que resolver.** Con la base 'sugerido' el
+    # precio sale de una decision comercial, no de la cuenta, asi que puede
+    # subir bastante y seguir por debajo del neto de la Clasica. Si no se
+    # dice, el operador aplica y se queda pensando que quedo cerrado.
+    out["cubre"] = [
+        (nn is not None and nn >= nc - TOLERANCIA)
+        for nn, nc in zip(out["neto_nuevo"], out["neto_clasica"])]
 
     def decidir(f):
         if not f["precio_nuevo"]:

@@ -3119,10 +3119,19 @@ elif seccion == "Oportunidades":
                     "conviene mirarlas: un salto así también aparece cuando "
                     "el precio sugerido del SKU está mal cargado.", icon="📈")
 
+            cortas = listas[~listas["cubre"]]
+            if len(cortas):
+                st.info(
+                    f"**{len(cortas)} de las {len(listas)} mejoran pero no "
+                    "llegan a cubrir la financiación.** El precio sugerido del "
+                    "SKU es una decisión comercial, no la cuenta: a veces "
+                    "queda por debajo de lo que haría falta. Para cerrarlas "
+                    "del todo elegí *Igualar el neto exacto*.", icon="📐")
+
             vista = plan_fin[["sku", "titulo", "item_id", "precio_actual",
                               "precio_clasica", "sugerido", "precio_nuevo",
-                              "cambio", "gana_por_unidad", "origen", "accion",
-                              "motivo"]]
+                              "cambio", "gana_por_unidad", "cubre", "origen",
+                              "accion", "motivo"]]
             st.dataframe(vista, use_container_width=True, hide_index=True,
                          column_config={
                              "cambio": st.column_config.NumberColumn(
