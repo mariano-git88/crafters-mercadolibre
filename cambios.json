@@ -1,419 +1,433 @@
 [
- {
-  "fecha": "2026-08-08",
-  "hora": "16:40",
-  "tipo": "nuevo",
-  "titulo": "PROMOS: activar en todas las campañas e igualar la mejor propia",
-  "puntos": [
-   "La sección pasa a llamarse **PROMOS**.",
-   "**Activar por regla** ahora puede recorrer **TODAS las campañas de MercadoLibre** de una vez. Si una publicación entra en dos, se queda en la que pide **menos** descuento. Medido: 108 altas, 25 pisadas por una campaña más barata.",
-   "**Igualar la mejor propia** (nuevo): busca el mayor descuento puesto por nosotros —descontando lo que pone MercadoLibre— y lo iguala en las demás campañas.",
-   "**Respeta el vencimiento**: la fecha no se puede fijar por oferta (el POST la acepta y la ignora), así que la promo dura lo que dura la campaña. Si el descuento original vence antes, **no se replica**, porque lo estiraría. Medido: de 62 casos, 20 se igualan y 42 se frenan por eso.",
-   "Planilla de **duplicados a revisar**: las 151 que hay que decidir a mano, con la hermana al lado y qué mirar en cada caso."
-  ]
- },
- {
-  "fecha": "2026-08-07",
-  "hora": "19:10",
-  "tipo": "nuevo",
-  "titulo": "Promos por planilla, replicar campañas y activar por regla",
-  "puntos": [
-   "**Desde planilla**: subís SKU/EAN y descuento, y entran todos de una a una campaña propia. Ya estaba en la app de Uruguay; ahora también acá.",
-   "**Replicar una campaña**: lleva los descuentos de una campaña a otra. Copia el **porcentaje, no el importe** — entre una campaña y otra los precios se movieron, y repetir el precio viejo aplicaría otro descuento. Medido: 72 publicaciones de *Precios Locos* pasan a *Precios Locos v2* con 26,5% promedio.",
-   "**Activar por regla**: acepta de una todas las ofertas que piden hasta X% de descuento. Sirve para las que arma MercadoLibre y fija el precio. Con tope 5%, de 325 relámpago candidatas cumplen **68**.",
-   "Las tres muestran primero qué va a pasar y piden confirmación con nombre; todo queda en la auditoría."
-  ]
- },
- {
-  "fecha": "2026-08-06",
-  "hora": "22:10",
-  "tipo": "mejora",
-  "titulo": "Duplicados de catálogo: ahora distingue por tienda oficial",
-  "puntos": [
-   "El análisis de fichas ahora mira **de qué tienda oficial** es cada publicación, que es lo que decide si algo es un duplicado o una decisión comercial.",
-   "**230 fichas tienen choque entre tiendas** (una en TO Bulit y otra en TO Crafters compitiendo en la misma ficha) y **146 tienen dos de la misma tienda**, que es duplicado claro.",
-   "**74 publicaciones tienen moderación encima ahora**: `forbidden` son las que ML bajó por duplicadas y `waiting_for_patch` las que quedaron pausadas esperando volver a competir.",
-   "También se muestran las publicaciones moderadas o inactivas, que antes quedaban fuera del análisis: eran justo el síntoma que había que ver.",
-   "Cómo se rompe el círculo: dejar en catálogo la de **una sola tienda** y rechazar la sugerencia de catálogo en la otra. La segunda vale igual, pero sin competir en la ficha."
-  ]
- },
- {
-  "fecha": "2026-08-06",
-  "hora": "19:20",
-  "tipo": "nuevo",
-  "titulo": "Duplicados: ahora también mira la ficha de catálogo",
-  "puntos": [
-   "El análisis de duplicados agrupa **por SKU**, y eso deja afuera un problema que el SKU no ve: varias publicaciones nuestras compitiendo en la **misma ficha de catálogo**, aunque tengan títulos distintos.",
-   "Ahí MercadoLibre modera una por duplicada y la tradicional queda pausada esperando volver a competir. Es el círculo vicioso que reportaron.",
-   "Hay **252 fichas con 2 o más publicaciones nuestras en catálogo** (934 publicaciones), y en 120 de ellas los títulos son distintos.",
-   "Y **16 fichas tienen dos SKU nuestros colgados**: o es el mismo producto con dos códigos, o uno está mal asociado — pasa con variantes parecidas, como un destornillador plano y uno Phillips.",
-   "Es un **informe, no una acción**: salir de catálogo no se deshace, y la que conviene dejar no siempre es la que más vendió."
-  ]
- },
- {
-  "fecha": "2026-08-06",
-  "hora": "17:00",
-  "tipo": "mejora",
-  "titulo": "El tope de publicidad ahora mira el margen de cada producto",
-  "puntos": [
-   "Antes había **un solo tope de ACOS para todo el catálogo** (15%). Eso estaba mal en las dos direcciones: para un producto que deja 10% de margen, gastar 15% en publicidad **pierde plata**; para uno que deja 33%, 15% deja plata sobre la mesa.",
-   "Ahora cada SKU tiene su propio tope, sacado de su margen. El punto de equilibrio es ACOS = margen —gastar en publicidad lo mismo que deja el producto se come toda la ganancia— y se usa el 60% de eso.",
-   "Ejemplos: margen 10,6% → tope 6,4%. Margen 25% → tope 15%. Margen 32,8% → tope 19,7%.",
-   "Para que funcione hay que correr **Rentabilidad** y apretar «Guardar los márgenes para publicidad». Los SKU sin margen medido siguen con el tope general.",
-   "Si los márgenes están viejos o no están, el proceso lo avisa en vez de decidir en silencio."
-  ]
- },
- {
-  "fecha": "2026-08-06",
-  "hora": "14:30",
-  "tipo": "mejora",
-  "titulo": "La publicidad se revisa cada 21 días, no cada 7",
-  "puntos": [
-   "Antes corría semanal. Con una ventana de 30 días, un anuncio prendido el martes se juzgaba el martes siguiente con 7 días propios y 23 de cuando estaba apagado: se lo podía prender y apagar antes de saber cómo funcionaba.",
-   "Ahora el ciclo es **cada 21 días**, y además **ningún anuncio se vuelve a tocar antes de 21 días** de la última vez. Eso vale para los dos lados: prender algo que apagamos la semana pasada es el mismo error que apagarlo de nuevo.",
-   "Se agregó una regla para concentrar el presupuesto en los anuncios que mejor rinden, apagando a los que rinden mucho peor que sus compañeros de campaña.",
-   "Ojo: con el ACOS máximo en 15% esa regla **no llega a activarse**, porque el tope ya apaga todo lo que ella apagaría. Recién sirve si algún día se afloja el ACOS."
-  ]
- },
- {
-  "fecha": "2026-08-06",
-  "hora": "01:10",
-  "tipo": "nuevo",
-  "titulo": "Las reseñas de MercadoLibre pasan a la tienda Shopify",
-  "puntos": [
-   "Un proceso semanal trae las reseñas que los productos tienen en MercadoLibre y las carga en la ficha del producto de la tienda Shopify, a través de Parlata.",
-   "**584 de los 669 SKU de la tienda están publicados en ML**, y hay unas **66.000 reseñas** de 3 estrellas o más para traer.",
-   "Solo entran las de **3 estrellas o más**, y cada una queda marcada como venida de MercadoLibre.",
-   "Ojo con qué son: ML agrupa las reseñas **por producto de catálogo**, y esa página la comparten todos los vendedores del producto. O sea que parte de lo que entra lo escribió gente que le compró a un competidor.",
-   "No llevan el sello de «voz verificada»: ése queda para las reseñas grabadas por clientes propios."
-  ]
- },
- {
-  "fecha": "2026-08-06",
-  "hora": "09:30",
-  "tipo": "mejora",
-  "titulo": "Duplicados: si ninguna vendió, igual sobra una",
-  "puntos": [
-   "Antes, si las dos publicaciones del mismo producto vendían \\$0 en 30 días, no se tocaba ninguna por falta de datos.",
-   "Ahora **se deja una sola**: dos publicaciones facturando cero no son un caso sin datos, son una duplicada de más compitiendo por las mismas visitas.",
-   "Se queda la de más historia — lo que vendió en su vida y las visitas —, que es lo único que distingue una publicación viva de una abandonada.",
-   "La lista pasa de 13 a **30 publicaciones**. Tres de las nuevas se deciden por poco margen (3 contra 6 ventas históricas, por ejemplo): vale mirarlas antes de apretar."
-  ]
- },
- {
-  "fecha": "2026-08-05",
-  "hora": "23:15",
-  "tipo": "mejora",
-  "titulo": "Botón para correr el proceso de publicidad cuando quieras",
-  "puntos": [
-   "En **Publicidad → Correr el proceso** está el mismo proceso que corre solo los martes, para dispararlo a mano.",
-   "Sin tildar «Aplicar de verdad» solo te muestra qué haría, sin tocar nada.",
-   "**Se sacaron los topes por corrida**: apaga y suma todo lo que califica, de una. Antes iba de a 25.",
-   "Si ya corriste *Visitas vs ventas*, tarda unos 2 minutos porque reusa esa medición. Si no, la mide y tarda unos 15.",
-   "Ojo: el único límite de gasto que queda es el **presupuesto de cada campaña**. Encender un anuncio gasta desde ese momento."
-  ]
- },
- {
-  "fecha": "2026-08-05",
-  "hora": "21:40",
-  "tipo": "mejora",
-  "titulo": "La publicidad se maneja sola",
-  "puntos": [
-   "El proceso de los martes ahora **apaga y también enciende**. Antes solo apagaba.",
-   "Enciende las publicaciones que *Visitas vs ventas* marca como **escalar** o **falta de exposición**: ya convierten y les falta gente que las vea.",
-   "El **ACOS máximo pasa de 35% a 15%**. Ojo con esto: son 40 anuncios que gastan \\$4,35M pero facturan \\$18,16M. Se van a ir apagando de a 25 por semana.",
-   "Las publicaciones que irían a la campaña general de Crafters —que está pausada— van a una campaña nueva, **«Crafters - Potencial de conversión»**, con tope de \\$20.000 y ACOS objetivo 15%.",
-   "Todo queda en la auditoría con el estado anterior."
-  ]
- },
- {
-  "fecha": "2026-08-05",
-  "hora": "19:20",
-  "tipo": "nuevo",
-  "titulo": "La publicidad ya se puede tocar desde la app",
-  "puntos": [
-   "Se pueden **pausar, encender, agregar y sacar** anuncios de las campañas, y cambiar estado y presupuesto de una campaña. Todo desde la sección Publicidad.",
-   "Ya se pausaron los **19 anuncios que gastaban de más**: se comían \\$1.286.026 en 30 días, con ACOS de hasta 95% contra un objetivo de 23%.",
-   "Se sacaron de sus campañas ~155 anuncios que apuntaban a publicaciones cerradas o inactivas.",
-   "**Todos los martes a las 9** un proceso automático apaga lo que no se banca. Solo apaga: encender y agregar quedan para vos, porque eso empieza a gastar.",
-   "Como mucho apaga 25 por corrida. Si hay más, van los de mayor gasto y el resto espera a la semana siguiente."
-  ]
- },
- {
-  "fecha": "2026-08-05",
-  "hora": "12:30",
-  "tipo": "mejora",
-  "titulo": "Publicidad: pausar, sacar de campaña y sumar lo que convierte",
-  "puntos": [
-   "Aparecieron los botones para **pausar**, **sacar de la campaña** y **sumar** publicaciones, más el detalle de por qué en cada una.",
-   "Regla nueva: las publicaciones que **ya convierten y casi no reciben visitas** se proponen para entrar en la campaña de su marca. Salen del mismo análisis de *Visitas vs ventas*. Hoy son 214.",
-   "No entran las que tienen visitas y no venden: ahí el problema es el precio o las fotos, y pagar clics no lo arregla.",
-   "Cada marca va a la campaña de su anunciante. Las marcas sin anunciante propio caen en la general — que **está pausada**, así que la app te avisa cuáles no van a correr.",
-   "**Falta un permiso de MercadoLibre para que los botones escriban.** Los anunciantes son de la cuenta ERPA y la app entra como CRAFTERSARG: puede leer, no administrar. Hay que darle permiso a CRAFTERSARG o conectar la app con ERPA."
-  ]
- },
- {
-  "fecha": "2026-08-04",
-  "hora": "23:10",
-  "tipo": "nuevo",
-  "titulo": "Publicidad y Duplicados",
-  "puntos": [
-   "**Publicidad** (sección nueva): muestra las tres campañas, mide cada anuncio y dice cuál conviene apagar. En Bulit, 5 anuncios se comen \\$694.000 de los \\$3,2M con un ACOS de 57% contra un objetivo de 23%.",
-   "Los topes (ACOS máximo, ROAS mínimo) y la lista de **SKU estratégicos** —los que ninguna regla toca— se editan desde la app y viven en la planilla.",
-   "**Todavía no se pueden apagar los anuncios desde la app**: el endpoint de MercadoLibre para eso no responde. La pantalla dice cuáles tocar y el cambio se hace en el panel de ML.",
-   "**Duplicados** (dentro de Oportunidades): de 720 SKU con publicación repetida, solo 33 grupos son duplicados de verdad. El resto son de catálogo o mezclan Premium con Clásica, y borrarlos sería un desastre.",
-   "Deja la que más vendió en 30 días y borra la otra; si la segunda vende parecido, **se quedan las dos**. Hoy marca 13 para borrar.",
-   "Ojo: **cerrar una publicación no se puede deshacer**. Antes de borrar, cada una se guarda entera en la planilla, que alcanza para republicar el producto pero no para recuperar la publicación."
-  ]
- },
- {
-  "fecha": "2026-08-04",
-  "hora": "17:40",
-  "tipo": "nuevo",
-  "titulo": "Tramos de comisión ahora aplica los precios solo",
-  "puntos": [
-   "Antes había que bajar el CSV y subirlo en la sección Precios. Ahora hay un botón que los escribe directo.",
-   "**No hay que tocar el envío.** Está medido: al bajar una publicación debajo de \\$33.000, MercadoLibre le apaga el envío gratis obligatorio solo, en el momento. Es una regla suya que sale del precio.",
-   "Igual **cada publicación que cruza el umbral se verifica** después de escribirla. Si en alguna el envío quedara prendido, se le devuelve el precio anterior sola: con el envío prendido el cambio pierde ~\\$6.200 por unidad en vez de ganar.",
-   "Antes de escribir se releen los precios de verdad. En la primera corrida, 13 de 68 publicaciones habían cambiado de precio desde el último análisis y quedaron afuera.",
-   "Por defecto solo toca las que cruzan el umbral de envío, que son las que dejan plata. Las otras ganan centavos."
-  ]
- },
- {
-  "fecha": "2026-08-04",
-  "hora": "15:23",
-  "tipo": "arreglo",
-  "titulo": "La fecha del encabezado mostraba el dato equivocado",
-  "puntos": [
-   "«Última actualización» mostraba **cuándo se actualizó la app**, no cuándo se bajó el catálogo. Por eso apretabas «Actualizar catálogo», se bajaba todo de nuevo, y la fecha no se movía.",
-   "El botón siempre funcionó: el que mentía era el cartel. Ahora son dos líneas separadas, **Catálogo bajado** y **Versión de la app**.",
-   "La hora se muestra en horario argentino. El servidor corre en otro huso, así que antes habría mostrado 3 horas de más.",
-   "Ojo: en una sesión nueva la app usa el catálogo que tenga guardado **sin importar qué tan viejo sea**. Ahora esa fecha se ve de verdad, y si está vieja el botón sirve."
-  ]
- },
- {
-  "fecha": "2026-08-01",
-  "hora": "12:05",
-  "tipo": "arreglo",
-  "titulo": "La IA no podía responder desde el proceso automático",
-  "puntos": [
-   "Las preguntas quedaban con el motivo «no encuentro la clave de Anthropic» porque la configuración del proceso automático estaba desactualizada. Ya se corrigió.",
-   "Esas preguntas **se reintentan solas** en la próxima corrida: no hay que hacer nada con ellas.",
-   "El reporte de competencia también fallaba al correr automáticamente, por un archivo de caché que no existe en el servidor. Arreglado."
-  ]
- },
- {
-  "fecha": "2026-07-31",
-  "hora": "21:40",
-  "tipo": "nuevo",
-  "titulo": "Reporte de competencia por mail, todos los lunes",
-  "puntos": [
-   "Compara los **100 artículos que más vendiste** en el último mes contra el catálogo de MercadoLibre, y lo manda por mail los lunes a la mañana.",
-   "Lo importante no es la foto sino **qué cambió**: qué competidores bajaron el precio y en qué productos dejamos de ser los más baratos.",
-   "También marca los productos que están en el catálogo, otros venden, y nosotros no tenemos publicación ahí."
-  ]
- },
- {
-  "fecha": "2026-07-31",
-  "hora": "20:15",
-  "tipo": "arreglo",
-  "titulo": "El costo de envío se repartía mal entre productos",
-  "puntos": [
-   "MercadoLibre parte una compra de varios productos en **una orden por producto**, todas con el mismo envío. La app lo miraba orden por orden, así que **cada producto del paquete cargaba el envío entero**.",
-   "El caso que lo destapó: un disco de \\\\$2.038 que viajó junto a una amoladora cargaba \\\\$4.125 de envío por unidad. Ahora carga \\\\$419, que es el 10% del valor del paquete que representa.",
-   "Cuando el producto viajó alguna vez **solo**, se usa ese costo real en vez de repartir nada. La tabla de Rentabilidad muestra cuál de los dos se usó."
-  ]
- },
- {
-  "fecha": "2026-07-31",
-  "hora": "18:45",
-  "tipo": "nuevo",
-  "titulo": "Aplicar los cambios de precio desde Plata sobre la mesa",
-  "puntos": [
-   "Las dos acciones que se resuelven cambiando un precio —*pierde plata* y *subir al escalón*— ya se pueden aplicar en lote desde la misma pantalla, sin ir a buscarlas a otra sección.",
-   "El tope de cambio acá es 30%, más estricto que en Precio óptimo: se ejecuta sobre una lista que no armaste vos producto por producto.",
-   "Reponer stock y tomar promociones **no** tienen botón: la primera se hace comprando y la segunda desde el panel de MercadoLibre."
-  ]
- },
- {
-  "fecha": "2026-07-31",
-  "hora": "17:20",
-  "tipo": "arreglo",
-  "titulo": "Novedades no se actualizaba después de publicar",
-  "puntos": [
-   "El registro se publicaba bien pero la app seguía mostrando la versión anterior hasta reiniciarla a mano.",
-   "Ahora el contenido se lee de un archivo en cada carga, así que las novedades aparecen apenas se publican, sin reiniciar nada."
-  ]
- },
- {
-  "fecha": "2026-07-31",
-  "hora": "16:30",
-  "tipo": "nuevo",
-  "titulo": "Plata sobre la mesa — la nueva pantalla de entrada",
-  "puntos": [
-   "Junta en una sola lista todo lo accionable que antes estaba repartido en seis secciones, ordenado por pesos: qué reponer, qué precio subir, qué revisar porque pierde plata.",
-   "Separa **facturación parada** de **margen en juego**, que son cosas distintas y no se pueden sumar.",
-   "Avisa cuando un producto está para reponer **y** pierde plata en cada unidad: reponerlo aumentaría la pérdida.",
-   "Se arregló un error en **Competencia** que cortaba la consulta a los pocos productos."
-  ]
- },
- {
-  "fecha": "2026-07-31",
-  "hora": "14:10",
-  "tipo": "arreglo",
-  "titulo": "Los importes se veían como fórmulas matemáticas",
-  "puntos": [
-   "Cuando un texto tenía dos o más importes, Streamlit los tomaba como una fórmula y los mostraba ilegibles. Pasaba en este mismo registro, en el tutorial y en varios avisos de la app."
-  ]
- },
- {
-  "fecha": "2026-07-31",
-  "hora": "12:47",
-  "tipo": "nuevo",
-  "titulo": "Las preguntas se contestan solas",
-  "puntos": [
-   "La IA responde apenas entra la pregunta, sin que nadie abra la app: cada 15 minutos de 8 a 21 de lunes a sábado, y cada hora las noches y los domingos. Si no puede responder, la deja en *Gestión manual*.",
-   "El historial también se sincroniza solo, en la misma corrida.",
-   "**Las preguntas que MercadoLibre no deja contestar** (porque la publicación está pausada) ya no se muestran ni se cuentan: no eran trabajo pendiente, eran ruido.",
-   "Se corrigió un problema que duplicaba el historial en cada sincronización. La planilla tenía 4.000 filas para 1.006 preguntas; quedó limpia."
-  ]
- },
- {
-  "fecha": "2026-07-31",
-  "hora": "08:05",
-  "tipo": "nuevo",
-  "titulo": "Sección Precio óptimo: la ventana de precio",
-  "puntos": [
-   "Junta en una sola pantalla el **piso** (abajo no llegás al margen), el **techo útil** (arriba perdés la página de catálogo) y el **escalón de comisión**, y sugiere un precio por SKU con su motivo.",
-   "Reemplaza a *Precios mínimos*, que quedó adentro: el piso ahora es una columna más.",
-   "Lo que más rinde es cruzar el escalón: subir de \\$29.615 a \\$33.000 lleva el neto por unidad de −\\$1.964 a +\\$2.824."
-  ]
- },
- {
-  "fecha": "2026-07-30",
-  "hora": "19:40",
-  "tipo": "arreglo",
-  "titulo": "Los sliders de porcentaje mostraban 0%",
-  "puntos": [
-   "Todos los sliders de porcentaje se veían de 0% a 0%. Los valores que se usaban eran correctos: lo que estaba mal era cómo se mostraban."
-  ]
- },
- {
-  "fecha": "2026-07-30",
-  "hora": "18:08",
-  "tipo": "mejora",
-  "titulo": "Costo logístico con tope, e IVA al 21%",
-  "puntos": [
-   "El costo logístico pasa a ser **10% o $9.000, lo que sea menor**: mover una caja no cuesta el doble porque el producto valga el doble.",
-   "El IVA viene al 21% por defecto. La planilla de costos está sin IVA y los precios de ML lo incluyen, así que antes los márgenes salían inflados en 21 puntos.",
-   "El margen descuenta además impuestos 10% y general 5%."
-  ]
- },
- {
-  "fecha": "2026-07-30",
-  "hora": "15:53",
-  "tipo": "mejora",
-  "titulo": "La planilla de costos se sube una sola vez",
-  "puntos": [
-   "Queda guardada y la usan Rentabilidad, Buy Box y Precio óptimo. Antes había que volver a subirla en cada sección y en cada visita."
-  ]
- },
- {
-  "fecha": "2026-07-30",
-  "hora": "15:11",
-  "tipo": "arreglo",
-  "titulo": "Las cargas masivas ya no se cortan por un error",
-  "puntos": [
-   "La carga de precios mayoristas a 2.281 publicaciones moría en la número 25 y se perdía todo lo hecho. Ahora cada publicación se resuelve por separado y la corrida sigue.",
-   "Se puede **reintentar solo las que fallaron** sin repetir el resto."
-  ]
- },
- {
-  "fecha": "2026-07-30",
-  "hora": "14:26",
-  "tipo": "nuevo",
-  "titulo": "Sección Ganar la venta: Buy Box y promociones",
-  "puntos": [
-   "**Buy Box**: en qué publicaciones de catálogo ganás la página y en cuáles no, con el precio que haría falta. Se pueden bajar precios en lote por criterio, por marca o a mano.",
-   "Hay casos donde ya estás más barato que el ganador y perdés igual: ahí lo que falta es Full o envío gratis, no precio.",
-   "**Promociones**: qué campañas te ofrece ML, cuáles cofinancia, y alta automática por criterio."
-  ]
- },
- {
-  "fecha": "2026-07-30",
-  "hora": "09:54",
-  "tipo": "mejora",
-  "titulo": "Preguntas pasa al segundo lugar",
-  "puntos": [
-   "Queda destacada en naranja en el selector de secciones.",
-   "*Responder* pasa a llamarse **Dashboard** y *Pendientes* a **Gestión manual**."
-  ]
- },
- {
-  "fecha": "2026-07-30",
-  "hora": "09:05",
-  "tipo": "nuevo",
-  "titulo": "Reporte semanal y Alertas",
-  "puntos": [
-   "**Reporte semanal**: la pantalla del lunes. Cómo vino la semana contra la anterior y qué hay que resolver. Es la que abre la app.",
-   "**Alertas**: stock por agotarse ordenado por plata en riesgo, y reclamos por producto medidos como tasa sobre lo que vende cada uno.",
-   "Apareció que MercadoLibre **pausa sola** la publicación al llegar a stock cero: había 20 productos agotados que no aparecían en ningún informe.",
-   "Se corrigieron todos los porcentajes de las tablas, que se mostraban 100 veces más chicos."
-  ]
- },
- {
-  "fecha": "2026-07-29",
-  "hora": "22:09",
-  "tipo": "nuevo",
-  "titulo": "Sección Oportunidades",
-  "puntos": [
-   "Siete análisis: visitas contra ventas, tramos de comisión, precios espejo, factura de ML, envíos, candidatos a Full y salud del catálogo."
-  ]
- },
- {
-  "fecha": "2026-07-29",
-  "hora": "21:06",
-  "tipo": "nuevo",
-  "titulo": "Respuestas automáticas con IA",
-  "puntos": [
-   "La IA redacta con el historial de respuestas de la cuenta, los datos de la publicación y los documentos que cargues.",
-   "Si el contexto no alcanza **no inventa**: deja la pregunta para una persona."
-  ]
- },
- {
-  "fecha": "2026-07-29",
-  "hora": "20:55",
-  "tipo": "nuevo",
-  "titulo": "Competencia por código de barras",
-  "puntos": [
-   "Quién vende más barato cada producto y en qué posición estás."
-  ]
- },
- {
-  "fecha": "2026-07-29",
-  "hora": "16:24",
-  "tipo": "nuevo",
-  "titulo": "Precios mayoristas por reglas",
-  "puntos": [
-   "Descuentos por cantidad con reglas por familia, por SKU o generales."
-  ]
- },
- {
-  "fecha": "2026-07-29",
-  "hora": "15:43",
-  "tipo": "nuevo",
-  "titulo": "Control de stock propio",
-  "puntos": [
-   "Tu propia cuenta de unidades con historial de movimientos, descontando las ventas de MercadoLibre. No toca el stock de ML."
-  ]
- },
- {
-  "fecha": "2026-07-28",
-  "hora": "21:59",
-  "tipo": "nuevo",
-  "titulo": "Primera versión",
-  "puntos": [
-   "Precios, Stock y Rentabilidad desde planilla, con simulación obligatoria antes de aplicar y registro de todo lo que se cambia."
-  ]
- }
+  {
+    "fecha": "2026-08-21",
+    "hora": "13:20",
+    "titulo": "La herramienta pedía más descuento del que las campañas exigen",
+    "tipo": "arreglo",
+    "puntos": [
+      "**MercadoLibre da dos números por publicación: el descuento que SUGIERE y el mínimo que EXIGE para entrar.** La herramienta leía el sugerido como si fuera el requisito, así que descartaba publicaciones que en realidad calificaban.",
+      "**En DESCUENTAZOS AGOSTO 2026, con un tope del 10%, pasan de entrar 596 publicaciones a 1.830** sobre 1.856 candidatas. El mínimo real tiene mediana 10% y el sugerido 15%.",
+      "**Se puede entrar con más descuento que el mínimo,** si querés pelear posición: ML ordena las ofertas por descuento. Hay una opción nueva para entrar con el tope en vez del mínimo, sin pasarse nunca de lo que ML permite en cada publicación.",
+      "**Arreglado un corte por redondeo:** 839 publicaciones piden exactamente 10% y 227 quedaban afuera porque el cálculo daba 10,00001%.",
+      "El mismo error estaba en la pantalla que calcula cuánto deja cada promoción: mostraba las promos más caras de lo que son.",
+      "Lo encontramos en la cuenta de Uruguay y se portó para acá, que es donde más pesa."
+    ]
+  },
+  {
+    "fecha": "2026-08-08",
+    "hora": "16:40",
+    "tipo": "nuevo",
+    "titulo": "PROMOS: activar en todas las campañas e igualar la mejor propia",
+    "puntos": [
+      "La sección pasa a llamarse **PROMOS**.",
+      "**Activar por regla** ahora puede recorrer **TODAS las campañas de MercadoLibre** de una vez. Si una publicación entra en dos, se queda en la que pide **menos** descuento. Medido: 108 altas, 25 pisadas por una campaña más barata.",
+      "**Igualar la mejor propia** (nuevo): busca el mayor descuento puesto por nosotros —descontando lo que pone MercadoLibre— y lo iguala en las demás campañas.",
+      "**Respeta el vencimiento**: la fecha no se puede fijar por oferta (el POST la acepta y la ignora), así que la promo dura lo que dura la campaña. Si el descuento original vence antes, **no se replica**, porque lo estiraría. Medido: de 62 casos, 20 se igualan y 42 se frenan por eso.",
+      "Planilla de **duplicados a revisar**: las 151 que hay que decidir a mano, con la hermana al lado y qué mirar en cada caso."
+    ]
+  },
+  {
+    "fecha": "2026-08-07",
+    "hora": "19:10",
+    "tipo": "nuevo",
+    "titulo": "Promos por planilla, replicar campañas y activar por regla",
+    "puntos": [
+      "**Desde planilla**: subís SKU/EAN y descuento, y entran todos de una a una campaña propia. Ya estaba en la app de Uruguay; ahora también acá.",
+      "**Replicar una campaña**: lleva los descuentos de una campaña a otra. Copia el **porcentaje, no el importe** — entre una campaña y otra los precios se movieron, y repetir el precio viejo aplicaría otro descuento. Medido: 72 publicaciones de *Precios Locos* pasan a *Precios Locos v2* con 26,5% promedio.",
+      "**Activar por regla**: acepta de una todas las ofertas que piden hasta X% de descuento. Sirve para las que arma MercadoLibre y fija el precio. Con tope 5%, de 325 relámpago candidatas cumplen **68**.",
+      "Las tres muestran primero qué va a pasar y piden confirmación con nombre; todo queda en la auditoría."
+    ]
+  },
+  {
+    "fecha": "2026-08-06",
+    "hora": "22:10",
+    "tipo": "mejora",
+    "titulo": "Duplicados de catálogo: ahora distingue por tienda oficial",
+    "puntos": [
+      "El análisis de fichas ahora mira **de qué tienda oficial** es cada publicación, que es lo que decide si algo es un duplicado o una decisión comercial.",
+      "**230 fichas tienen choque entre tiendas** (una en TO Bulit y otra en TO Crafters compitiendo en la misma ficha) y **146 tienen dos de la misma tienda**, que es duplicado claro.",
+      "**74 publicaciones tienen moderación encima ahora**: `forbidden` son las que ML bajó por duplicadas y `waiting_for_patch` las que quedaron pausadas esperando volver a competir.",
+      "También se muestran las publicaciones moderadas o inactivas, que antes quedaban fuera del análisis: eran justo el síntoma que había que ver.",
+      "Cómo se rompe el círculo: dejar en catálogo la de **una sola tienda** y rechazar la sugerencia de catálogo en la otra. La segunda vale igual, pero sin competir en la ficha."
+    ]
+  },
+  {
+    "fecha": "2026-08-06",
+    "hora": "19:20",
+    "tipo": "nuevo",
+    "titulo": "Duplicados: ahora también mira la ficha de catálogo",
+    "puntos": [
+      "El análisis de duplicados agrupa **por SKU**, y eso deja afuera un problema que el SKU no ve: varias publicaciones nuestras compitiendo en la **misma ficha de catálogo**, aunque tengan títulos distintos.",
+      "Ahí MercadoLibre modera una por duplicada y la tradicional queda pausada esperando volver a competir. Es el círculo vicioso que reportaron.",
+      "Hay **252 fichas con 2 o más publicaciones nuestras en catálogo** (934 publicaciones), y en 120 de ellas los títulos son distintos.",
+      "Y **16 fichas tienen dos SKU nuestros colgados**: o es el mismo producto con dos códigos, o uno está mal asociado — pasa con variantes parecidas, como un destornillador plano y uno Phillips.",
+      "Es un **informe, no una acción**: salir de catálogo no se deshace, y la que conviene dejar no siempre es la que más vendió."
+    ]
+  },
+  {
+    "fecha": "2026-08-06",
+    "hora": "17:00",
+    "tipo": "mejora",
+    "titulo": "El tope de publicidad ahora mira el margen de cada producto",
+    "puntos": [
+      "Antes había **un solo tope de ACOS para todo el catálogo** (15%). Eso estaba mal en las dos direcciones: para un producto que deja 10% de margen, gastar 15% en publicidad **pierde plata**; para uno que deja 33%, 15% deja plata sobre la mesa.",
+      "Ahora cada SKU tiene su propio tope, sacado de su margen. El punto de equilibrio es ACOS = margen —gastar en publicidad lo mismo que deja el producto se come toda la ganancia— y se usa el 60% de eso.",
+      "Ejemplos: margen 10,6% → tope 6,4%. Margen 25% → tope 15%. Margen 32,8% → tope 19,7%.",
+      "Para que funcione hay que correr **Rentabilidad** y apretar «Guardar los márgenes para publicidad». Los SKU sin margen medido siguen con el tope general.",
+      "Si los márgenes están viejos o no están, el proceso lo avisa en vez de decidir en silencio."
+    ]
+  },
+  {
+    "fecha": "2026-08-06",
+    "hora": "14:30",
+    "tipo": "mejora",
+    "titulo": "La publicidad se revisa cada 21 días, no cada 7",
+    "puntos": [
+      "Antes corría semanal. Con una ventana de 30 días, un anuncio prendido el martes se juzgaba el martes siguiente con 7 días propios y 23 de cuando estaba apagado: se lo podía prender y apagar antes de saber cómo funcionaba.",
+      "Ahora el ciclo es **cada 21 días**, y además **ningún anuncio se vuelve a tocar antes de 21 días** de la última vez. Eso vale para los dos lados: prender algo que apagamos la semana pasada es el mismo error que apagarlo de nuevo.",
+      "Se agregó una regla para concentrar el presupuesto en los anuncios que mejor rinden, apagando a los que rinden mucho peor que sus compañeros de campaña.",
+      "Ojo: con el ACOS máximo en 15% esa regla **no llega a activarse**, porque el tope ya apaga todo lo que ella apagaría. Recién sirve si algún día se afloja el ACOS."
+    ]
+  },
+  {
+    "fecha": "2026-08-06",
+    "hora": "01:10",
+    "tipo": "nuevo",
+    "titulo": "Las reseñas de MercadoLibre pasan a la tienda Shopify",
+    "puntos": [
+      "Un proceso semanal trae las reseñas que los productos tienen en MercadoLibre y las carga en la ficha del producto de la tienda Shopify, a través de Parlata.",
+      "**584 de los 669 SKU de la tienda están publicados en ML**, y hay unas **66.000 reseñas** de 3 estrellas o más para traer.",
+      "Solo entran las de **3 estrellas o más**, y cada una queda marcada como venida de MercadoLibre.",
+      "Ojo con qué son: ML agrupa las reseñas **por producto de catálogo**, y esa página la comparten todos los vendedores del producto. O sea que parte de lo que entra lo escribió gente que le compró a un competidor.",
+      "No llevan el sello de «voz verificada»: ése queda para las reseñas grabadas por clientes propios."
+    ]
+  },
+  {
+    "fecha": "2026-08-06",
+    "hora": "09:30",
+    "tipo": "mejora",
+    "titulo": "Duplicados: si ninguna vendió, igual sobra una",
+    "puntos": [
+      "Antes, si las dos publicaciones del mismo producto vendían \\$0 en 30 días, no se tocaba ninguna por falta de datos.",
+      "Ahora **se deja una sola**: dos publicaciones facturando cero no son un caso sin datos, son una duplicada de más compitiendo por las mismas visitas.",
+      "Se queda la de más historia — lo que vendió en su vida y las visitas —, que es lo único que distingue una publicación viva de una abandonada.",
+      "La lista pasa de 13 a **30 publicaciones**. Tres de las nuevas se deciden por poco margen (3 contra 6 ventas históricas, por ejemplo): vale mirarlas antes de apretar."
+    ]
+  },
+  {
+    "fecha": "2026-08-05",
+    "hora": "23:15",
+    "tipo": "mejora",
+    "titulo": "Botón para correr el proceso de publicidad cuando quieras",
+    "puntos": [
+      "En **Publicidad → Correr el proceso** está el mismo proceso que corre solo los martes, para dispararlo a mano.",
+      "Sin tildar «Aplicar de verdad» solo te muestra qué haría, sin tocar nada.",
+      "**Se sacaron los topes por corrida**: apaga y suma todo lo que califica, de una. Antes iba de a 25.",
+      "Si ya corriste *Visitas vs ventas*, tarda unos 2 minutos porque reusa esa medición. Si no, la mide y tarda unos 15.",
+      "Ojo: el único límite de gasto que queda es el **presupuesto de cada campaña**. Encender un anuncio gasta desde ese momento."
+    ]
+  },
+  {
+    "fecha": "2026-08-05",
+    "hora": "21:40",
+    "tipo": "mejora",
+    "titulo": "La publicidad se maneja sola",
+    "puntos": [
+      "El proceso de los martes ahora **apaga y también enciende**. Antes solo apagaba.",
+      "Enciende las publicaciones que *Visitas vs ventas* marca como **escalar** o **falta de exposición**: ya convierten y les falta gente que las vea.",
+      "El **ACOS máximo pasa de 35% a 15%**. Ojo con esto: son 40 anuncios que gastan \\$4,35M pero facturan \\$18,16M. Se van a ir apagando de a 25 por semana.",
+      "Las publicaciones que irían a la campaña general de Crafters —que está pausada— van a una campaña nueva, **«Crafters - Potencial de conversión»**, con tope de \\$20.000 y ACOS objetivo 15%.",
+      "Todo queda en la auditoría con el estado anterior."
+    ]
+  },
+  {
+    "fecha": "2026-08-05",
+    "hora": "19:20",
+    "tipo": "nuevo",
+    "titulo": "La publicidad ya se puede tocar desde la app",
+    "puntos": [
+      "Se pueden **pausar, encender, agregar y sacar** anuncios de las campañas, y cambiar estado y presupuesto de una campaña. Todo desde la sección Publicidad.",
+      "Ya se pausaron los **19 anuncios que gastaban de más**: se comían \\$1.286.026 en 30 días, con ACOS de hasta 95% contra un objetivo de 23%.",
+      "Se sacaron de sus campañas ~155 anuncios que apuntaban a publicaciones cerradas o inactivas.",
+      "**Todos los martes a las 9** un proceso automático apaga lo que no se banca. Solo apaga: encender y agregar quedan para vos, porque eso empieza a gastar.",
+      "Como mucho apaga 25 por corrida. Si hay más, van los de mayor gasto y el resto espera a la semana siguiente."
+    ]
+  },
+  {
+    "fecha": "2026-08-05",
+    "hora": "12:30",
+    "tipo": "mejora",
+    "titulo": "Publicidad: pausar, sacar de campaña y sumar lo que convierte",
+    "puntos": [
+      "Aparecieron los botones para **pausar**, **sacar de la campaña** y **sumar** publicaciones, más el detalle de por qué en cada una.",
+      "Regla nueva: las publicaciones que **ya convierten y casi no reciben visitas** se proponen para entrar en la campaña de su marca. Salen del mismo análisis de *Visitas vs ventas*. Hoy son 214.",
+      "No entran las que tienen visitas y no venden: ahí el problema es el precio o las fotos, y pagar clics no lo arregla.",
+      "Cada marca va a la campaña de su anunciante. Las marcas sin anunciante propio caen en la general — que **está pausada**, así que la app te avisa cuáles no van a correr.",
+      "**Falta un permiso de MercadoLibre para que los botones escriban.** Los anunciantes son de la cuenta ERPA y la app entra como CRAFTERSARG: puede leer, no administrar. Hay que darle permiso a CRAFTERSARG o conectar la app con ERPA."
+    ]
+  },
+  {
+    "fecha": "2026-08-04",
+    "hora": "23:10",
+    "tipo": "nuevo",
+    "titulo": "Publicidad y Duplicados",
+    "puntos": [
+      "**Publicidad** (sección nueva): muestra las tres campañas, mide cada anuncio y dice cuál conviene apagar. En Bulit, 5 anuncios se comen \\$694.000 de los \\$3,2M con un ACOS de 57% contra un objetivo de 23%.",
+      "Los topes (ACOS máximo, ROAS mínimo) y la lista de **SKU estratégicos** —los que ninguna regla toca— se editan desde la app y viven en la planilla.",
+      "**Todavía no se pueden apagar los anuncios desde la app**: el endpoint de MercadoLibre para eso no responde. La pantalla dice cuáles tocar y el cambio se hace en el panel de ML.",
+      "**Duplicados** (dentro de Oportunidades): de 720 SKU con publicación repetida, solo 33 grupos son duplicados de verdad. El resto son de catálogo o mezclan Premium con Clásica, y borrarlos sería un desastre.",
+      "Deja la que más vendió en 30 días y borra la otra; si la segunda vende parecido, **se quedan las dos**. Hoy marca 13 para borrar.",
+      "Ojo: **cerrar una publicación no se puede deshacer**. Antes de borrar, cada una se guarda entera en la planilla, que alcanza para republicar el producto pero no para recuperar la publicación."
+    ]
+  },
+  {
+    "fecha": "2026-08-04",
+    "hora": "17:40",
+    "tipo": "nuevo",
+    "titulo": "Tramos de comisión ahora aplica los precios solo",
+    "puntos": [
+      "Antes había que bajar el CSV y subirlo en la sección Precios. Ahora hay un botón que los escribe directo.",
+      "**No hay que tocar el envío.** Está medido: al bajar una publicación debajo de \\$33.000, MercadoLibre le apaga el envío gratis obligatorio solo, en el momento. Es una regla suya que sale del precio.",
+      "Igual **cada publicación que cruza el umbral se verifica** después de escribirla. Si en alguna el envío quedara prendido, se le devuelve el precio anterior sola: con el envío prendido el cambio pierde ~\\$6.200 por unidad en vez de ganar.",
+      "Antes de escribir se releen los precios de verdad. En la primera corrida, 13 de 68 publicaciones habían cambiado de precio desde el último análisis y quedaron afuera.",
+      "Por defecto solo toca las que cruzan el umbral de envío, que son las que dejan plata. Las otras ganan centavos."
+    ]
+  },
+  {
+    "fecha": "2026-08-04",
+    "hora": "15:23",
+    "tipo": "arreglo",
+    "titulo": "La fecha del encabezado mostraba el dato equivocado",
+    "puntos": [
+      "«Última actualización» mostraba **cuándo se actualizó la app**, no cuándo se bajó el catálogo. Por eso apretabas «Actualizar catálogo», se bajaba todo de nuevo, y la fecha no se movía.",
+      "El botón siempre funcionó: el que mentía era el cartel. Ahora son dos líneas separadas, **Catálogo bajado** y **Versión de la app**.",
+      "La hora se muestra en horario argentino. El servidor corre en otro huso, así que antes habría mostrado 3 horas de más.",
+      "Ojo: en una sesión nueva la app usa el catálogo que tenga guardado **sin importar qué tan viejo sea**. Ahora esa fecha se ve de verdad, y si está vieja el botón sirve."
+    ]
+  },
+  {
+    "fecha": "2026-08-01",
+    "hora": "12:05",
+    "tipo": "arreglo",
+    "titulo": "La IA no podía responder desde el proceso automático",
+    "puntos": [
+      "Las preguntas quedaban con el motivo «no encuentro la clave de Anthropic» porque la configuración del proceso automático estaba desactualizada. Ya se corrigió.",
+      "Esas preguntas **se reintentan solas** en la próxima corrida: no hay que hacer nada con ellas.",
+      "El reporte de competencia también fallaba al correr automáticamente, por un archivo de caché que no existe en el servidor. Arreglado."
+    ]
+  },
+  {
+    "fecha": "2026-07-31",
+    "hora": "21:40",
+    "tipo": "nuevo",
+    "titulo": "Reporte de competencia por mail, todos los lunes",
+    "puntos": [
+      "Compara los **100 artículos que más vendiste** en el último mes contra el catálogo de MercadoLibre, y lo manda por mail los lunes a la mañana.",
+      "Lo importante no es la foto sino **qué cambió**: qué competidores bajaron el precio y en qué productos dejamos de ser los más baratos.",
+      "También marca los productos que están en el catálogo, otros venden, y nosotros no tenemos publicación ahí."
+    ]
+  },
+  {
+    "fecha": "2026-07-31",
+    "hora": "20:15",
+    "tipo": "arreglo",
+    "titulo": "El costo de envío se repartía mal entre productos",
+    "puntos": [
+      "MercadoLibre parte una compra de varios productos en **una orden por producto**, todas con el mismo envío. La app lo miraba orden por orden, así que **cada producto del paquete cargaba el envío entero**.",
+      "El caso que lo destapó: un disco de \\\\$2.038 que viajó junto a una amoladora cargaba \\\\$4.125 de envío por unidad. Ahora carga \\\\$419, que es el 10% del valor del paquete que representa.",
+      "Cuando el producto viajó alguna vez **solo**, se usa ese costo real en vez de repartir nada. La tabla de Rentabilidad muestra cuál de los dos se usó."
+    ]
+  },
+  {
+    "fecha": "2026-07-31",
+    "hora": "18:45",
+    "tipo": "nuevo",
+    "titulo": "Aplicar los cambios de precio desde Plata sobre la mesa",
+    "puntos": [
+      "Las dos acciones que se resuelven cambiando un precio —*pierde plata* y *subir al escalón*— ya se pueden aplicar en lote desde la misma pantalla, sin ir a buscarlas a otra sección.",
+      "El tope de cambio acá es 30%, más estricto que en Precio óptimo: se ejecuta sobre una lista que no armaste vos producto por producto.",
+      "Reponer stock y tomar promociones **no** tienen botón: la primera se hace comprando y la segunda desde el panel de MercadoLibre."
+    ]
+  },
+  {
+    "fecha": "2026-07-31",
+    "hora": "17:20",
+    "tipo": "arreglo",
+    "titulo": "Novedades no se actualizaba después de publicar",
+    "puntos": [
+      "El registro se publicaba bien pero la app seguía mostrando la versión anterior hasta reiniciarla a mano.",
+      "Ahora el contenido se lee de un archivo en cada carga, así que las novedades aparecen apenas se publican, sin reiniciar nada."
+    ]
+  },
+  {
+    "fecha": "2026-07-31",
+    "hora": "16:30",
+    "tipo": "nuevo",
+    "titulo": "Plata sobre la mesa — la nueva pantalla de entrada",
+    "puntos": [
+      "Junta en una sola lista todo lo accionable que antes estaba repartido en seis secciones, ordenado por pesos: qué reponer, qué precio subir, qué revisar porque pierde plata.",
+      "Separa **facturación parada** de **margen en juego**, que son cosas distintas y no se pueden sumar.",
+      "Avisa cuando un producto está para reponer **y** pierde plata en cada unidad: reponerlo aumentaría la pérdida.",
+      "Se arregló un error en **Competencia** que cortaba la consulta a los pocos productos."
+    ]
+  },
+  {
+    "fecha": "2026-07-31",
+    "hora": "14:10",
+    "tipo": "arreglo",
+    "titulo": "Los importes se veían como fórmulas matemáticas",
+    "puntos": [
+      "Cuando un texto tenía dos o más importes, Streamlit los tomaba como una fórmula y los mostraba ilegibles. Pasaba en este mismo registro, en el tutorial y en varios avisos de la app."
+    ]
+  },
+  {
+    "fecha": "2026-07-31",
+    "hora": "12:47",
+    "tipo": "nuevo",
+    "titulo": "Las preguntas se contestan solas",
+    "puntos": [
+      "La IA responde apenas entra la pregunta, sin que nadie abra la app: cada 15 minutos de 8 a 21 de lunes a sábado, y cada hora las noches y los domingos. Si no puede responder, la deja en *Gestión manual*.",
+      "El historial también se sincroniza solo, en la misma corrida.",
+      "**Las preguntas que MercadoLibre no deja contestar** (porque la publicación está pausada) ya no se muestran ni se cuentan: no eran trabajo pendiente, eran ruido.",
+      "Se corrigió un problema que duplicaba el historial en cada sincronización. La planilla tenía 4.000 filas para 1.006 preguntas; quedó limpia."
+    ]
+  },
+  {
+    "fecha": "2026-07-31",
+    "hora": "08:05",
+    "tipo": "nuevo",
+    "titulo": "Sección Precio óptimo: la ventana de precio",
+    "puntos": [
+      "Junta en una sola pantalla el **piso** (abajo no llegás al margen), el **techo útil** (arriba perdés la página de catálogo) y el **escalón de comisión**, y sugiere un precio por SKU con su motivo.",
+      "Reemplaza a *Precios mínimos*, que quedó adentro: el piso ahora es una columna más.",
+      "Lo que más rinde es cruzar el escalón: subir de \\$29.615 a \\$33.000 lleva el neto por unidad de −\\$1.964 a +\\$2.824."
+    ]
+  },
+  {
+    "fecha": "2026-07-30",
+    "hora": "19:40",
+    "tipo": "arreglo",
+    "titulo": "Los sliders de porcentaje mostraban 0%",
+    "puntos": [
+      "Todos los sliders de porcentaje se veían de 0% a 0%. Los valores que se usaban eran correctos: lo que estaba mal era cómo se mostraban."
+    ]
+  },
+  {
+    "fecha": "2026-07-30",
+    "hora": "18:08",
+    "tipo": "mejora",
+    "titulo": "Costo logístico con tope, e IVA al 21%",
+    "puntos": [
+      "El costo logístico pasa a ser **10% o $9.000, lo que sea menor**: mover una caja no cuesta el doble porque el producto valga el doble.",
+      "El IVA viene al 21% por defecto. La planilla de costos está sin IVA y los precios de ML lo incluyen, así que antes los márgenes salían inflados en 21 puntos.",
+      "El margen descuenta además impuestos 10% y general 5%."
+    ]
+  },
+  {
+    "fecha": "2026-07-30",
+    "hora": "15:53",
+    "tipo": "mejora",
+    "titulo": "La planilla de costos se sube una sola vez",
+    "puntos": [
+      "Queda guardada y la usan Rentabilidad, Buy Box y Precio óptimo. Antes había que volver a subirla en cada sección y en cada visita."
+    ]
+  },
+  {
+    "fecha": "2026-07-30",
+    "hora": "15:11",
+    "tipo": "arreglo",
+    "titulo": "Las cargas masivas ya no se cortan por un error",
+    "puntos": [
+      "La carga de precios mayoristas a 2.281 publicaciones moría en la número 25 y se perdía todo lo hecho. Ahora cada publicación se resuelve por separado y la corrida sigue.",
+      "Se puede **reintentar solo las que fallaron** sin repetir el resto."
+    ]
+  },
+  {
+    "fecha": "2026-07-30",
+    "hora": "14:26",
+    "tipo": "nuevo",
+    "titulo": "Sección Ganar la venta: Buy Box y promociones",
+    "puntos": [
+      "**Buy Box**: en qué publicaciones de catálogo ganás la página y en cuáles no, con el precio que haría falta. Se pueden bajar precios en lote por criterio, por marca o a mano.",
+      "Hay casos donde ya estás más barato que el ganador y perdés igual: ahí lo que falta es Full o envío gratis, no precio.",
+      "**Promociones**: qué campañas te ofrece ML, cuáles cofinancia, y alta automática por criterio."
+    ]
+  },
+  {
+    "fecha": "2026-07-30",
+    "hora": "09:54",
+    "tipo": "mejora",
+    "titulo": "Preguntas pasa al segundo lugar",
+    "puntos": [
+      "Queda destacada en naranja en el selector de secciones.",
+      "*Responder* pasa a llamarse **Dashboard** y *Pendientes* a **Gestión manual**."
+    ]
+  },
+  {
+    "fecha": "2026-07-30",
+    "hora": "09:05",
+    "tipo": "nuevo",
+    "titulo": "Reporte semanal y Alertas",
+    "puntos": [
+      "**Reporte semanal**: la pantalla del lunes. Cómo vino la semana contra la anterior y qué hay que resolver. Es la que abre la app.",
+      "**Alertas**: stock por agotarse ordenado por plata en riesgo, y reclamos por producto medidos como tasa sobre lo que vende cada uno.",
+      "Apareció que MercadoLibre **pausa sola** la publicación al llegar a stock cero: había 20 productos agotados que no aparecían en ningún informe.",
+      "Se corrigieron todos los porcentajes de las tablas, que se mostraban 100 veces más chicos."
+    ]
+  },
+  {
+    "fecha": "2026-07-29",
+    "hora": "22:09",
+    "tipo": "nuevo",
+    "titulo": "Sección Oportunidades",
+    "puntos": [
+      "Siete análisis: visitas contra ventas, tramos de comisión, precios espejo, factura de ML, envíos, candidatos a Full y salud del catálogo."
+    ]
+  },
+  {
+    "fecha": "2026-07-29",
+    "hora": "21:06",
+    "tipo": "nuevo",
+    "titulo": "Respuestas automáticas con IA",
+    "puntos": [
+      "La IA redacta con el historial de respuestas de la cuenta, los datos de la publicación y los documentos que cargues.",
+      "Si el contexto no alcanza **no inventa**: deja la pregunta para una persona."
+    ]
+  },
+  {
+    "fecha": "2026-07-29",
+    "hora": "20:55",
+    "tipo": "nuevo",
+    "titulo": "Competencia por código de barras",
+    "puntos": [
+      "Quién vende más barato cada producto y en qué posición estás."
+    ]
+  },
+  {
+    "fecha": "2026-07-29",
+    "hora": "16:24",
+    "tipo": "nuevo",
+    "titulo": "Precios mayoristas por reglas",
+    "puntos": [
+      "Descuentos por cantidad con reglas por familia, por SKU o generales."
+    ]
+  },
+  {
+    "fecha": "2026-07-29",
+    "hora": "15:43",
+    "tipo": "nuevo",
+    "titulo": "Control de stock propio",
+    "puntos": [
+      "Tu propia cuenta de unidades con historial de movimientos, descontando las ventas de MercadoLibre. No toca el stock de ML."
+    ]
+  },
+  {
+    "fecha": "2026-07-28",
+    "hora": "21:59",
+    "tipo": "nuevo",
+    "titulo": "Primera versión",
+    "puntos": [
+      "Precios, Stock y Rentabilidad desde planilla, con simulación obligatoria antes de aplicar y registro de todo lo que se cambia."
+    ]
+  }
 ]
