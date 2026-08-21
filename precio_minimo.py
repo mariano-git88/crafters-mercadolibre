@@ -88,7 +88,7 @@ def precio_minimo(costo, pct, envio, iva=0.21, otros=None, objetivo=0.15):
     Funciona porque `UMBRAL_ENVIO_GRATIS` cae justo en un borde de `TRAMOS`:
     dentro de cada banda el envio es constante.
     """
-    from rentabilidad import OTROS_CONCEPTOS, TOPE_LOGISTICO
+    from rentabilidad import OTROS_CONCEPTOS, costo_logistico_unidad
     from tramos import UMBRAL_ENVIO_GRATIS, envio_a_cargo
 
     assert any(t == UMBRAL_ENVIO_GRATIS for t, _ in _bandas_topes()), (
@@ -98,49 +98,37 @@ def precio_minimo(costo, pct, envio, iva=0.21, otros=None, objetivo=0.15):
 
     o = dict(OTROS_CONCEPTOS)
     if otros:
-        o.update(otros)
+        o.update({k: v for k, v in otros.items() if k in OTROS_CONCEPTOS})
 
-    # Ingreso a partir del cual el logistico queda topeado.
-    corte_log = (TOPE_LOGISTICO / o["logistico"]) if o["logistico"] else float("inf")
+    # **El logistico ya no es porcentual**: es un monto por unidad, asi que se
+    # comporta como el cargo fijo y no parte la ecuacion en regimenes. Antes
+    # habia que resolver dos —logistico porcentual y logistico topeado— porque
+    # el 5% con tope de $9.000 cambiaba de forma segun el ingreso.
+    log = (otros or {}).get("logistico")
+    if log is None:
+        log = costo_logistico_unidad()
+    log = float(log)
 
-    # Cada regimen aporta: (parte porcentual del ingreso, monto fijo extra).
-    regimenes = [
-        # logistico porcentual: vale mientras el ingreso no pase el corte
-        (o["impuestos"] + o["logistico"] + o["general"], 0.0, 0.0, corte_log),
-        # logistico topeado: vale de ahi para arriba
-        (o["impuestos"] + o["general"], TOPE_LOGISTICO, corte_log, float("inf")),
-    ]
+    tasa = o["impuestos"] + o["general"]
+    k = (1 - tasa) / (1 + iva) - pct - objetivo
+    if k <= 0:
+        return None
 
     candidatos = []
-    for tasa, extra, ing_desde, ing_hasta in regimenes:
-        k = (1 - tasa) / (1 + iva) - pct - objetivo
-        if k <= 0:
-            continue
-        for desde, hasta, fijo in _bandas():
-            # El envio es constante dentro de la banda: se evalua en `desde`.
-            base = fijo + envio_a_cargo(desde, envio) + costo + extra
-            p = base / k
-            ingreso = p / (1 + iva)
-            # Solo vale si el precio cae en la banda de cargo fijo Y en el
-            # regimen logistico con los que se calculo.
-            if desde <= p < hasta and ing_desde <= ingreso < ing_hasta:
-                candidatos.append(p)
-            # Los bordes tambien son candidatos: cruzar un escalon puede hacer
-            # viable un precio que dentro del tramo anterior no cerraba.
-            for borde in (desde, ing_desde * (1 + iva)):
-                if borde <= 0:
-                    continue
-                ing_b = borde / (1 + iva)
-                tasa_b, extra_b = ((o["impuestos"] + o["logistico"]
-                                    + o["general"], 0.0)
-                                   if ing_b < corte_log
-                                   else (o["impuestos"] + o["general"],
-                                         TOPE_LOGISTICO))
-                margen_b = (borde * (1 - tasa_b) / (1 + iva) - borde * pct
-                            - cargo_fijo_de(borde)
-                            - envio_a_cargo(borde, envio) - costo - extra_b)
-                if margen_b >= objetivo * borde:
-                    candidatos.append(borde)
+    for desde, hasta, fijo in _bandas():
+        # El envio es constante dentro de la banda: se evalua en `desde`.
+        base = fijo + envio_a_cargo(desde, envio) + costo + log
+        p = base / k
+        if desde <= p < hasta:
+            candidatos.append(p)
+        # El borde tambien es candidato: cruzar un escalon puede hacer viable
+        # un precio que dentro del tramo anterior no cerraba.
+        if desde > 0:
+            margen_b = (desde * (1 - tasa) / (1 + iva) - desde * pct
+                        - cargo_fijo_de(desde)
+                        - envio_a_cargo(desde, envio) - costo - log)
+            if margen_b >= objetivo * desde:
+                candidatos.append(desde)
 
     return min(candidatos) if candidatos else None
 

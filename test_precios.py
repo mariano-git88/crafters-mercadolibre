@@ -168,8 +168,26 @@ def main():
     print("4. Los costos de estructura")
     print("=" * 70)
     total = sum(rent.OTROS_CONCEPTOS.values())
-    chequear(abs(total - 0.15) < 1e-9,
-             f"impuestos + logistico + general = 15% (dio {total:.0%})")
+    chequear(abs(total - 0.10) < 1e-9,
+             f"impuestos + general = 10% porcentual (dio {total:.0%})")
+    chequear("logistico" not in rent.OTROS_CONCEPTOS,
+             "el logístico NO es porcentual: es monto por unidad")
+
+    # **El logístico no puede depender del precio.** Es lo que cuesta poner el
+    # paquete en la puerta: cambia con el volumen de entregas, no con lo que
+    # vale el producto. Cuando era un 5% cargaba $131 a un producto de $3.170
+    # y $8.264 a uno de $200.000.
+    log = rent.costo_logistico_unidad()
+    d_barato = rent.otros_conceptos_monto(3170 / 1.21)[0]["logistico"]
+    d_caro = rent.otros_conceptos_monto(200000 / 1.21)[0]["logistico"]
+    chequear(d_barato == d_caro == log,
+             "la entrega cuesta lo mismo en un producto de $3.170 que en uno "
+             "de $200.000",
+             f"barato {d_barato:.0f} vs caro {d_caro:.0f}")
+    chequear(rent.costo_logistico_unidad({"entregas_dia": 30}) < log,
+             "con más entregas por día el fijo se prorratea mejor y baja")
+    chequear(rent.otros_conceptos_monto(10000, unidades=3)[0]["logistico"]
+             == 3 * log, "tres unidades pagan tres entregas")
     chequear(rent.costo_efectivo(1000, True) == 800.0,
              "costo_efectivo con descuento = 80%")
     chequear(rent.costo_efectivo(1000, False) == 1000.0,

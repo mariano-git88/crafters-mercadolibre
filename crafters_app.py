@@ -546,27 +546,59 @@ def controles_otros_conceptos(clave):
     si no coincidieran, Buy Box aprobaría bajas de precio que Rentabilidad
     marca como pérdida.
     """
+    log_def = rent.costo_logistico_unidad()
     st.caption(
         "**Otros conceptos** — costos que no cobra MercadoLibre pero igual "
-        "hay que cargarle a cada venta. Se aplican como porcentaje del "
-        f"**ingreso sin IVA**. El logístico es el porcentaje **o "
-        f"{pesos_md(rent.TOPE_LOGISTICO)}, lo que sea menor**.")
+        "hay que cargarle a cada venta. Impuestos y general van como "
+        "porcentaje del **ingreso sin IVA**; el **logístico es un monto por "
+        "unidad**, porque entregar un paquete cuesta lo mismo valga lo que "
+        "valga lo que hay adentro.")
     # En puntos porcentuales enteros: mostrar "0.10" se lee como 0,1%.
     o1, o2, o3 = st.columns(3)
-    return {
+    valores = {
         "impuestos": o1.number_input(
             "Impuestos %", 0, 100,
             int(rent.OTROS_CONCEPTOS["impuestos"] * 100), 1,
-            key=f"imp_{clave}") / 100,
+            key=f"imp_{clave}",
+            help="IIBB + impuesto al cheque sobre ventas.") / 100,
         "logistico": o2.number_input(
-            "Logístico %", 0, 100,
-            int(rent.OTROS_CONCEPTOS["logistico"] * 100), 1,
-            key=f"log_{clave}") / 100,
+            "Logístico $/unidad", 0, 100000, int(round(log_def)), 50,
+            key=f"log_{clave}",
+            help="Lo que cuesta la entrega por Flex, neto de lo que bonifica "
+                 "MercadoLibre, por la probabilidad de que la venta salga por "
+                 "ahí. Colecta y Full van en cero: ese flete ya lo cobra ML y "
+                 "se lee de cada venta."),
         "general": o3.number_input(
             "General %", 0, 100,
             int(rent.OTROS_CONCEPTOS["general"] * 100), 1,
-            key=f"gen_{clave}") / 100,
+            key=f"gen_{clave}",
+            help="Estructura. Es el único de los tres sin una medición "
+                 "atrás.") / 100,
     }
+    with st.expander("De dónde sale el logístico"):
+        c = rent.COSTO_FLEX
+        propia = c["fijo_diario"] / c["entregas_dia"] + c["variable_entrega"]
+        mezcla = (c["parte_propia"] * propia
+                  + (1 - c["parte_propia"]) * c["tercero_entrega"])
+        st.markdown(
+            f"""
+| | |
+|---|---:|
+| flota propia, {c['entregas_dia']} entregas/día | {pesos(propia)} |
+| tercero (Moova) | {pesos(c['tercero_entrega'])} |
+| mezcla {c['parte_propia']:.0%} propia / {1 - c['parte_propia']:.0%} tercero | {pesos(mezcla)} |
+| lo que bonifica ML (promedio por zona) | −{pesos(c['bonificacion'])} |
+| **neto por entrega** | **{pesos(mezcla - c['bonificacion'])}** |
+| ÷ {c['unidades_envio']} unidades por envío | {pesos((mezcla - c['bonificacion']) / c['unidades_envio'])} |
+| × {c['prob_flex']:.0%} de chance de salir por Flex | **{pesos(log_def)}** |
+""")
+        st.caption(
+            "El fijo de la flota se prorratea, así que el número es muy "
+            "sensible al volumen: a 13,5 entregas por día son "
+            f"{pesos_md(rent.costo_logistico_unidad({'entregas_dia': 13.5}))} "
+            "por unidad y a 30 son "
+            f"{pesos_md(rent.costo_logistico_unidad({'entregas_dia': 30}))}.")
+    return valores
 
 
 @st.cache_data(ttl=3600, show_spinner=False)

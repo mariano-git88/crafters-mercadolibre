@@ -358,17 +358,67 @@ def precios_reales(ml, item_ids, callback=None):
 # negativo en 661 de 670 SKU, y el diagnostico entero del sistema colgaba de
 # ese numero. Con 15% quedan 542 al costo pleno y 169 con el descuento del
 # proveedor, que es un cuadro mucho mas parecido a la realidad.
-OTROS_CONCEPTOS = {"impuestos": 0.05, "logistico": 0.05, "general": 0.05}
-
-# El logistico tiene tope: es el porcentaje de arriba **o $9.000, lo que sea
-# menor**. Mover una caja no cuesta el doble porque el producto valga el doble,
-# asi que arriba de cierto precio el porcentaje deja de representar el costo
-# real.
+# **El logistico salio de aca a proposito** (21/08/2026). Era un 5% mas y no
+# es un porcentaje: es lo que cuesta poner el paquete en la puerta, y eso no
+# depende de cuanto vale el producto. Con 5% el modelo cargaba $131 a un
+# producto de $3.170 y $8.264 a uno de $200.000, cuando la entrega cuesta lo
+# mismo en los dos casos. Acertaba justo en $30.905 y se equivocaba en todo el
+# resto. Ahora vive en COSTO_FLEX, como monto por unidad.
 #
-# Ojo con el efecto de haber bajado el porcentaje: con 10% el tope empezaba a
-# jugar desde $90.000 de ingreso sin IVA; con 5% recien desde $180.000, o sea
-# ~$217.800 de precio publicado. Son 4 SKU de la lista, pero el tope
-# practicamente dejo de actuar.
+# Impuestos 5%: IIBB + impuesto al cheque sobre ventas, confirmado por Mariano.
+# General 5%: estructura. **Es el unico de los tres sin una medicion atras.**
+OTROS_CONCEPTOS = {"impuestos": 0.05, "general": 0.05}
+
+# Lo que cuesta entregar, medido en agosto 2026. **Solo aplica a Flex**: en
+# Colecta y Full el flete ya lo cobra ML y sale en `senders.cost`.
+#
+# No se puede saber por publicacion si una venta va a salir por Flex: el
+# `logistic_type` de la publicacion dice `cross_docking` en el 95,7% del
+# catalogo y aun asi el 39% de los envios sale por Flex — lo decide ML segun
+# donde este el comprador. Medido sobre 150 envios: los 58 que fueron Flex
+# salieron todos de publicaciones marcadas cross_docking. Por eso se carga
+# como **valor esperado**: el costo de una entrega por la probabilidad de que
+# la venta salga por ahi.
+COSTO_FLEX = {
+    "fijo_diario": 165672.0,    # sueldo + vehiculo de la Kangoo, por dia
+    "entregas_dia": 15,         # lo que hace hoy
+    "variable_entrega": 2280.0,
+    "tercero_entrega": 14545.0,  # Moova desde el 16/07
+    "parte_propia": 0.70,       # 70% Kangoo, 30% Moova
+    "bonificacion": 7502.0,     # lo que paga ML, promedio ponderado por zona
+    "prob_flex": 0.39,
+    "unidades_envio": 1.89,
+}
+
+
+def costo_logistico_unidad(p=None):
+    """
+    Lo que hay que cargarle a **cada unidad vendida** por la entrega.
+
+    Es el costo de una entrega Flex —con los fijos de la flota prorrateados—
+    menos lo que ML bonifica, repartido entre las unidades del envio y
+    multiplicado por la probabilidad de que la venta salga por Flex.
+
+    Con los numeros de agosto 2026 da **$1.277 por unidad**. El fijo diario se
+    prorratea, asi que el numero es muy sensible al volumen: a 13,5 entregas
+    por dia son $1.455 y a 30 son $62.
+    """
+    c = dict(COSTO_FLEX)
+    if p:
+        c.update(p)
+    if not c["entregas_dia"] or not c["unidades_envio"]:
+        return 0.0
+    propia = c["fijo_diario"] / c["entregas_dia"] + c["variable_entrega"]
+    mezcla = (c["parte_propia"] * propia
+              + (1 - c["parte_propia"]) * c["tercero_entrega"])
+    neto = mezcla - c["bonificacion"]
+    return c["prob_flex"] * neto / c["unidades_envio"]
+
+# **Ya no se usa.** Era el tope del logistico cuando era porcentual: "el 5% o
+# $9.000, lo que sea menor", puesto justamente porque mover una caja no cuesta
+# el doble porque el producto valga el doble. Al pasar el logistico a monto
+# por unidad el problema desaparece de raiz y el tope sobra. Queda definido
+# para no romper lo que todavia lo importe.
 TOPE_LOGISTICO = 9000.0
 
 # Lo que el proveedor descuenta sobre la lista. Dos limites, los dos duros:
@@ -397,18 +447,29 @@ def costo_efectivo(costo, con_descuento=False,
     return float(costo) * (1 - descuento) if con_descuento else float(costo)
 
 
-def otros_conceptos_monto(ingreso, otros=None, tope_logistico=TOPE_LOGISTICO):
+def otros_conceptos_monto(ingreso, otros=None, unidades=1, flex=None):
     """
     Cuanto se lleva cada concepto de estructura para un ingreso dado.
 
-    Devuelve (dict por concepto, total). El unico con tope es el logistico.
+    Devuelve (dict por concepto, total).
+
+    **Impuestos y general son porcentuales; el logistico no.** El logistico es
+    un monto por unidad (`costo_logistico_unidad`), porque entregar un paquete
+    cuesta lo mismo valga lo que valga lo que hay adentro. `unidades` es
+    cuantas unidades lleva la venta que se esta evaluando: por defecto una.
+
+    `otros` puede traer `logistico` como monto por unidad para pisarlo desde
+    la pantalla; si no, sale de `COSTO_FLEX`.
     """
     o = dict(OTROS_CONCEPTOS)
     if otros:
-        o.update(otros)
+        o.update({k: v for k, v in otros.items() if k in OTROS_CONCEPTOS})
+    log_unidad = (otros or {}).get("logistico")
+    if log_unidad is None:
+        log_unidad = costo_logistico_unidad(flex)
     detalle = {
         "impuestos": ingreso * o["impuestos"],
-        "logistico": min(ingreso * o["logistico"], tope_logistico),
+        "logistico": float(log_unidad) * max(int(unidades or 1), 1),
         "general": ingreso * o["general"],
     }
     return detalle, sum(detalle.values())
