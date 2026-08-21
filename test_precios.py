@@ -167,14 +167,19 @@ def main():
     print("\n" + "=" * 70)
     print("4. Los costos de estructura")
     print("=" * 70)
-    gen = rent.general_pct()
-    chequear(0.15 < gen < 0.35,
-             f"el general sale de prorratear ${rent.GENERAL['gasto_mensual']:,.0f} "
-             f"sobre la venta (dio {gen:.1%})")
+    chequear(rent.OTROS_CONCEPTOS["general"] == 0.05,
+             "el general aplicado es 5%: criterio de contribución")
+    chequear(0.15 < rent.general_pct() < 0.35,
+             f"y el de absorción total sigue calculable "
+             f"(${rent.GENERAL['gasto_mensual']:,.0f} sobre la venta = "
+             f"{rent.general_pct():.1%})")
     chequear(rent.COSTO_FLEX["fijo_diario"] == 0,
              "chofer + Kangoo van en cero: se cobran en el general, no acá")
-    chequear(rent.costo_logistico_unidad() < 0,
-             "sin la flota, Flex deja plata: ML bonifica más de lo que cuesta")
+    chequear(rent.costo_logistico_unidad() == 0,
+             "la logística no se cobra: va en 0 por decisión")
+    chequear(rent.costo_logistico_unidad({"aplicar": True}) < 0,
+             "y si se activara, daría negativo: ML bonifica más de lo que "
+             "cuesta entregar sin contar la flota")
     chequear("logistico" not in rent.OTROS_CONCEPTOS,
              "el logístico NO es porcentual: es monto por unidad")
 
@@ -191,9 +196,13 @@ def main():
              f"barato {d_barato:.0f} vs caro {d_caro:.0f}")
     # Con la flota en cero el volumen de entregas ya no mueve el costo: eso es
     # lo esperado, y si algún día vuelve a haber fijo el test lo va a marcar.
-    chequear(rent.costo_logistico_unidad({"entregas_dia": 30}) == log,
+    chequear(rent.costo_logistico_unidad({"aplicar": True,
+                                          "entregas_dia": 30})
+             == rent.costo_logistico_unidad({"aplicar": True}),
              "sin fijos de flota, el volumen de entregas no cambia el costo")
-    chequear(rent.costo_logistico_unidad({"fijo_diario": 165672.0}) > log,
+    chequear(rent.costo_logistico_unidad({"aplicar": True,
+                                          "fijo_diario": 165672.0})
+             > rent.costo_logistico_unidad({"aplicar": True}),
              "y si se vuelve a contar la flota, el costo sube")
     chequear(rent.otros_conceptos_monto(10000, unidades=3)[0]["logistico"]
              == 3 * log, "tres unidades pagan tres entregas")

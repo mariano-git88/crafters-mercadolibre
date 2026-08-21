@@ -409,7 +409,22 @@ def general_pct(g=None):
     return c["gasto_mensual"] / (base / 1.21)
 
 
-OTROS_CONCEPTOS["general"] = general_pct()
+# **Va 5%, no el prorrateo** (decision de Mariano, 21/08/2026).
+#
+# `general_pct()` reparte los $16M de estructura sobre cada unidad y da 24,4%.
+# Con eso el 96% del catalogo queda bajo el piso y ningun producto cubre
+# costos al precio sugerido, lo cual no describe un negocio que factura $72M
+# por mes: prorratear un gasto que no crece con cada venta le cobra a la
+# unidad marginal como si fuera variable.
+#
+# El criterio que manda es **contribucion**: el precio tiene que cubrir el
+# costo del producto, lo que cobra ML, los impuestos y un 5% de gastos, y lo
+# que sobra va contra la estructura. Cuanto aporta el volumen total a esos
+# $16M es una pregunta de la operacion, no del precio de cada SKU.
+#
+# `general_pct()` queda disponible para mirar el otro escenario (absorcion
+# total) desde la pantalla, subiendo el General a 24,4%.
+OTROS_CONCEPTOS["general"] = 0.05
 
 # Lo que cuesta entregar, medido en agosto 2026. **Solo aplica a Flex**: en
 # Colecta y Full el flete ya lo cobra ML y sale en `senders.cost`.
@@ -431,6 +446,10 @@ OTROS_CONCEPTOS["general"] = general_pct()
 # bonifica $7.502 promedio y entregar cuesta $5.960 sin la flota. No es un
 # error de signo: es lo que sale de tratar la flota como hundida.
 COSTO_FLEX = {
+    # **No se cobra** (decision de Mariano, 21/08/2026): la logistica va en 0.
+    # Los numeros medidos quedan igual porque son el insumo para volver a
+    # decidirlo, y la pantalla los muestra.
+    "aplicar": False,
     "fijo_diario": 0.0,         # chofer + Kangoo: se tratan como hundidos
     "entregas_dia": 15,         # lo que hace hoy
     "variable_entrega": 2280.0,
@@ -457,6 +476,8 @@ def costo_logistico_unidad(p=None):
     c = dict(COSTO_FLEX)
     if p:
         c.update(p)
+    if not c.get("aplicar"):
+        return 0.0
     if not c["entregas_dia"] or not c["unidades_envio"]:
         return 0.0
     propia = c["fijo_diario"] / c["entregas_dia"] + c["variable_entrega"]
