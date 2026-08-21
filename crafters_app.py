@@ -36,6 +36,7 @@ import publicidad_cron
 import full
 import salud
 import espejos
+import financiacion
 import reclamos as rec
 import rentabilidad as rent
 import lista_precios as LP
@@ -2635,6 +2636,7 @@ elif seccion == "Competencia":
 elif seccion == "Oportunidades":
     st.markdown("#### Dónde hay plata sobre la mesa")
     op = st.radio("Vista", ["Visitas vs ventas", "Tramos de comisión",
+                            "Premium vs Clásica",
                             "Precios espejo", "Duplicados", "Factura de ML",
                             "Envíos", "Candidatos a Full",
                             "Salud del catálogo"],
@@ -2942,6 +2944,176 @@ elif seccion == "Oportunidades":
                                dfk.to_csv(index=False).encode("utf-8"),
                                f"conciliacion_{datetime.now():%Y%m%d}.csv",
                                "text/csv")
+
+    elif op == "Premium vs Clásica":
+        st.caption(
+            "Cuando un SKU está publicado en **Premium** (con cuotas) y en "
+            "**Clásica** a la vez, la Premium paga ~12 puntos más de comisión: "
+            "su precio tiene que ser más alto o cada venta deja menos. Acá "
+            "están las que no lo cubren.")
+        st.info(
+            "**El recargo que empata no es la resta de comisiones.** Con 25,8% "
+            "contra 13,5% la diferencia es de 12,3 puntos, pero el recargo se "
+            "aplica sobre el precio nuevo, que también paga comisión: hay que "
+            "subir **16,6%**. Con 12,3% la venta sigue perdiendo plata.",
+            icon="🧮")
+
+        if st.button("Analizar Premium vs Clásica", key="fin_go"):
+            paso = st.empty()
+            try:
+                with st.spinner("Releyendo precios en vivo..."):
+                    try:
+                        sug_fin = LP.mapa_precios()
+                    except Exception:                  # noqa: BLE001
+                        sug_fin = {}
+                    st.session_state["fin_df"] = financiacion.analizar(
+                        ml, pubs=pubs, sugeridos=sug_fin,
+                        callback=lambda m: paso.caption(str(m)))
+            except Exception as e:                     # noqa: BLE001
+                paso.empty()
+                st.error(f"No pude analizar: {type(e).__name__}: {e}")
+                st.stop()
+            paso.empty()
+            st.session_state.pop("fin_res", None)
+
+        dfin = st.session_state.get("fin_df")
+        if dfin is not None and len(dfin):
+            malos = dfin[dfin["brecha"] <= 0]
+            f1, f2, f3, f4 = st.columns(4)
+            f1.metric("Pares Premium/Clásica", len(dfin))
+            f2.metric("No cubren la financiación", len(malos))
+            f3.metric("Al mismo precio o más baratas",
+                      int((malos["dif_precio"] <= financiacion.TOLERANCIA).sum()))
+            f4.metric("Se deja por unidad",
+                      pesos(-malos["brecha"].sum()) if len(malos) else "—",
+                      help="Suma de lo que cada Premium deja de ganar en cada "
+                           "venta, comparada con la Clásica del mismo SKU")
+
+            sin_log = malos[~malos["misma_logistica"]]
+            if len(sin_log):
+                st.warning(
+                    f"**{len(sin_log)} pares tienen logística distinta** (una "
+                    "en Full y la otra no). Ahí el envío no es el mismo, así "
+                    "que la brecha real es todavía mayor que la calculada.",
+                    icon="📦")
+
+            st.divider()
+            st.markdown("##### Cómo corregirlo")
+            b1, b2 = st.columns([1.4, 2])
+            base_fin = b1.radio(
+                "Precio de partida",
+                ["Precio sugerido del SKU", "Precio de la Clásica",
+                 "Igualar el neto exacto"],
+                key="fin_base",
+                help="El sugerido es `ListaPrecio × 2,12`, una decisión "
+                     "comercial ya tomada. Si el SKU no lo tiene cargado, se "
+                     "usa el precio de la Clásica.")
+            auto_fin = b2.checkbox(
+                "Spread de financiación automático", value=True, key="fin_auto",
+                help="El que empata el neto con la Clásica. Se calcula por "
+                     "categoría, porque las comisiones cambian según cuál sea.")
+            spread_fin = None
+            if not auto_fin:
+                spread_fin = b2.slider(
+                    "Spread sobre el precio de partida", 0.0, 30.0, 16.6, 0.1,
+                    format="%.1f%%", key="fin_spread",
+                    help="En 0% se publica el precio de partida tal cual, sin "
+                         "cobrar la financiación. Es una decisión válida: "
+                         "sirve para alinear precios a propósito.") / 100
+
+            modo = {"Precio sugerido del SKU": "sugerido",
+                    "Precio de la Clásica": "clasica",
+                    "Igualar el neto exacto": "igualar"}[base_fin]
+            if modo == "igualar" and not auto_fin:
+                st.caption("*Igualar el neto* calcula el precio exacto contra "
+                           "los escalones reales, así que ignora el slider.")
+
+            plan_fin = financiacion.plan(dfin, base=modo, spread=spread_fin)
+            listas = plan_fin[plan_fin["accion"] == "aplicar"]
+            revisar = plan_fin[plan_fin["accion"] == "revisar"]
+            quietas = plan_fin[plan_fin["accion"] == "ninguna"]
+
+            g1, g2, g3 = st.columns(3)
+            g1.metric("Se pueden aplicar", len(listas))
+            g2.metric("Quedan para revisar", len(revisar))
+            g3.metric("Mejora por unidad",
+                      pesos(listas["gana_por_unidad"].sum()) if len(listas) else "—",
+                      help="Suma de lo que gana cada publicación en cada venta "
+                           "después del cambio")
+
+            vista = plan_fin[["sku", "titulo", "item_id", "precio_actual",
+                              "precio_clasica", "sugerido", "precio_nuevo",
+                              "cambio", "gana_por_unidad", "origen", "accion",
+                              "motivo"]]
+            st.dataframe(vista, use_container_width=True, hide_index=True,
+                         column_config={
+                             "cambio": st.column_config.NumberColumn(
+                                 "cambio", format="%.1f%%"),
+                         })
+            st.download_button(
+                "Descargar el plan", vista.to_csv(index=False).encode("utf-8"),
+                f"premium_vs_clasica_{datetime.now():%Y%m%d}.csv", "text/csv",
+                key="fin_csv")
+
+            if len(revisar):
+                with st.expander(f"Por qué {len(revisar)} quedan afuera"):
+                    st.dataframe(
+                        revisar["motivo"].value_counts().rename_axis("motivo")
+                        .reset_index(name="cuántas"),
+                        use_container_width=True, hide_index=True)
+
+            if len(listas):
+                st.divider()
+                st.markdown("##### Aplicar los precios")
+                st.warning(
+                    f"**Sube el precio de {len(listas)} publicaciones "
+                    "Premium.** Subir un precio puede bajar las ventas: la "
+                    "alternativa a cobrarlo es apagar la Premium y quedarse "
+                    "con la Clásica.", icon="⬆️")
+                cruzan = listas[
+                    (listas["precio_actual"] < tramos.UMBRAL_ENVIO_GRATIS)
+                    & (listas["precio_nuevo"] >= tramos.UMBRAL_ENVIO_GRATIS)]
+                if len(cruzan):
+                    st.info(
+                        f"{len(cruzan)} cruzan los "
+                        f"{pesos_md(tramos.UMBRAL_ENVIO_GRATIS)} y ML les va a "
+                        "prender el envío gratis, que paga el vendedor. Se "
+                        "verifica después de escribir y se revierte si el "
+                        "envío se come la mejora.", icon="📦")
+
+                op_fin = st.text_input("Tu nombre (queda en el registro)",
+                                       key="fin_op")
+                conf_fin = st.checkbox(
+                    f"Confirmo que quiero cambiar {len(listas)} precios",
+                    key="fin_conf")
+                if st.button(f"Aplicar {len(listas)} precios", key="fin_apply",
+                             disabled=not (conf_fin and op_fin.strip())):
+                    barra = st.progress(0.0, text="Aplicando...")
+                    try:
+                        st.session_state["fin_res"] = financiacion.aplicar(
+                            ml, plan_fin, operador=op_fin.strip(),
+                            callback=lambda i, t, f: barra.progress(
+                                min(i / max(t, 1), 1.0),
+                                text=f"{i} de {t}: {f['sku']}"))
+                    except Exception as e:             # noqa: BLE001
+                        barra.empty()
+                        st.error(f"La corrida se cortó: {type(e).__name__}: {e}")
+                        st.stop()
+                    barra.empty()
+                    # Los precios cambiaron: el análisis quedó viejo.
+                    st.session_state.pop("fin_df", None)
+
+            res_fin = st.session_state.get("fin_res")
+            if res_fin is not None and len(res_fin):
+                ok_fin = int((res_fin["resultado"] == "OK").sum())
+                if ok_fin == len(res_fin):
+                    st.success(f"{ok_fin} precios actualizados.")
+                else:
+                    st.error(f"{ok_fin} de {len(res_fin)} aplicados.")
+                st.dataframe(res_fin, use_container_width=True, hide_index=True)
+
+        elif dfin is not None:
+            st.success("No hay ningún SKU con Premium y Clásica a la vez. 🎉")
 
     elif op == "Precios espejo":
         st.caption(
