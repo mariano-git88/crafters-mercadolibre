@@ -5616,14 +5616,36 @@ elif seccion == "PROMOS":
             st.stop()
         st.error(f"**Esto activa {n_rg} promociones de verdad** y cambia el "
                  "precio que ve el comprador.", icon="⚠️")
+
+        # **Por tandas, porque la corrida larga se corta.** Cada alta tarda
+        # ~2 segundos entre el POST a ML y la pausa, así que 1.633 son más de
+        # una hora en un solo click y Streamlit Cloud cierra la conexión mucho
+        # antes: el 30/08 se cortó a los 23 minutos con 243 hechas.
+        # Retomar es volver a apretar: las ya activadas salen del plan como
+        # "ya está" en el próximo análisis.
+        SEGUNDOS_POR_ALTA = 2.0
+        tope_rg = st.number_input(
+            "Cuántas activar en esta tanda", 25, 2000,
+            min(300, int(n_rg)), 25, key="tope_rg",
+            help="La corrida se corta si tarda demasiado. Con tandas de 300 "
+                 "termina en unos 10 minutos y se puede repetir: las que ya "
+                 "quedaron activadas no se vuelven a tocar.")
+        tope_rg = int(min(tope_rg, n_rg))
+        st.caption(
+            f"Va a activar **{tope_rg} de {n_rg}**; son unos "
+            f"**{tope_rg * SEGUNDOS_POR_ALTA / 60:.0f} minutos**. "
+            + (f"Quedan {n_rg - tope_rg} para la próxima tanda: volvé a "
+               "analizar y repetí." if tope_rg < n_rg else
+               "Entra todo en una sola tanda."))
+
         h1, h2 = st.columns([2, 3])
         op_rg = h1.text_input("Tu nombre", key="op_rg")
-        cf_rg = h2.checkbox(f"Confirmo activar {n_rg}", key="cf_rg")
-        if st.button("Activar las que cumplen", key="go_rg",
+        cf_rg = h2.checkbox(f"Confirmo activar {tope_rg}", key="cf_rg")
+        if st.button(f"Activar {tope_rg}", key="go_rg",
                      disabled=not (cf_rg and op_rg.strip())):
             barra = st.progress(0.0, text="Activando...")
             st.session_state["res_rg"] = promos_campanas.aplicar(
-                ml, plan_rg, operador=op_rg.strip(),
+                ml, plan_rg, operador=op_rg.strip(), tope=tope_rg,
                 callback=lambda i, t, iid: barra.progress(
                     i / t, text=f"{i} de {t}: {iid}"))
             barra.empty()

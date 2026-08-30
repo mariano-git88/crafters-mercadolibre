@@ -397,48 +397,73 @@ def aplicar(ml, plan, operador="", callback=None, tope=None):
         hacer = hacer.head(tope)
     filas, total = [], len(hacer)
 
-    for n, (_, f) in enumerate(hacer.iterrows(), start=1):
-        cuerpo = {"promotion_type": f["tipo"]}
-        if f.get("campana_id"):
-            cuerpo["promotion_id"] = f["campana_id"]
-        # Las campañas propias no tienen offer_id; el resto lo exige.
-        if f["tipo"] not in ELIGE_EL_VENDEDOR and f.get("oferta_id"):
-            cuerpo["offer_id"] = f["oferta_id"]
-        if pd.notna(f["precio_promo"]):
-            cuerpo["deal_price"] = round(float(f["precio_promo"]), 2)
-        # Las relampago exigen cuanto stock se compromete. Va el maximo, que
-        # es el disponible: comprometer menos limita la oferta sin ahorrar
-        # nada, porque el descuento se aplica igual a lo que se venda.
-        if pd.notna(f.get("stock_max")):
-            cuerpo["stock"] = int(f["stock_max"])
+    # **La auditoria se escribe de a lotes.** Antes iba una llamada a Google
+    # Sheets por promocion, o sea DOS llamadas de red por item —el POST a ML y
+    # el registro— y eso puso la corrida en 3,6 s por alta: 98 minutos para
+    # 1.633. Medido el 30/08/2026, cuando se corto a los 23 minutos.
+    #
+    # El lote es chico a proposito: el `offer_id` que devuelve el alta es lo
+    # unico con lo que despues se puede dar de baja la promocion, asi que
+    # perder registros duele. Con 10 se pierde a lo sumo lo de los ultimos 10
+    # y se hace una decima parte de las llamadas.
+    LOTE_AUDITORIA = 10
+    pendientes = []
 
-        nueva = ""
-        try:
-            r = ml.post(f"/seller-promotions/items/{f['item_id']}",
-                        payload=cuerpo, app_version="v2")
-            nueva = (r or {}).get("offer_id", "")
-            resultado, detalle = "OK", ""
-        except Exception as e:                     # noqa: BLE001
-            resultado, detalle = "ERROR", f"{type(e).__name__}: {str(e)[:220]}"
+    def _volcar():
+        if pendientes:
+            almacen.append_auditoria(list(pendientes))
+            pendientes.clear()
 
-        almacen.append_auditoria([{
-            "fecha": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "item_id": f["item_id"],
-            "campo": f"promocion:{f['tipo']}",
-            "valor_anterior": f["precio_original"],
-            "valor_nuevo": f["precio_promo"],
-            "resultado": resultado if resultado == "OK" else f"ERROR: {detalle}",
-            "operador": operador,
-            "nota": f"{f['motivo']} · campaña {f['campana_id']} · "
-                    f"offer_id={nueva or '—'}",
-        }])
+    try:
+        for n, (_, f) in enumerate(hacer.iterrows(), start=1):
+            cuerpo = {"promotion_type": f["tipo"]}
+            if f.get("campana_id"):
+                cuerpo["promotion_id"] = f["campana_id"]
+            # Las campañas propias no tienen offer_id; el resto lo exige.
+            if f["tipo"] not in ELIGE_EL_VENDEDOR and f.get("oferta_id"):
+                cuerpo["offer_id"] = f["oferta_id"]
+            if pd.notna(f["precio_promo"]):
+                cuerpo["deal_price"] = round(float(f["precio_promo"]), 2)
+            # Las relampago exigen cuanto stock se compromete. Va el maximo, que
+            # es el disponible: comprometer menos limita la oferta sin ahorrar
+            # nada, porque el descuento se aplica igual a lo que se venda.
+            if pd.notna(f.get("stock_max")):
+                cuerpo["stock"] = int(f["stock_max"])
 
-        filas.append({**{c: f.get(c) for c in COLUMNAS},
-                      "oferta_id_nueva": nueva, "resultado": resultado,
-                      "detalle": detalle})
-        if callback:
-            callback(n, total, f["item_id"])
-        time.sleep(PAUSA)
+            nueva = ""
+            try:
+                r = ml.post(f"/seller-promotions/items/{f['item_id']}",
+                            payload=cuerpo, app_version="v2")
+                nueva = (r or {}).get("offer_id", "")
+                resultado, detalle = "OK", ""
+            except Exception as e:                     # noqa: BLE001
+                resultado, detalle = "ERROR", f"{type(e).__name__}: {str(e)[:220]}"
+
+            pendientes.append({
+                "fecha": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "item_id": f["item_id"],
+                "campo": f"promocion:{f['tipo']}",
+                "valor_anterior": f["precio_original"],
+                "valor_nuevo": f["precio_promo"],
+                "resultado": resultado if resultado == "OK" else f"ERROR: {detalle}",
+                "operador": operador,
+                "nota": f"{f['motivo']} · campaña {f['campana_id']} · "
+                        f"offer_id={nueva or '—'}",
+            })
+            if len(pendientes) >= LOTE_AUDITORIA:
+                _volcar()
+
+            filas.append({**{c: f.get(c) for c in COLUMNAS},
+                          "oferta_id_nueva": nueva, "resultado": resultado,
+                          "detalle": detalle})
+            if callback:
+                callback(n, total, f["item_id"])
+            time.sleep(PAUSA)
+    finally:
+        # Si el bucle se corta a mitad, lo ya escrito en ML tiene que
+        # quedar registrado igual: el offer_id es lo unico con lo que
+        # despues se puede dar de baja la promocion.
+        _volcar()
 
     return pd.DataFrame(filas)
 
