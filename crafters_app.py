@@ -5626,7 +5626,7 @@ elif seccion == "PROMOS":
         SEGUNDOS_POR_ALTA = 2.0
         tope_rg = st.number_input(
             "Cuántas activar en esta tanda", 25, 2000,
-            min(300, int(n_rg)), 25, key="tope_rg",
+            min(300, int(n_rg)), 25, key="tanda_rg",
             help="La corrida se corta si tarda demasiado. Con tandas de 300 "
                  "termina en unos 10 minutos y se puede repetir: las que ya "
                  "quedaron activadas no se vuelven a tocar.")

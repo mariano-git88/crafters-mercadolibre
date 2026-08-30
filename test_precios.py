@@ -212,6 +212,29 @@ def main():
              "costo_efectivo sin descuento = costo pleno")
 
     print("\n" + "=" * 70)
+    print("5. Ninguna key de widget se repite")
+    print("=" * 70)
+    # **Una key repetida rompe la pantalla entera**, no el widget: Streamlit
+    # tira StreamlitDuplicateElementKey y la sección no renderiza. Pasó el
+    # 30/08/2026 al agregar el tope por tanda en PROMOS con `tope_rg`, que ya
+    # era el tope de descuento de esa misma pantalla. No se ve compilando ni
+    # leyendo el diff: hay que mirar el archivo entero.
+    import ast
+    import collections
+    arbol = ast.parse(Path("crafters_app.py").read_text(encoding="utf-8"))
+    vistas = collections.defaultdict(list)
+    for nodo in ast.walk(arbol):
+        if isinstance(nodo, ast.Call):
+            for kw in nodo.keywords:
+                if (kw.arg == "key" and isinstance(kw.value, ast.Constant)
+                        and isinstance(kw.value.value, str)):
+                    vistas[kw.value.value].append(nodo.lineno)
+    repetidas = {k: v for k, v in vistas.items() if len(v) > 1}
+    chequear(not repetidas,
+             f"las {len(vistas)} keys de crafters_app.py son únicas",
+             "; ".join(f"{k} en {v}" for k, v in sorted(repetidas.items())))
+
+    print("\n" + "=" * 70)
     print("No se publicita lo que pierde plata")
     print("=" * 70)
     # Portado de MercadoLibre UY el 18/08/2026. Antes `tope_acos` metia en el
