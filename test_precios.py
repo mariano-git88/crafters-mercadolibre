@@ -77,9 +77,12 @@ def main():
                            con_descuento=True,
                            precios_lista={"EN_LISTA": {"sugerido": 2120.0}})
     por_sku = dict(zip(salida["sku"], salida["costo"]))
-    chequear(abs(por_sku.get("EN_LISTA", 0) - 800.0) < 0.01,
-             "el SKU de la lista recibe el descuento",
-             f"dio {por_sku.get('EN_LISTA')}")
+    # Desde oct-2026 el descuento es 0 (los costos de ERPA vienen netos): el
+    # SKU de la lista recibe lo que diga la constante, sea cual sea.
+    esperado = 1000.0 * (1 - rent.DESCUENTO_PROVEEDOR)
+    chequear(abs(por_sku.get("EN_LISTA", 0) - esperado) < 0.01,
+             "el SKU de la lista recibe el descuento vigente",
+             f"dio {por_sku.get('EN_LISTA')}, esperaba {esperado}")
     chequear(abs(por_sku.get("FUERA", 0) - 1000.0) < 0.01,
              "el SKU fuera de la lista NO recibe el descuento",
              f"dio {por_sku.get('FUERA')}")
@@ -206,10 +209,44 @@ def main():
              "y si se vuelve a contar la flota, el costo sube")
     chequear(rent.otros_conceptos_monto(10000, unidades=3)[0]["logistico"]
              == 3 * log, "tres unidades pagan tres entregas")
-    chequear(rent.costo_efectivo(1000, True) == 800.0,
+    chequear(rent.costo_efectivo(1000, True, descuento=0.20) == 800.0,
              "costo_efectivo con descuento = 80%")
-    chequear(rent.costo_efectivo(1000, False) == 1000.0,
+    chequear(rent.costo_efectivo(1000, False, descuento=0.20) == 1000.0,
              "costo_efectivo sin descuento = costo pleno")
+    chequear(rent.DESCUENTO_PROVEEDOR == 0.0,
+             "los costos de ERPA vienen netos: no se descuenta otra vez",
+             f"DESCUENTO_PROVEEDOR = {rent.DESCUENTO_PROVEEDOR}")
+
+    print("\n" + "=" * 70)
+    print("4b. Subir una planilla parcial no borra el resto de los costos")
+    print("=" * 70)
+    anteriores = [
+        {"sku": "ERPA1", "costo": 1000, "fecha": "2026-08-14 18:45",
+         "operador": "Agustín"},
+        {"sku": "OTRO", "costo": 500, "fecha": "2026-08-14 18:45",
+         "operador": "Agustín"},
+    ]
+    parcial = pd.DataFrame([{"sku": "ERPA1", "costo": 480.0},
+                            {"sku": "ERPA2", "costo": 300.0}])
+    filas = rent.combinar_costos(anteriores, parcial, "2026-10-19 12:00",
+                                 "Mariano")
+    por = {f["sku"]: f for f in filas}
+    chequear(set(por) == {"ERPA1", "ERPA2", "OTRO"},
+             "quedan los tres SKU", f"quedaron {sorted(por)}")
+    chequear(por["ERPA1"]["costo"] == 480.0, "el de la planilla se pisa")
+    chequear(por["OTRO"]["costo"] == 500
+             and por["OTRO"]["fecha"] == "2026-08-14 18:45",
+             "el que no viene queda con su costo y su fecha")
+    chequear(filas[0]["fecha"] == "2026-10-19 12:00",
+             "la primera fila es la nueva (de ahí sale 'actualizada el')")
+    res, _ = rent.diferencias_costos(
+        pd.DataFrame([{"sku": "ERPA1", "costo": 1000.0},
+                      {"sku": "OTRO", "costo": 500.0}]), parcial)
+    chequear((res["cambian"], res["nuevos"], res["sin_tocar"]) == (1, 1, 1),
+             "la vista previa cuenta 1 que cambia, 1 nuevo y 1 sin tocar",
+             str(res))
+    chequear(abs(res["variacion_mediana"] + 0.52) < 1e-9,
+             "y mide la variación (−52%) para poder avisar", str(res))
 
     print("\n" + "=" * 70)
     print("5. Ninguna key de widget se repite")

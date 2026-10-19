@@ -33,8 +33,10 @@ CACHE_ENVIOS = DIR / "costos_envio.json"
 # El usuario de CRAFTERS: en los costos de envio hay que mirar el sender
 # que somos nosotros, no el comprador.
 COLS_COSTO = ["costo", "costo unitario", "costo_unitario", "cost",
-              "precio costo", "precio_costo", "costo producto"]
-COLS_SKU = ["sku", "codigo", "código", "articulo", "artículo"]
+              "precio costo", "precio_costo", "costo producto",
+              "costo neto desc", "costo neto"]
+COLS_SKU = ["sku", "codigo", "código", "articulo", "artículo",
+            "sku crafters"]
 
 
 # ------------------------------------------------------------------ historico
@@ -270,21 +272,84 @@ HOJA_COSTOS = "costos"
 COLS_COSTOS = ["sku", "costo", "fecha", "operador"]
 
 
-def guardar_costos(costos_df, operador=""):
+def combinar_costos(anteriores, costos_df, sello, operador=""):
+    """
+    Filas de la hoja con los costos nuevos encima de los anteriores.
+
+    Pura. `anteriores` son las filas tal como estan en la hoja (dicts con
+    sku/costo/fecha/operador). Los SKU de `costos_df` pisan a los suyos y el
+    resto queda **con su fecha y su operador**: una planilla parcial (solo los
+    de un proveedor) no le borra el costo a nadie ni le cambia la fecha a lo
+    que no toco. Los nuevos van primero porque `costos_guardados()` toma la
+    fecha de la primera fila como "ultima actualizacion".
+    """
+    nuevas = [{"sku": f["sku"], "costo": f["costo"],
+               "fecha": sello, "operador": operador}
+              for _, f in costos_df.iterrows()]
+    pisados = {f["sku"] for f in nuevas}
+    quedan = [f for f in anteriores
+              if str(f.get("sku", "")).strip().upper() not in pisados
+              and str(f.get("sku", "")).strip()]
+    return nuevas + quedan
+
+
+def diferencias_costos(anteriores_df, costos_df):
+    """
+    Que cambia si se guarda `costos_df` sobre lo que hay. Pura.
+
+    Devuelve (resumen, detalle). `detalle` tiene una fila por SKU de la
+    planilla nueva con costo anterior, nuevo y variacion. Sirve para frenar
+    antes de escribir un error de base (con o sin IVA, con o sin descuento),
+    que se ve como una variacion pareja y enorme en todos los SKU.
+    """
+    ant = dict(zip(anteriores_df["sku"], anteriores_df["costo"])) \
+        if len(anteriores_df) else {}
+    det = costos_df[["sku", "costo"]].copy()
+    det["costo_anterior"] = det["sku"].map(ant)
+    det["variacion"] = det["costo"] / det["costo_anterior"] - 1
+    cambian = det[det["costo_anterior"].notna()
+                  & (det["variacion"].abs() > 1e-6)]
+    resumen = {
+        "planilla": len(det),
+        "nuevos": int(det["costo_anterior"].isna().sum()),
+        "cambian": len(cambian),
+        "iguales": int((det["costo_anterior"].notna()
+                        & (det["variacion"].abs() <= 1e-6)).sum()),
+        "sin_tocar": len(set(ant) - set(det["sku"])),
+        "variacion_mediana": (float(cambian["variacion"].median())
+                              if len(cambian) else None),
+    }
+    return resumen, det.sort_values("variacion", key=lambda s: s.abs(),
+                                    ascending=False, na_position="last")
+
+
+def guardar_costos(costos_df, operador="", combinar=False):
     """
     Deja la planilla de costos guardada para no tener que subirla cada vez.
 
     Va a la Google Sheet (o al CSV local si no hay Sheet configurada) por el
     mismo motivo que los tokens: en Streamlit Cloud el disco se borra en cada
-    reinicio. Se **reemplaza** entera, no se acumula: la ultima planilla que
-    sube el operador es la verdad.
+    reinicio.
+
+    `combinar=False` la **reemplaza** entera: la ultima planilla es la verdad
+    y lo que no venga en ella queda sin costo. `combinar=True` solo pisa los
+    SKU que trae la planilla y deja el resto como estaba (ver
+    `combinar_costos`). Para una planilla parcial —los de un solo proveedor—
+    va siempre la segunda: reemplazar dejaria al resto del catalogo sin costo.
     """
     import almacen
 
     sello = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M")
-    filas = [{"sku": f["sku"], "costo": f["costo"],
-              "fecha": sello, "operador": operador}
-             for _, f in costos_df.iterrows()]
+    anteriores = []
+    if combinar:
+        # Si la lectura falla NO se sigue: escribir solo los nuevos seria
+        # justamente borrar el resto, que es lo que este modo existe para
+        # evitar.
+        try:
+            anteriores = almacen.leer_hoja(HOJA_COSTOS, COLS_COSTOS)
+        except Exception as e:
+            return False, f"No pude leer los costos actuales para combinar: {e}"
+    filas = combinar_costos(anteriores, costos_df, sello, operador)
     ok, detalle = almacen.reescribir_hoja(HOJA_COSTOS, COLS_COSTOS, filas)
     return ok, (detalle or sello)
 
@@ -502,7 +567,12 @@ TOPE_LOGISTICO = 9000.0
 #   2. **Solo para los productos que estan en la lista.** Es un descuento de
 #      Suprabond sobre SU lista; los SKU de otros proveedores no lo tienen y
 #      aplicarselo les infla el margen 20% contra nada.
-DESCUENTO_PROVEEDOR = 0.20
+#
+# **En cero desde el 19/10/2026.** ERPA paso a un descuento efectivo del 52% y
+# los costos de sus SKU se cargan ya NETOS de descuentos e impuestos (la
+# planilla "COSTOS SKU ERPA"). Restarle otro 20% los descontaria dos veces.
+# Si algun dia vuelve a cargarse el costo de lista, volver a ponerlo.
+DESCUENTO_PROVEEDOR = 0.0
 
 
 def costo_efectivo(costo, con_descuento=False,

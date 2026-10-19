@@ -1,5 +1,16 @@
 [
   {
+    "fecha": "2026-10-19",
+    "hora": "16:50",
+    "titulo": "Subir costos de un solo proveedor ya no borra el resto",
+    "tipo": "mejora",
+    "puntos": [
+      "Al subir una planilla de costos ahora se elige qué pasa con los SKU que no vienen. Por defecto **quedan como están**: se actualizan solo los de la planilla.",
+      "Antes de guardar se ve cuántos costos cambian, cuántos son nuevos y los cambios más grandes. Si la variación es muy grande (más de 30%) aparece un aviso para revisar que la planilla esté en la misma base.",
+      "Los costos de ERPA (749 SKU) se actualizaron hoy con el **descuento efectivo del 52%**, ya aplicado. Por eso Rentabilidad dejó de restar el 20% del proveedor: se descontaría dos veces."
+    ]
+  },
+  {
     "fecha": "2026-08-21",
     "hora": "16:20",
     "titulo": "Activar por regla ahora se puede acotar por marca",

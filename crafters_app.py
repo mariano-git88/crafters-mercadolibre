@@ -387,16 +387,67 @@ def bloque_costos(clave):
         archivo = st.file_uploader(
             "Planilla de costos (.xlsx o .csv) — una columna de SKU y una de costo",
             type=["xlsx", "xls", "csv"], key=f"up_{clave}")
+        # Por defecto combina: la planilla que se sube suele ser de UN
+        # proveedor, y reemplazar dejaría sin costo al resto del catálogo.
+        modo = st.radio(
+            "Qué hacer con los SKU que no vienen en la planilla",
+            ["Dejarlos como están (actualizar solo los de la planilla)",
+             "Borrarlos (la planilla reemplaza todo)"],
+            key=f"modo_{clave}",
+            disabled=not len(guardados),
+            help="Si subís solo los costos de un proveedor, dejalos como "
+                 "están: si no, el resto del catálogo queda sin costo.")
+        combinar = bool(len(guardados)) and modo.startswith("Dejarlos")
         quien = st.text_input("Tu nombre (queda en el registro)",
                               key=f"opc_{clave}")
-        if archivo and st.button("Guardar la planilla", key=f"save_{clave}",
-                                 disabled=not quien.strip()):
+
+        nuevos = None
+        if archivo:
             try:
                 nuevos = rent.leer_costos(archivo)
             except Exception as e:
                 st.error(f"No pude leer la planilla: {e}")
                 return guardados if len(guardados) else None
-            ok, detalle = rent.guardar_costos(nuevos, operador=quien.strip())
+
+            # Vista previa antes de escribir: un error de base (con o sin
+            # IVA, con o sin descuento) se ve como una variación pareja y
+            # enorme en todos los SKU, y conviene frenarlo acá.
+            res, det = rent.diferencias_costos(guardados, nuevos)
+            borra = 0 if combinar else res["sin_tocar"]
+            st.markdown(
+                f"La planilla trae **{res['planilla']} SKU**: "
+                f"{res['cambian']} cambian de costo, {res['nuevos']} son "
+                f"nuevos y {res['iguales']} quedan igual. "
+                + (f"Los otros **{res['sin_tocar']}** quedan como están."
+                   if combinar else
+                   f"**Se borra el costo de {borra} SKU** que no vienen."))
+            vm = res["variacion_mediana"]
+            if vm is not None and abs(vm) > 0.30:
+                st.warning(
+                    f"Los costos que cambian se mueven una mediana de "
+                    f"**{vm:+.0%}**. Revisá que la planilla venga en la misma "
+                    "base que la anterior (sin IVA, y con o sin descuento del "
+                    "proveedor) antes de guardar.", icon="⚠️")
+            cambios = det[det["costo_anterior"].notna()].head(15)
+            if len(cambios):
+                with st.expander("Los cambios más grandes"):
+                    st.dataframe(
+                        cambios, hide_index=True, use_container_width=True,
+                        column_config={
+                            "sku": "SKU",
+                            "costo_anterior": st.column_config.NumberColumn(
+                                "Costo anterior", format="$ %.2f"),
+                            "costo": st.column_config.NumberColumn(
+                                "Costo nuevo", format="$ %.2f"),
+                            "variacion": st.column_config.NumberColumn(
+                                "Variación", format="percent"),
+                        })
+
+        if nuevos is not None and st.button(
+                "Guardar la planilla", key=f"save_{clave}",
+                disabled=not quien.strip()):
+            ok, detalle = rent.guardar_costos(nuevos, operador=quien.strip(),
+                                              combinar=combinar)
             if ok:
                 st.session_state["sello_costos"] = sello + 1
                 st.success(f"Guardados {len(nuevos)} costos. Ya los usan "
@@ -4417,7 +4468,9 @@ elif seccion == "Rentabilidad":
     # El único lugar donde se mira el descuento del proveedor. En las
     # secciones que deciden precios va el costo pleno: bajar un precio
     # contando con un descuento que puede no estar deja la venta en pérdida.
-    usar_desc = st.checkbox(
+    # Con el descuento en cero (los costos de ERPA ya vienen netos) la casilla
+    # no haría nada, así que no se muestra.
+    usar_desc = rent.DESCUENTO_PROVEEDOR > 0 and st.checkbox(
         f"Aplicar el descuento del proveedor ({rent.DESCUENTO_PROVEEDOR:.0%} "
         "sobre el costo)", value=True, key="desc_rent",
         help="Es el costo real al que se compra, así que corresponde para "
@@ -4463,6 +4516,9 @@ elif seccion == "Rentabilidad":
             st.caption(
                 f"Margen calculado con el **descuento del "
                 f"{rent.DESCUENTO_PROVEEDOR:.0%}** sobre el costo de lista.")
+        elif rent.DESCUENTO_PROVEEDOR == 0:
+            st.caption("Margen calculado con el costo cargado. Los de ERPA "
+                       "ya vienen **netos del descuento** del proveedor.")
         else:
             st.caption("Margen calculado con el **costo pleno**, sin el "
                        "descuento del proveedor.")
