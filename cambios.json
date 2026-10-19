@@ -1,6 +1,17 @@
 [
   {
     "fecha": "2026-10-19",
+    "hora": "19:40",
+    "titulo": "Control de stock: arranca hoy desde el stock real de MercadoLibre",
+    "tipo": "mejora",
+    "puntos": [
+      "Se cargó el **stock inicial de 1.720 SKU** desde el stock real de cada producto en MercadoLibre (depósito propio + Full). Los combos quedan afuera: se descuentan de sus componentes.",
+      "El stock ahora cuenta **solo los movimientos posteriores a la carga**. Antes sumaba todas las ventas desde agosto, y por eso 470 SKU daban negativo. Hoy son 3.",
+      "Si se vuelve a cargar un SKU (por ejemplo después de un conteo en el depósito), manda la última carga; antes se sumaban."
+    ]
+  },
+  {
+    "fecha": "2026-10-19",
     "hora": "19:00",
     "titulo": "Preguntas y stock cada 15 minutos de verdad, y Buscar la plata más rápido",
     "tipo": "mejora",

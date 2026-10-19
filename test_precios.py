@@ -319,6 +319,27 @@ def main():
              f"quedó en {por_id.get('B')}")
 
     print("\n" + "=" * 70)
+    print("Stock: solo cuentan los movimientos posteriores a la carga")
+    print("=" * 70)
+    import stock_control as sc
+    movs = [{"sku": "A", "tipo": "venta", "cantidad": -5},      # 0: antes
+            {"sku": "B", "tipo": "venta", "cantidad": -2},      # 1: antes
+            {"sku": "A", "tipo": "venta", "cantidad": -1},      # 2: despues
+            {"sku": "A", "tipo": "cancelacion", "cantidad": 1}, # 3: despues
+            {"sku": "C", "tipo": "venta", "cantidad": -3}]      # 4: sin carga
+    ini = [{"sku": "A", "cantidad": 100, "corte_mov": 2},
+           {"sku": "B", "cantidad": 50, "corte_mov": 2},
+           {"sku": "B", "cantidad": 40, "corte_mov": 2}]       # recarga de B
+    st = dict(zip(*[sc.calcular_stock(ini, movs)[c]
+                    for c in ("sku", "stock_actual")]))
+    chequear(st.get("A") == 100, "la venta anterior a la carga no se resta",
+             f"A dio {st.get('A')}")
+    chequear(st.get("B") == 40, "manda la última carga, no la suma",
+             f"B dio {st.get('B')}")
+    chequear(st.get("C") == -3, "un SKU sin carga sigue como antes",
+             f"C dio {st.get('C')}")
+
+    print("\n" + "=" * 70)
     if fallas:
         print(f"FALLARON {len(fallas)}:")
         for f in fallas:

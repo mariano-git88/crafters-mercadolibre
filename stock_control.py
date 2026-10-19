@@ -39,7 +39,14 @@ HOJA_INICIAL = "stock_inicial"
 HOJA_MOV = "movimientos"
 HOJA_DEV = "devoluciones"
 
-COLS_INICIAL = ["sku", "descripcion", "cantidad", "fecha", "operador"]
+# `corte_mov`: cuantos movimientos habia registrados cuando se cargo ese stock.
+# Solo cuentan para ese SKU los movimientos que vienen DESPUES (ver
+# `calcular_stock`). Se compara por posicion y no por fecha a proposito: las
+# fechas de la hoja vienen en tres relojes distintos —las ventas con la hora de
+# ML (UTC-4), lo que escribe GitHub en UTC y lo de la app en hora local— y
+# comparar fechas daba errores de horas.
+COLS_INICIAL = ["sku", "descripcion", "cantidad", "fecha", "operador",
+                "corte_mov"]
 COLS_MOV = ["id_mov", "fecha", "sku", "tipo", "cantidad", "referencia",
             "detalle", "operador"]
 COLS_DEV = ["id_dev", "fecha", "sku", "cantidad", "order_id", "motivo",
@@ -154,24 +161,34 @@ def _num(v):
         return 0.0
 
 
-def stock_actual():
+def calcular_stock(inicial_filas, movimientos_filas):
     """
-    Arma la tabla de stock: parte del inicial y le aplica todos los
-    movimientos registrados.
+    Pura. Stock por SKU = su ultimo stock inicial + los movimientos que se
+    registraron despues de esa carga.
+
+    **Manda la ultima carga de cada SKU, no la suma.** Volver a cargar un SKU
+    es corregirlo (por ejemplo despues de un conteo fisico): sumar las dos
+    cargas lo duplicaba.
+
+    **Solo cuentan los movimientos posteriores a la carga.** Antes se aplicaban
+    todos: cargar el stock de hoy le restaba otra vez las ventas de agosto, que
+    ya estaban descontadas en el numero cargado. Un SKU sin carga sigue como
+    antes, desde cero con todos sus movimientos.
     """
-    inicial = {}
-    desc = {}
-    for f in stock_inicial():
+    inicial, corte, desc = {}, {}, {}
+    for f in inicial_filas:
         sku = str(f.get("sku", "")).strip().upper()
-        if sku:
-            inicial[sku] = inicial.get(sku, 0) + _num(f.get("cantidad"))
-            if f.get("descripcion"):
-                desc[sku] = f["descripcion"]
+        if not sku:
+            continue
+        inicial[sku] = _num(f.get("cantidad"))
+        corte[sku] = int(_num(f.get("corte_mov")))
+        if f.get("descripcion"):
+            desc[sku] = f["descripcion"]
 
     movs = defaultdict(lambda: defaultdict(float))
-    for m in movimientos():
+    for i, m in enumerate(movimientos_filas):
         sku = str(m.get("sku", "")).strip().upper()
-        if sku:
+        if sku and i >= corte.get(sku, 0):
             movs[sku][m.get("tipo", "?")] += _num(m.get("cantidad"))
 
     filas = []
@@ -194,6 +211,39 @@ def stock_actual():
     if len(df):
         df = df.sort_values("stock_actual")
     return df
+
+
+def stock_actual():
+    """La tabla de stock con lo que hay en la planilla. Ver `calcular_stock`."""
+    return calcular_stock(stock_inicial(), movimientos())
+
+
+def inicial_desde_meli(ml, pubs):
+    """
+    El stock de arranque sacado del stock REAL de MercadoLibre: deposito
+    propio + Full, por SKU (`alertas_stock.stock_por_sku`, que lee
+    /user-products/{id}/stock y no `available_quantity`, que miente).
+
+    Quedan afuera los combos: no son mercaderia, se descuentan de sus
+    componentes. Los SKU sin ninguna publicacion activa entran con 0 —una
+    pausada por falta de stock es exactamente eso— para que no arranquen desde
+    cero con todas sus ventas viejas encima.
+    """
+    from alertas_stock import stock_por_sku
+    from catalogo import sku_del_atributo
+
+    combos = composicion()
+    reales = stock_por_sku(pubs, ml)
+    todos = {(sku_del_atributo(p) or "").strip().upper() for p in pubs}
+    filas = []
+    for sku in sorted(todos):
+        if not sku or sku in combos:
+            continue
+        r = reales.get(sku)
+        cant = (r["stock_propio"] + r["stock_full"]) if r else 0
+        filas.append({"sku": sku, "cantidad": cant,
+                      "descripcion": (r or {}).get("titulo", "")})
+    return filas
 
 
 # ------------------------------------------------------------------ sync
@@ -334,16 +384,22 @@ def registrar(tipo, sku, cantidad, referencia="", detalle="", operador=""):
     return almacen.append_hoja(HOJA_MOV, COLS_MOV, [fila])
 
 
-def cargar_stock_inicial(filas, operador=""):
+def cargar_stock_inicial(filas, operador="", corte=None):
     """
     Carga o corrige el stock de arranque desde una planilla.
     `filas` es una lista de dicts con sku, cantidad y (opcional) descripcion.
+
+    El corte es cuantos movimientos hay registrados en este momento: los que
+    lleguen despues son los unicos que se le aplican a estos SKU. Conviene
+    sincronizar las ventas justo antes, asi no queda ninguna venta vieja sin
+    registrar que despues se cuente como nueva.
     """
     hoy = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    corte = len(movimientos()) if corte is None else int(corte)
     a_guardar = [{"sku": str(f["sku"]).strip().upper(),
                   "descripcion": f.get("descripcion", ""),
                   "cantidad": f["cantidad"], "fecha": hoy,
-                  "operador": operador} for f in filas]
+                  "operador": operador, "corte_mov": corte} for f in filas]
     return almacen.append_hoja(HOJA_INICIAL, COLS_INICIAL, a_guardar)
 
 
