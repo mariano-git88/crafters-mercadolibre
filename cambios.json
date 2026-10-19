@@ -1,6 +1,17 @@
 [
   {
     "fecha": "2026-10-19",
+    "hora": "19:00",
+    "titulo": "Preguntas y stock cada 15 minutos de verdad, y Buscar la plata más rápido",
+    "tipo": "mejora",
+    "puntos": [
+      "La sincronización de ventas y la respuesta automática de preguntas estaban programadas cada 15 minutos, pero GitHub salteaba casi todas las corridas: desde fines de agosto corrían entre 1 y 5 veces por día, y las preguntas esperaban horas. Ahora cada corrida se queda trabajando unas 5 horas, cada 15 minutos, **todos los días y a toda hora**.",
+      "**Buscar la plata** y las secciones que leen el stock real o el Buy Box consultan a MercadoLibre en paralelo. El Buy Box del catálogo pasó de ~4 minutos a menos de 1.",
+      "Si dos procesos necesitan renovar el acceso a MercadoLibre a la vez, el segundo toma el que renovó el primero en vez de fallar. Y la lectura de SKU para las reseñas de Shopify reintenta si Parlata falla un momento."
+    ]
+  },
+  {
+    "fecha": "2026-10-19",
     "hora": "16:50",
     "titulo": "Subir costos de un solo proveedor ya no borra el resto",
     "tipo": "mejora",

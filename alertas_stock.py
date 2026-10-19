@@ -116,7 +116,7 @@ def stock_por_sku(pubs, ml, callback=None):
     contra 6.251 reales). En Full, en cambio, cada uno tiene su propio
     inventario y ahi la suma es correcta.
 
-    Son ~1.700 llamadas y unos 4 minutos. Es caro, pero es la diferencia entre
+    Son ~1.700 llamadas (en paralelo con `get_varios`, ~1 minuto). Es caro, pero es la diferencia entre
     saber el stock y adivinarlo.
     """
     grupos = defaultdict(lambda: {"ups": set(), "pubs": 0,
@@ -143,14 +143,13 @@ def stock_por_sku(pubs, ml, callback=None):
     if callback:
         callback(f"Leyendo el stock real de {len(todos)} productos...")
 
-    ubicacion, n = {}, 0
+    ubicacion = {}
+    respuestas = ml.get_varios(
+        [f"/user-products/{up}/stock" for up in todos],
+        callback=(lambda n, t: callback(f"  stock {n}/{t}...")) if callback else None)
     for up in todos:
-        n += 1
-        if callback and n % 200 == 0:
-            callback(f"  stock {n}/{len(todos)}...")
-        try:
-            st = ml.get(f"/user-products/{up}/stock")
-        except MeliError:
+        st = respuestas.get(f"/user-products/{up}/stock")
+        if st is None or isinstance(st, MeliError):
             continue
         propio = full = 0
         for l in st.get("locations") or []:

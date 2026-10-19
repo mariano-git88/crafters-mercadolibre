@@ -1,22 +1,9 @@
-name: Responder preguntas (fuera de hora)
+name: Responder preguntas (a mano)
 
-# Cubre las horas que NO cubre sincronizar_stock.yml, que ya responde
-# preguntas cada 15 minutos de 8 a 21 AR de lunes a sábado:
-#
-#   - las noches de lunes a sábado (21 a 8 AR = 0 a 11 UTC)
-#   - los domingos completos
-#
-# Cada hora y no cada 15 minutos por los minutos de Actions: el plan gratuito
-# da 2.000 por mes y el sync de stock ya se lleva ~1.456. Cada hora agrega
-# ~382, así que el total queda cerca de 1.840. A cada 30 minutos se pasaría.
-#
-# La contrapartida honesta: una pregunta que entra a las 3 de la mañana puede
-# esperar hasta una hora. En el horario que importa, la respuesta sigue
-# saliendo en 15 minutos o menos.
+# Desde oct-2026 las preguntas se responden en sincronizar_stock.yml, cada 15
+# minutos y a toda hora. Este workflow queda solo para correrlo a mano, por
+# ejemplo con "Redactar sin publicar" para ver qué contestaría la IA.
 on:
-  schedule:
-    - cron: '0 0-10 * * 1-6'     # noches de lunes a sábado
-    - cron: '0 * * * 0'          # domingos completos
   workflow_dispatch:
     inputs:
       simular:

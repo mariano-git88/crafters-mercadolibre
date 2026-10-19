@@ -87,23 +87,24 @@ def traer_price_to_win(ml, item_ids, refrescar=False, callback=None):
     """
     item_id -> respuesta de /items/{id}/price_to_win (version v2).
 
-    Es una llamada por publicacion (~0,3 s), asi que con el catalogo entero son
-    unos 5 minutos. Se cachea 12 horas: los precios de los competidores se
+    Es una llamada por publicacion (~0,3 s); van en paralelo (`get_varios`),
+    asi que el catalogo entero tarda ~1 minuto. Se cachea 12 horas: los precios de los competidores se
     mueven, pero no cada media hora.
     """
     cache = _leer_cache()
     pendientes = [i for i in item_ids
                   if refrescar or not _vigente(cache.get(i))]
 
-    for n, iid in enumerate(pendientes, start=1):
-        try:
-            r = ml.get(f"/items/{iid}/price_to_win", version="v2")
+    respuestas = ml.get_varios(
+        [f"/items/{iid}/price_to_win" for iid in pendientes], version="v2",
+        callback=(lambda n, t: callback(f"Buy Box {n}/{t}...")) if callback else None)
+    for iid in pendientes:
+        r = respuestas.get(f"/items/{iid}/price_to_win")
+        if isinstance(r, dict):
             r["bajado"] = time.time()
             cache[iid] = r
-        except Exception:  # noqa: BLE001
+        else:
             cache[iid] = {"status": "error", "bajado": time.time()}
-        if callback and n % 20 == 0:
-            callback(f"Buy Box {n}/{len(pendientes)}...")
 
     CACHE.write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
     return {i: cache.get(i, {}) for i in item_ids}

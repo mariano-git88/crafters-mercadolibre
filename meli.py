@@ -15,7 +15,9 @@ Autorizacion inicial: correr `python autorizar.py` una sola vez.
 """
 
 import json
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import urllib.parse
 from pathlib import Path
 
@@ -118,6 +120,7 @@ class Meli:
         self.verbose = verbose
         self.cuenta = (cuenta or almacen.CUENTA_POR_DEFECTO).strip().lower()
         self.sesion = requests.Session()
+        self._candado = threading.Lock()
         self.tokens = self._leer_tokens()
 
     # ------------------------------------------------------------------ tokens
@@ -138,21 +141,61 @@ class Meli:
         self.tokens = almacen.guardar_tokens(datos, self.cuenta)
         return self.tokens
 
+    def _tokens_de_otro(self):
+        """
+        Si otro proceso ya renovo el token, lo toma en vez de renovar de nuevo.
+
+        Comparten el refresh token —que es de un solo uso— la app, los crons de
+        GitHub, el servicio de WhatsApp y las corridas locales. El que llega
+        segundo con el refresh viejo en memoria se come un `invalid_grant` o,
+        si renuevan muchos seguidos, un 429 "Rate limiter grant_type
+        refresh_token" (paso el 08/10/2026). Releer la hoja antes de renovar
+        evita las dos cosas. Devuelve True si encontro un token vigente.
+        """
+        try:
+            guardados = self._leer_tokens()
+        except Exception:                                   # noqa: BLE001
+            return False
+        vigente = (time.time() < float(guardados.get("expira_en") or 0)
+                   - MARGEN_RENOVACION_SEG)
+        if vigente and guardados.get("access_token") != self.tokens.get("access_token"):
+            self.tokens = guardados
+            if self.verbose:
+                print("[meli] Otro proceso ya renovó el token: uso ese.")
+            return True
+        if guardados.get("refresh_token"):
+            self.tokens = guardados
+        return False
+
     def _renovar(self):
+        if self._tokens_de_otro():
+            return self.tokens
         if self.verbose:
             print("[meli] Token vencido, renovando...")
-        resp = self.sesion.post(
-            f"{BASE}/oauth/token",
-            headers={"accept": "application/json",
-                     "content-type": "application/x-www-form-urlencoded"},
-            data={
-                "grant_type": "refresh_token",
-                "client_id": self.cred["app_id"],
-                "client_secret": self.cred["secret_key"],
-                "refresh_token": self.tokens["refresh_token"],
-            },
-            timeout=30,
-        )
+        # El 429 de /oauth/token se pasa en menos de un minuto. Mientras se
+        # espera, puede que otro proceso renueve: por eso se relee la hoja
+        # antes de cada reintento en vez de insistir con el mismo refresh.
+        for espera in (0, 20, 40):
+            if espera:
+                time.sleep(espera)
+                if self._tokens_de_otro():
+                    return self.tokens
+            resp = self.sesion.post(
+                f"{BASE}/oauth/token",
+                headers={"accept": "application/json",
+                         "content-type": "application/x-www-form-urlencoded"},
+                data={
+                    "grant_type": "refresh_token",
+                    "client_id": self.cred["app_id"],
+                    "client_secret": self.cred["secret_key"],
+                    "refresh_token": self.tokens["refresh_token"],
+                },
+                timeout=30,
+            )
+            if resp.status_code != 429:
+                break
+            if self.verbose:
+                print("[meli] 429 al renovar el token, espero y reintento...")
         if resp.status_code != 200:
             raise MeliError(
                 f"No se pudo renovar el token (HTTP {resp.status_code}): {resp.text}\n"
@@ -167,7 +210,12 @@ class Meli:
     @property
     def token(self):
         if time.time() >= self.tokens["expira_en"] - MARGEN_RENOVACION_SEG:
-            self._renovar()
+            # Con `get_varios` hay hilos pidiendo a la vez: sin el candado,
+            # varios ven el token vencido y renuevan con el mismo refresh,
+            # que es de un solo uso.
+            with self._candado:
+                if time.time() >= self.tokens["expira_en"] - MARGEN_RENOVACION_SEG:
+                    self._renovar()
         return self.tokens["access_token"]
 
     @property
@@ -186,6 +234,31 @@ class Meli:
         500 con "Type mismatch" que no dice nada.
         """
         return self._request("GET", path, params=params, headers=_headers)
+
+    def get_varios(self, paths, hilos=6, callback=None, **params):
+        """
+        Muchos GET independientes en paralelo: path -> respuesta, o el
+        MeliError si ese fallo (no corta el resto).
+
+        Para los analisis que hacen una llamada por publicacion o por
+        producto: el stock real (~1.700 llamadas) y el Buy Box (~830) tardaban
+        5 y 4 minutos uno detras del otro, y "Buscar la plata" pasaba los 15
+        minutos. Seis hilos son ~20 llamadas por segundo, lejos del limite de
+        ML; cada una conserva los reintentos de `_request`.
+        """
+        paths = list(paths)
+        self.token          # renovar antes de largar los hilos, no durante
+        salida = {}
+        with ThreadPoolExecutor(max_workers=hilos) as pool:
+            futuros = {pool.submit(self.get, p, **params): p for p in paths}
+            for n, f in enumerate(as_completed(futuros), start=1):
+                try:
+                    salida[futuros[f]] = f.result()
+                except MeliError as e:
+                    salida[futuros[f]] = e
+                if callback and n % 100 == 0:
+                    callback(n, len(paths))
+        return salida
 
     def put(self, path, payload, _headers=None):
         """

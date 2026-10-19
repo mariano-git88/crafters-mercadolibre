@@ -71,9 +71,22 @@ def config():
 
 def skus_de_la_tienda(cfg):
     """Los SKU que tiene el catalogo de Shopify."""
-    r = requests.get(f"{cfg['base_url'].rstrip('/')}/api/v1/skus",
-                     headers={"Authorization": f"Bearer {cfg['api_key']}"},
-                     timeout=120)
+    # Es solo lectura, asi que reintentar no puede duplicar nada. El 07/10/2026
+    # la corrida semanal murio por un unico 500 de Parlata y la siguiente
+    # anduvo: una falla de un segundo costaba una semana de reseñas.
+    for espera in (0, 15, 45):
+        time.sleep(espera)
+        try:
+            r = requests.get(f"{cfg['base_url'].rstrip('/')}/api/v1/skus",
+                             headers={"Authorization": f"Bearer {cfg['api_key']}"},
+                             timeout=120)
+        except requests.RequestException as e:
+            if espera == 45:
+                raise SystemExit(f"No pude conectarme a Parlata: {e}") from e
+            continue
+        if r.status_code < 500:
+            break
+        print(f"Parlata contestó HTTP {r.status_code}, reintento...", flush=True)
     if r.status_code == 403:
         raise SystemExit("La API de Parlata pide plan Growth para esta tienda.")
     if r.status_code >= 400:
