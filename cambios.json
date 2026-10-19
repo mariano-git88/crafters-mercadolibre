@@ -1,6 +1,17 @@
 [
   {
     "fecha": "2026-10-19",
+    "hora": "20:30",
+    "titulo": "Publicidad: sumar anuncios al anunciante correcto y no dar por bueno lo que no entró",
+    "tipo": "arreglo",
+    "puntos": [
+      "Hay publicaciones Suprabond y Bulit que solo tienen anuncio en el anunciante **Crafters**. El proceso las mandaba a la campaña de su marca, que es de otro anunciante, y el panel las rechazaba: hoy fueron 10 de 17. Ahora se suman a una campaña activa del anunciante donde vive el anuncio.",
+      "Si el panel contesta que sí pero en MercadoLibre el anuncio quedó en otro estado, ahora figura como **error** con ese detalle. Hoy uno figuró OK y seguía pausado.",
+      "La auditoría guarda **por qué falló** cada cambio, no solo por qué se intentó."
+    ]
+  },
+  {
+    "fecha": "2026-10-19",
     "hora": "19:40",
     "titulo": "Control de stock: arranca hoy desde el stock real de MercadoLibre",
     "tipo": "mejora",

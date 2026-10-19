@@ -860,6 +860,21 @@ def resolver_candidatos(ml, cand, estados_camp=None, callback=None):
     """
     if cand is None or not len(cand):
         return cand
+
+    # anunciante -> campana activa donde sumar. Se pide una vez por
+    # anunciante y solo si hace falta (ver mas abajo).
+    activas = {}
+
+    def campana_activa(adv):
+        if adv not in activas:
+            try:
+                cs = campanas(ml, adv)
+            except Exception:                               # noqa: BLE001
+                cs = []
+            vivas = [c for c in cs if c.get("status") == "active"]
+            activas[adv] = vivas[0]["id"] if vivas else None
+        return activas[adv]
+
     filas = []
     for i, (_, r) in enumerate(cand.iterrows(), start=1):
         if callback and i % 10 == 0:
@@ -872,6 +887,25 @@ def resolver_candidatos(ml, cand, estados_camp=None, callback=None):
             continue
         estado = (ad.get("status") or "").lower()
         f["ad_group_id"] = ad["ad_group_id"]
+
+        # **El ad_group es del anunciante donde vive el anuncio, no del de la
+        # marca.** La campana destino se elige por marca (un Suprabond va a
+        # Suprabond AON), pero hay publicaciones Suprabond y Bulit que solo
+        # tienen anuncio en el anunciante Crafters. Mandar ese ad_group a la
+        # campana de otro anunciante lo rechaza el panel: el 19/10/2026 fueron
+        # 10 de 17. Se suma a una campana activa de SU anunciante; si no tiene
+        # ninguna, se descarta con el motivo en vez de fallar.
+        suyo = ad.get("advertiser_id")
+        if suyo and f.get("advertiser_id") and int(suyo) != int(f["advertiser_id"]):
+            destino = campana_activa(int(suyo))
+            if destino is None:
+                f.update(accion="ninguna",
+                         motivo=f"el anuncio vive en el anunciante {suyo}, "
+                                "que no tiene ninguna campaña activa")
+                filas.append(f)
+                continue
+            f["advertiser_id"] = int(suyo)
+            f["campaign_id"] = destino
         if estado == "idle":
             f["accion"] = "agregar"
         elif estado == "paused":

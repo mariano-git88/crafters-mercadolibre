@@ -621,6 +621,13 @@ def aplicar(sesion, ml, plan, accion="pausar", callback=None, verificar=True):
                 # Una sola lectura por ad_group aunque lo compartan varias
                 # publicaciones: es una llamada a ML, no sale gratis.
                 real = estado_real(ml, ag) if verificar and bien else ""
+                # **Que el panel diga que si no alcanza.** El 19/10/2026 uno
+                # figuro OK y siguio PAUSED horas despues. El estado se leia
+                # y se guardaba, pero no cambiaba el resultado.
+                quiero = OBJETIVO.get("activar" if accion == "agregar" else accion)
+                no_entro = bool(quiero and real and str(real).upper() != quiero)
+                if no_entro:
+                    bien = False
                 for _, fila in g[g["ad_group_id"] == ag].iterrows():
                     salida.append({
                         "item_id": fila.get("item_id"), "ad_group_id": ag,
@@ -629,7 +636,9 @@ def aplicar(sesion, ml, plan, accion="pausar", callback=None, verificar=True):
                         "motivo": fila.get("motivo", ""),
                         "resultado": "OK" if bien else "ERROR",
                         "detalle": "" if bien else str(
-                            por_id.get(str(ag))
+                            (f"el panel dijo que sí, pero en ML quedó {real}"
+                             if no_entro else "")
+                            or por_id.get(str(ag))
                             or del_lote
                             or "el panel no lo aceptó y no dijo por qué")[:200],
                         "estado_real": real,

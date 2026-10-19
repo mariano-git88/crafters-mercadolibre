@@ -294,7 +294,11 @@ def _auditar(res, antes, despues):
         "item_id": r["item_id"], "campo": "ad_status",
         "valor_anterior": antes, "valor_nuevo": despues,
         "resultado": r["resultado"], "operador": "cron",
-        "nota": str(r.get("motivo", ""))[:180],
+        # El motivo dice POR QUE se intento; el detalle, por que fallo. Antes
+        # se guardaba solo el primero y los errores quedaban mudos.
+        "nota": " · ".join(x for x in (str(r.get("motivo", "") or ""),
+                                       str(r.get("detalle", "") or ""))
+                           if x and x != "nan")[:300],
     } for _, r in res.iterrows()]
 
 
