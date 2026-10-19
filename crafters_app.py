@@ -92,17 +92,23 @@ st.markdown("""
     }
 
     /* Preguntas va destacada en naranja, como el boton de Tutorial. Es la
-       segunda opcion del selector de seccion: si se reordena la lista de
-       arriba, hay que mover el nth-of-type junto con ella. */
-    [data-testid="stMain"] [data-testid="stButtonGroup"] button:nth-of-type(3),
-    [data-testid="stMain"] [data-testid="stButtonGroup"] button:nth-of-type(3):hover,
-    [data-testid="stMain"] [data-testid="stButtonGroup"] button:nth-of-type(3):focus,
-    [data-testid="stMain"] [data-testid="stButtonGroup"] > div > button:nth-of-type(3) {
+       tercera opcion del selector de seccion: si se reordena la lista de
+       arriba, hay que mover el nth-of-type junto con ella.
+
+       **Va acotado a ESE selector** con la clase que Streamlit le pone por
+       su key (`st-key-seccion_activa`). Antes la regla agarraba la tercera
+       opcion de CUALQUIER selector de la pagina: en PROMOS pintaba
+       "Activar por regla" como si estuviera elegida, mientras la elegida de
+       verdad era otra (pasó el 19/10/2026). */
+    .st-key-seccion_activa [data-testid="stButtonGroup"] button:nth-of-type(3),
+    .st-key-seccion_activa [data-testid="stButtonGroup"] button:nth-of-type(3):hover,
+    .st-key-seccion_activa [data-testid="stButtonGroup"] button:nth-of-type(3):focus,
+    .st-key-seccion_activa [data-testid="stButtonGroup"] > div > button:nth-of-type(3) {
         background-color: #C8552F !important;
         color: #FFFFFF !important;
         border-color: #C8552F !important;
     }
-    [data-testid="stMain"] [data-testid="stButtonGroup"] button:nth-of-type(3) * {
+    .st-key-seccion_activa [data-testid="stButtonGroup"] button:nth-of-type(3) * {
         color: #FFFFFF !important;
     }
     </style>
@@ -5517,7 +5523,9 @@ elif seccion == "PROMOS":
                                  help="0 = sin tope. Corta las que nos "
                                       "cuesten más que eso.")
         if st.button("Ver qué se igualaría", key="sim_ig"):
-            caja = st.status("Buscando promociones activas...", expanded=True)
+            caja = st.status("Buscando promociones activas... no toques la "
+                             "app hasta que termine: cualquier click corta "
+                             "la búsqueda.", expanded=True)
             try:
                 its = promos_campanas.items_con_promo(ml, callback=caja.write)
                 caja.write(f"{len(its)} publicaciones con promo; comparando...")
@@ -5531,7 +5539,14 @@ elif seccion == "PROMOS":
                 st.error(str(e))
 
         plan_ig = st.session_state.get("plan_ig")
-        if plan_ig is None or not len(plan_ig):
+        if plan_ig is None:
+            st.stop()
+        if not len(plan_ig):
+            # Antes esto cortaba en silencio: la búsqueda terminaba sin nada
+            # y la pantalla quedaba igual que antes de apretar el botón.
+            st.info("Revisé todas las publicaciones con promo y **no hay nada "
+                    "para igualar**: ninguna tiene un descuento puesto por "
+                    "nosotros que se pueda llevar a otra campaña.")
             st.stop()
         ri = promos_campanas.resumen(plan_ig)
         w1, w2, w3 = st.columns(3)

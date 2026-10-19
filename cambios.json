@@ -1,6 +1,17 @@
 [
   {
     "fecha": "2026-10-19",
+    "hora": "21:00",
+    "titulo": "PROMOS → Igualar la mejor propia: ahora termina, y en 4 minutos",
+    "tipo": "arreglo",
+    "puntos": [
+      "Revisaba las ~1.800 publicaciones con promo de a una y tardaba más de 15 minutos: cualquier click en la app cortaba la búsqueda y parecía que no pasaba nada. Ahora consulta en paralelo y termina en unos 4 minutos.",
+      "Si la búsqueda no encuentra nada para igualar, lo dice. Antes la pantalla quedaba igual que antes de apretar.",
+      "El naranja que destaca **Preguntas** pintaba también la tercera opción de cualquier otro selector (en PROMOS, «Activar por regla» parecía elegida). Ahora solo pinta Preguntas."
+    ]
+  },
+  {
+    "fecha": "2026-10-19",
     "hora": "20:30",
     "titulo": "Publicidad: sumar anuncios al anunciante correcto y no dar por bueno lo que no entró",
     "tipo": "arreglo",

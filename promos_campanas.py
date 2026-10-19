@@ -626,10 +626,15 @@ def igualar_mejor_propia(ml, items, callback=None, tope_nuestro=None):
     """
     filas = []
     total = len(items)
-    for n, item in enumerate(items, start=1):
-        if callback and n % 10 == 0:
-            callback(f"{n} de {total}...")
-        ofertas_it = ofertas_del_item(ml, item)
+    # Una llamada por publicacion y hoy son ~2.500 con promo: una detras de la
+    # otra pasaba los 15 minutos, y cualquier click en la app cortaba la
+    # busqueda sin dejar nada. En paralelo tarda unos pocos minutos.
+    respuestas = ml.get_varios(
+        [f"/seller-promotions/items/{i}" for i in items], app_version="v2",
+        callback=(lambda n, t: callback(f"{n} de {t}...")) if callback else None)
+    for item in items:
+        r = respuestas.get(f"/seller-promotions/items/{item}")
+        ofertas_it = r if isinstance(r, list) else []
         if not ofertas_it:
             continue
 
