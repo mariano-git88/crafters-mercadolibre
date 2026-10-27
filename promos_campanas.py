@@ -120,7 +120,11 @@ def ofertas(ml, campana_id, tipo, estados=("candidate", "started"),
                 salida.setdefault(x["id"], {
                     "item_id": x["id"],
                     "estado_promo": x.get("status"),
-                    "oferta_id": x.get("ref_id") or "",
+                    # Este listado (por campaña) lo trae como `offer_id`; el
+                    # de la publicacion, como `ref_id`. Leyendo solo `ref_id`
+                    # quedaba vacio en las SMART y el alta fallaba siempre con
+                    # "Offer id is required" (132 veces del 19 al 26/10/2026).
+                    "oferta_id": x.get("ref_id") or x.get("offer_id") or "",
                     "precio_original": orig,
                     "precio_promo": precio,
                     "descuento": (1 - precio / orig) if (orig and precio)
