@@ -5279,8 +5279,12 @@ elif seccion == "PROMOS":
         return promos_planilla.campanas_propias(_ml)
 
     @st.cache_data(ttl=600, show_spinner=False)
-    def _elegibles_pp(_ml, campana_id, sello):
-        return promos_planilla.elegibles(_ml, campana_id)
+    def _camps_vigentes_pp(_ml, sello):
+        return promos_planilla.campanas_vigentes(_ml)
+
+    @st.cache_data(ttl=600, show_spinner=False)
+    def _elegibles_pp(_ml, campana_id, tipo, sello):
+        return promos_planilla.elegibles(_ml, campana_id, tipo)
 
     if "sello_promos" not in st.session_state:
         st.session_state["sello_promos"] = 0
@@ -5296,29 +5300,45 @@ elif seccion == "PROMOS":
             "Subís una planilla con una columna de **SKU o EAN** (también sirve "
             "el código MLA) y otra con el **descuento en porcentaje**, y cada "
             "producto entra a la campaña con ese descuento. Los que no estén en "
-            "la planilla no se tocan.")
+            "la planilla no se tocan. Sirve para **cualquier campaña vigente**: "
+            "propias y de MercadoLibre.")
 
         try:
-            camps = _camps_propias(ml, sello_pp)
+            camps = _camps_vigentes_pp(ml, sello_pp)
         except Exception as e:
             st.error(f"No pude traer las campañas: {e}")
             st.stop()
         if not len(camps):
             st.warning(
-                "**No hay ninguna campaña propia vigente.** Se crean desde el "
+                "**No hay ninguna campaña vigente.** Las propias se crean desde el "
                 "panel de MercadoLibre, en *Publicaciones → Promociones → Crear "
                 "campaña propia*. Por API no se pueden crear: el pedido "
                 "contesta que sí y no crea nada.", icon="⚠️")
             st.stop()
 
-        etiquetas = {f"{c['nombre']}  ·  hasta el {c['hasta']}": c["campana_id"]
-                     for _, c in camps.iterrows()}
-        campana_id = etiquetas[st.selectbox("Campaña", list(etiquetas),
-                                            key="camp_pp")]
+        # Las propias primero: son las de uso diario.
+        camps = camps.sort_values(
+            "tipo", key=lambda t: t != promos_planilla.TIPO, kind="stable")
+        etiquetas = {
+            f"{c['nombre'] or c['campana_id']}  ·  {c['nombre_tipo']}"
+            + (f"  ·  hasta el {c['hasta']}" if c["hasta"] else ""):
+            (c["campana_id"], c["tipo"])
+            for _, c in camps.iterrows()}
+        campana_id, tipo_pp = etiquetas[st.selectbox(
+            "Campaña", list(etiquetas), key="camp_pp")]
+        if tipo_pp != promos_planilla.TIPO:
+            st.info(
+                "**Campaña de MercadoLibre.** Si en una publicación ML deja "
+                "elegir el precio (las de temporada, como Cyber Monday), entra "
+                "con el descuento de la planilla. Si ML **fija** el precio "
+                "(descuento inteligente, relámpago), el porcentaje de la "
+                "planilla funciona como **tope**: si ML pide más descuento que "
+                "eso, esa publicación no entra. Las que ya están inscriptas no "
+                "se tocan.", icon="ℹ️")
 
         with st.spinner("Preguntándole a MercadoLibre qué publicaciones acepta..."):
             try:
-                eleg = _elegibles_pp(ml, campana_id, sello_pp)
+                eleg = _elegibles_pp(ml, campana_id, tipo_pp, sello_pp)
             except Exception as e:
                 st.error(f"No pude traer las elegibles: {e}")
                 st.stop()
@@ -5371,10 +5391,17 @@ elif seccion == "PROMOS":
         if st.button("Simular los descuentos", key="sim_btn_pp"):
             try:
                 st.session_state["sim_pp"] = promos_planilla.simular(
-                    df_pp, pubs, eleg, col_clave_pp, col_pct_pp, ml=ml)
+                    df_pp, pubs, eleg, col_clave_pp, col_pct_pp, ml=ml,
+                    tipo=tipo_pp, campana_id=campana_id)
+                st.session_state["sim_pp_camp"] = (campana_id, tipo_pp)
+                st.session_state.pop("res_pp", None)
             except Exception as e:
                 st.error(f"Error al simular: {e}")
 
+        # La simulacion es de UNA campaña: si se cambio el selector despues de
+        # simular, aplicarla mandaria esos precios a la campaña equivocada.
+        if st.session_state.get("sim_pp_camp") != (campana_id, tipo_pp):
+            st.session_state.pop("sim_pp", None)
         sim_pp = st.session_state.get("sim_pp")
         if sim_pp is None or not len(sim_pp):
             st.stop()
@@ -5384,7 +5411,8 @@ elif seccion == "PROMOS":
         q1.metric("Altas nuevas", rc.get("alta", 0))
         q2.metric("Cambian de precio", rc.get("actualizar", 0))
         q3.metric("Ya estaban igual", rc.get("sin_cambio", 0))
-        q4.metric("Fuera de rango", rc.get("fuera_de_rango", 0))
+        q4.metric("Fuera de rango", rc.get("fuera_de_rango", 0)
+                  + rc.get("pide_mas_descuento", 0))
 
         st.dataframe(sim_pp, use_container_width=True, height=340,
                      hide_index=True,
@@ -5405,7 +5433,7 @@ elif seccion == "PROMOS":
                      disabled=not (conf_pp and op_pp.strip())):
             barra = st.progress(0.0, text="Cargando...")
             st.session_state["res_pp"] = promos_planilla.aplicar(
-                ml, sim_pp, campana_id, operador=op_pp.strip(),
+                ml, sim_pp, campana_id, operador=op_pp.strip(), tipo=tipo_pp,
                 callback=lambda i, t, iid: barra.progress(
                     i / t, text=f"Cargando {i} de {t}: {iid}"))
             barra.empty()

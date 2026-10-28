@@ -1,5 +1,18 @@
 [
   {
+    "fecha": "2026-10-28",
+    "hora": "13:00",
+    "titulo": "PROMOS → Desde planilla: ahora sirve para cualquier campaña, también las de MercadoLibre",
+    "tipo": "mejora",
+    "puntos": [
+      "El selector de campaña muestra todas las vigentes (Cyber Monday, de temporada, descuento inteligente, relámpago), no solo las propias. Las propias siguen apareciendo primero.",
+      "En las campañas donde se elige el precio (propias y de temporada, como Cyber Monday) cada producto entra con el descuento de la planilla, si ML lo admite.",
+      "En las que **ML fija el precio** (descuento inteligente, relámpago) el porcentaje de la planilla funciona como **tope**: si ML pide más descuento que eso, ese producto no entra. Nunca se aplica más descuento del que escribiste.",
+      "Las publicaciones que ya están inscriptas en una campaña de ML no se tocan.",
+      "Arreglo: el descuento inteligente no entraba nunca (\"Offer id is required\"). Ya entra."
+    ]
+  },
+  {
     "fecha": "2026-10-19",
     "hora": "21:00",
     "titulo": "PROMOS → Igualar la mejor propia: ahora termina, y en 4 minutos",

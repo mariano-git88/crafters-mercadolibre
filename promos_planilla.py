@@ -1,9 +1,21 @@
 #!/usr/bin/env python3
 """
-Carga masiva de descuentos a una campaña propia, desde una planilla.
+Carga masiva de descuentos a una campaña, desde una planilla.
 
-    python promos_planilla.py                    -> lista las campañas propias
+Sirve para **cualquier campaña vigente**, no solo las propias (oct-2026, lo
+pidio Agustin para el Cyber Monday de ML). Hay dos clases:
+
+  - **El vendedor elige el precio** dentro de un rango: las propias
+    (`SELLER_CAMPAIGN`) y las de temporada de ML (`DEAL`). Se manda el
+    porcentaje de la planilla, si ML lo admite.
+  - **ML fija el precio** (`SMART`, `LIGHTNING`, `SMART_LIGHTNING`,
+    `PRICE_MATCHING`...): solo se puede entrar o no. Ahi el porcentaje de la
+    planilla funciona como **tope**: si ML pide mas descuento que eso, no se
+    entra. Nunca se aplica un descuento mayor al que se escribio.
+
+    python promos_planilla.py                    -> lista las campañas vigentes
     python promos_planilla.py C-MLA815824        -> que publicaciones son elegibles
+    python promos_planilla.py P-MLA18145042 DEAL -> idem, de una campaña de ML
     python promos_planilla.py C-MLA815824 lista.xlsx   -> simula la planilla
 
 La planilla trae una columna con **SKU o EAN** (o el codigo MLA directo) y otra
@@ -86,6 +98,10 @@ DIR = Path(__file__).resolve().parent
 
 TIPO = "SELLER_CAMPAIGN"
 
+# Margen para comparar el descuento que fija ML contra el tope de la planilla:
+# es polvo de redondeo de centavos, igual que en `promos_campanas`.
+TOLERANCIA_TOPE = 1e-4
+
 # Pausa entre publicaciones al escribir en lote: baja los 429 de ML. Es la
 # misma que usa `promociones.py`, por el mismo motivo.
 PAUSA_ENTRE_ITEMS = 0.25
@@ -102,22 +118,25 @@ COLS_CLAVE = ["sku", "ean", "gtin", "codigo de barras", "código de barras",
 
 # --------------------------------------------------------------- campañas
 
-def campanas_propias(ml, solo_vigentes=True):
+def campanas_vigentes(ml, solo_vigentes=True, tipos=None):
     """
-    Las campañas propias de la cuenta, donde el descuento lo elegis vos.
+    Las campañas de la cuenta, de cualquier tipo (o solo de `tipos`).
 
     `solo_vigentes` deja afuera las terminadas: cargar una planilla a una
     campaña vencida no hace nada y no da error.
     """
+    from promociones import NOMBRES
     r = ml.get(f"/seller-promotions/users/{ml.user_id}", app_version="v2")
     filas = []
     for c in (r.get("results") or []):
-        if c.get("type") != TIPO:
+        if tipos and c.get("type") not in tipos:
             continue
         if solo_vigentes and c.get("status") not in ("started", "pending"):
             continue
         filas.append({
             "campana_id": c.get("id"),
+            "tipo": c.get("type") or "",
+            "nombre_tipo": NOMBRES.get(c.get("type"), c.get("type") or ""),
             "nombre": c.get("name") or "",
             "estado": c.get("status"),
             "sub_tipo": c.get("sub_type") or "",
@@ -127,7 +146,12 @@ def campanas_propias(ml, solo_vigentes=True):
     return pd.DataFrame(filas)
 
 
-def elegibles(ml, campana_id, callback=None):
+def campanas_propias(ml, solo_vigentes=True):
+    """Las campañas propias de la cuenta, donde el descuento lo elegis vos."""
+    return campanas_vigentes(ml, solo_vigentes, tipos=(TIPO,))
+
+
+def elegibles(ml, campana_id, tipo=TIPO, callback=None):
     """
     Las publicaciones que ML acepta en esa campaña, con su rango de descuento.
 
@@ -142,7 +166,7 @@ def elegibles(ml, campana_id, callback=None):
     for estado in ("candidate", "started"):
         token, vueltas = None, 0
         while True:
-            params = {"promotion_type": TIPO, "app_version": "v2",
+            params = {"promotion_type": tipo, "app_version": "v2",
                       "limit": 50, "status": estado}
             if token:
                 params["search_after"] = token
@@ -154,14 +178,26 @@ def elegibles(ml, campana_id, callback=None):
             for x in res:
                 # El primero gana: `candidate` se recorre antes y es el que
                 # trae el rango permitido, que el `started` no trae.
+                inscripta = x.get("status") == "started"
                 salida.setdefault(x["id"], {
                     "item_id": x["id"],
                     "estado_promo": x.get("status"),
                     "original_price": x.get("original_price"),
-                    "precio_promo_actual": x.get("price") or None,
+                    # En una candidata `price` NO es un precio vigente: en
+                    # los tipos donde ML fija el precio es el que propone.
+                    "precio_promo_actual": (x.get("price") or None)
+                                           if inscripta else None,
+                    "precio_ml": None if inscripta else (x.get("price")
+                                                         or None),
                     "min_precio": x.get("min_discounted_price"),
                     "max_precio": x.get("max_discounted_price"),
                     "precio_sugerido": x.get("suggested_discounted_price"),
+                    # El listado por campaña lo trae como `offer_id` y el de
+                    # la publicacion como `ref_id`. Las propias y las DEAL no
+                    # traen ninguno; el resto lo exige al dar de alta.
+                    "oferta_id": x.get("ref_id") or x.get("offer_id") or "",
+                    # Las relampago exigen comprometer stock.
+                    "stock_max": (x.get("stock") or {}).get("max"),
                 })
             vueltas += 1
             if callback:
@@ -174,22 +210,30 @@ def elegibles(ml, campana_id, callback=None):
     return salida
 
 
-def rango_del_item(ml, item_id):
+def rango_del_item(ml, item_id, campana_id=None):
     """
     El rango permitido de una publicacion que ya esta dada de alta.
 
     Las ofertas en `started` no traen `min_discounted_price` ni
     `max_discounted_price`, pero las otras ofertas del mismo item si, y son los
     mismos numeros. Se usa solo para las pocas que hagan falta.
+
+    Con `campana_id` se prefiere la oferta de esa campaña: entre campañas
+    distintas el rango cambia.
     """
     try:
         ofertas = ml.get(f"/seller-promotions/items/{item_id}",
                          app_version="v2")
     except Exception:  # noqa: BLE001
         return None, None
-    for o in (ofertas or []):
-        if o.get("min_discounted_price") and o.get("max_discounted_price"):
-            return o["min_discounted_price"], o["max_discounted_price"]
+    con_rango = [o for o in (ofertas or [])
+                 if o.get("min_discounted_price")
+                 and o.get("max_discounted_price")]
+    if campana_id:
+        propia = [o for o in con_rango if o.get("id") == campana_id]
+        con_rango = propia or con_rango
+    for o in con_rango:
+        return o["min_discounted_price"], o["max_discounted_price"]
     return None, None
 
 
@@ -282,10 +326,12 @@ def leer_planilla(archivo):
 
 COLUMNAS_SIM = ["clave", "item_id", "sku", "titulo", "descuento",
                 "precio_actual", "precio_promo", "precio_promo_vigente",
-                "min_permitido", "max_permitido", "accion", "motivo"]
+                "min_permitido", "max_permitido", "accion", "motivo",
+                "oferta_id", "stock_max"]
 
 
-def simular(df, pubs, elegibles_camp, col_clave=None, col_pct=None, ml=None):
+def simular(df, pubs, elegibles_camp, col_clave=None, col_pct=None, ml=None,
+            tipo=TIPO, campana_id=None):
     """
     Una fila por publicacion a tocar (o por problema detectado), sin escribir
     nada en MercadoLibre.
@@ -298,6 +344,9 @@ def simular(df, pubs, elegibles_camp, col_clave=None, col_pct=None, ml=None):
     tiene su propio precio original, asi que el mismo porcentaje da precios
     distintos. Repetir la llamada sobre una que ya quedo cubierta no hace daño:
     el POST es el mismo que corrige.
+
+    `tipo` y `campana_id` son los de la campaña destino. En las campañas
+    donde ML fija el precio, el porcentaje de la planilla es un **tope**.
     """
     if col_clave is None or col_pct is None:
         detectadas = detectar_columnas(df)
@@ -359,7 +408,8 @@ def simular(df, pubs, elegibles_camp, col_clave=None, col_pct=None, ml=None):
                 continue
 
         for pub in destinos:
-            filas.append(_evaluar(pub, clave_cruda, pct, elegibles_camp, ml))
+            filas.append(_evaluar(pub, clave_cruda, pct, elegibles_camp, ml,
+                                  tipo, campana_id))
 
     return pd.DataFrame(filas, columns=COLUMNAS_SIM)
 
@@ -368,16 +418,21 @@ def _problema(clave, pct, accion, motivo):
     return {"clave": clave, "item_id": "", "sku": "", "titulo": "",
             "descuento": pct, "precio_actual": None, "precio_promo": None,
             "precio_promo_vigente": None, "min_permitido": None,
-            "max_permitido": None, "accion": accion, "motivo": motivo}
+            "max_permitido": None, "accion": accion, "motivo": motivo,
+            "oferta_id": "", "stock_max": None}
 
 
-def _evaluar(pub, clave, pct, elegibles_camp, ml=None):
+def _evaluar(pub, clave, pct, elegibles_camp, ml=None, tipo=TIPO,
+             campana_id=None):
     """Decide que pasa con una publicacion concreta."""
     base = {"clave": clave, "item_id": pub["id"],
             "sku": normalizar_sku(sku_del_atributo(pub)),
             "titulo": (pub.get("title") or "")[:70], "descuento": pct}
 
     eleg = elegibles_camp.get(pub["id"])
+    if eleg:
+        base["oferta_id"] = eleg.get("oferta_id") or ""
+        base["stock_max"] = eleg.get("stock_max")
     if not eleg:
         return {**base, "precio_actual": pub.get("price"), "precio_promo": None,
                 "precio_promo_vigente": None, "min_permitido": None,
@@ -392,12 +447,27 @@ def _evaluar(pub, clave, pct, elegibles_camp, ml=None):
                 "max_permitido": None, "accion": "sin_precio",
                 "motivo": "La publicacion no tiene precio."}
 
-    deal = round(original * (1 - pct), 2)
-    mn, mx = eleg.get("min_precio"), eleg.get("max_precio")
-    if (mn is None or mx is None) and ml is not None:
-        mn, mx = rango_del_item(ml, pub["id"])
-
     vigente = eleg.get("precio_promo_actual")
+    mn, mx = eleg.get("min_precio"), eleg.get("max_precio")
+
+    # **ML fija el precio** cuando la candidata trae precio propuesto y no
+    # trae techo de rango (SMART, relampago...). Solo se puede entrar o no.
+    if tipo != TIPO and mx is None and (eleg.get("precio_ml") or vigente):
+        return _evaluar_precio_fijo(base, eleg, original, pct, vigente)
+
+    # En las campañas de ML, corregir el precio de una ya inscripta no esta
+    # probado (en las propias si: el mismo POST corrige). No se toca.
+    if tipo != TIPO and vigente is not None:
+        return {**base, "precio_actual": original, "precio_promo": None,
+                "precio_promo_vigente": vigente, "min_permitido": mn,
+                "max_permitido": mx, "accion": "ya_en_campana",
+                "motivo": (f"Ya está en la campaña a ${vigente:,.2f}. En las "
+                           "campañas de ML no se corrige desde acá.")}
+
+    deal = round(original * (1 - pct), 2)
+    if (mn is None or mx is None) and ml is not None:
+        mn, mx = rango_del_item(ml, pub["id"], campana_id)
+
     fila = {**base, "precio_actual": original, "precio_promo": deal,
             "precio_promo_vigente": vigente, "min_permitido": mn,
             "max_permitido": mx}
@@ -431,6 +501,33 @@ def _evaluar(pub, clave, pct, elegibles_camp, ml=None):
             "motivo": fila.get("motivo") or "Alta nueva en la campaña."}
 
 
+def _evaluar_precio_fijo(base, eleg, original, pct, vigente):
+    """
+    Campaña donde ML fija el precio: el porcentaje de la planilla es el
+    descuento MAXIMO que se acepta. Si ML pide mas, no se entra.
+    """
+    fila = {**base, "precio_actual": original, "precio_promo_vigente": vigente,
+            "min_permitido": None, "max_permitido": None}
+    if vigente is not None:
+        return {**fila, "precio_promo": vigente,
+                "descuento": 1 - float(vigente) / original,
+                "accion": "sin_cambio",
+                "motivo": (f"Ya está en la campaña a ${vigente:,.2f} (el "
+                           "precio lo fija MercadoLibre).")}
+
+    precio = float(eleg["precio_ml"])
+    d_ml = 1 - precio / original
+    if d_ml > pct + TOLERANCIA_TOPE:
+        return {**fila, "precio_promo": precio, "descuento": d_ml,
+                "accion": "pide_mas_descuento",
+                "motivo": (f"MercadoLibre fija {d_ml:.1%} y la planilla "
+                           f"acepta hasta {pct:.1%}: no entra.")}
+    return {**fila, "precio_promo": round(precio, 2), "descuento": d_ml,
+            "accion": "alta",
+            "motivo": (f"El precio lo fija MercadoLibre: {d_ml:.1%} (la "
+                       f"planilla acepta hasta {pct:.1%}).")}
+
+
 def resumen(sim):
     """Conteos por accion, para mostrar antes de aplicar."""
     if sim.empty:
@@ -443,7 +540,8 @@ def resumen(sim):
 ACCIONES_QUE_ESCRIBEN = ("alta", "actualizar")
 
 
-def aplicar(ml, sim, campana_id, operador="", callback=None, omitir=None):
+def aplicar(ml, sim, campana_id, operador="", callback=None, omitir=None,
+            tipo=TIPO):
     """
     Da de alta (o corrige) las publicaciones de la simulacion en la campaña.
 
@@ -469,12 +567,18 @@ def aplicar(ml, sim, campana_id, operador="", callback=None, omitir=None):
 
     for n, (_, f) in enumerate(pendientes.iterrows(), start=1):
         deal = round(float(f["precio_promo"]), 2)
+        cuerpo = {"promotion_type": tipo, "promotion_id": campana_id,
+                  "deal_price": deal}
+        # Las propias no llevan offer_id; el resto lo exige si ML lo informa
+        # (las DEAL no lo traen y entran sin el).
+        if tipo != TIPO and f.get("oferta_id"):
+            cuerpo["offer_id"] = f["oferta_id"]
+        # Las relampago exigen cuanto stock se compromete: va el maximo.
+        if pd.notna(f.get("stock_max")) and f.get("stock_max") is not None:
+            cuerpo["stock"] = int(f["stock_max"])
         try:
             ml.post(f"/seller-promotions/items/{f['item_id']}",
-                    payload={"promotion_type": TIPO,
-                             "promotion_id": campana_id,
-                             "deal_price": deal},
-                    app_version="v2")
+                    payload=cuerpo, app_version="v2")
             resultado, detalle = "OK", ""
         except Exception as e:  # noqa: BLE001
             resultado, detalle = "ERROR", f"{type(e).__name__}: {str(e)[:220]}"
@@ -482,7 +586,7 @@ def aplicar(ml, sim, campana_id, operador="", callback=None, omitir=None):
         almacen.append_auditoria([{
             "fecha": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S"),
             "item_id": f["item_id"],
-            "campo": f"promocion:{TIPO}:{campana_id}",
+            "campo": f"promocion:{tipo}:{campana_id}",
             "valor_anterior": (f["precio_promo_vigente"]
                                if pd.notna(f["precio_promo_vigente"])
                                else f["precio_actual"]),
@@ -501,7 +605,7 @@ def aplicar(ml, sim, campana_id, operador="", callback=None, omitir=None):
     return pd.DataFrame(filas)
 
 
-def verificar(ml, campana_id, item_ids):
+def verificar(ml, campana_id, item_ids, tipo=TIPO):
     """
     Que quedo realmente activo en la campaña.
 
@@ -513,7 +617,7 @@ def verificar(ml, campana_id, item_ids):
     activos = {}
     token, vueltas = None, 0
     while True:
-        params = {"promotion_type": TIPO, "app_version": "v2", "limit": 50,
+        params = {"promotion_type": tipo, "app_version": "v2", "limit": 50,
                   "status": "started"}
         if token:
             params["search_after"] = token
@@ -533,7 +637,7 @@ def verificar(ml, campana_id, item_ids):
                          for i in item_ids])
 
 
-def dar_de_baja(ml, item_id, campana_id):
+def dar_de_baja(ml, item_id, campana_id, tipo=TIPO):
     """
     Saca una publicacion de la campaña. Devuelve (ok, detalle).
 
@@ -541,7 +645,7 @@ def dar_de_baja(ml, item_id, campana_id):
     del alta contesta "No offers found for item" o no hace nada.
     """
     try:
-        ml.delete(f"/seller-promotions/items/{item_id}", promotion_type=TIPO,
+        ml.delete(f"/seller-promotions/items/{item_id}", promotion_type=tipo,
                   promotion_id=campana_id, app_version="v2")
         return True, ""
     except Exception as e:  # noqa: BLE001
@@ -555,9 +659,9 @@ def main():
     args = [a for a in sys.argv[1:] if not a.startswith("-")]
 
     if not args:
-        camp = campanas_propias(ml)
+        camp = campanas_vigentes(ml)
         print("=" * 70)
-        print("CAMPAÑAS PROPIAS (el descuento lo elegis vos)")
+        print("CAMPAÑAS VIGENTES")
         print("=" * 70)
         if not len(camp):
             print("\nNo hay ninguna vigente. Se crean desde el panel de "
@@ -565,15 +669,17 @@ def main():
                   "campaña propia.\n(Por API no se pueden crear.)")
             return 0
         for _, c in camp.iterrows():
-            print(f"\n  {c['campana_id']}  {c['nombre']}")
+            print(f"\n  {c['campana_id']}  {c['nombre']}  [{c['tipo']}]")
             print(f"     {c['estado']} · del {c['desde']} al {c['hasta']}")
         print(f"\nPara ver los elegibles:  python {Path(__file__).name} "
               f"{camp.iloc[0]['campana_id']}")
         return 0
 
     campana_id = args[0]
-    print(f"Trayendo elegibles de {campana_id}...")
-    eleg = elegibles(ml, campana_id,
+    tipo = next((a for a in args[1:] if a.isupper() and "." not in a), TIPO)
+    args = [a for a in args if a != tipo or a == campana_id]
+    print(f"Trayendo elegibles de {campana_id} ({tipo})...")
+    eleg = elegibles(ml, campana_id, tipo,
                      callback=lambda m: print(f"  {m}", end="\r"))
     print(" " * 60)
     print(f"  {len(eleg)} publicaciones elegibles.")
@@ -605,7 +711,8 @@ def main():
     col_clave, col_pct = detectar_columnas(df)
     print(f"\nColumnas detectadas: clave='{col_clave}' descuento='{col_pct}'")
 
-    sim = simular(df, pubs, eleg, col_clave, col_pct, ml=ml)
+    sim = simular(df, pubs, eleg, col_clave, col_pct, ml=ml, tipo=tipo,
+                  campana_id=campana_id)
     print("\n" + "=" * 70)
     print("SIMULACION")
     print("=" * 70)
