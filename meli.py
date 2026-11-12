@@ -297,6 +297,7 @@ class Meli:
         espera = 2
         vistos_429 = 0
         vistos_5xx = 0
+        vistos_dep = 0
 
         for intento in range(1, intentos + intentos_429 + 1):
             cabeceras = {"Authorization": f"Bearer {self.token}",
@@ -359,6 +360,21 @@ class Meli:
                           f"(espera {vistos_429}/{intentos_429})")
                 time.sleep(pausa)
                 espera = min(espera * 2, 60)
+                continue
+
+            # Desde nov-2026 ML contesta al azar ~1 de cada 20 multiget
+            # (/items?ids=...) con 403 "ResourceDeprecated", y el mismo pedido
+            # pasa al reintentar: esta apagando el recurso de a poco. Sin esto
+            # un solo 403 mataba la bajada entera del catalogo. Solo GET: es
+            # lectura y reintentarla no duplica nada.
+            if (resp.status_code == 403 and metodo == "GET"
+                    and "ResourceDeprecated" in resp.text):
+                vistos_dep += 1
+                if vistos_dep > intentos:
+                    raise MeliError(
+                        f"{metodo} {url} -> HTTP 403 ResourceDeprecated "
+                        f"{vistos_dep} veces seguidas: {resp.text[:300]}")
+                time.sleep(min(2 * vistos_dep, 10))
                 continue
 
             if resp.status_code == 401 and intento == 1:
@@ -440,13 +456,34 @@ class Meli:
             params = {"ids": ",".join(lote)}
             if atributos:
                 params["attributes"] = ",".join(atributos)
-            for fila in self.get("/items", **params):
+            try:
+                filas = self.get("/items", **params)
+            except MeliError as e:
+                if "ResourceDeprecated" not in str(e):
+                    raise
+                # ML ya no deja el multiget para este lote (o lo apago del
+                # todo): de a una publicacion, que sigue andando.
+                filas = self._items_de_a_uno(lote, atributos)
+            for fila in filas:
                 if fila.get("code") == 200:
                     yield fila["body"]
                 else:
                     print(f"[meli] AVISO: no se pudo traer {fila.get('body', {}).get('id', '?')} "
                           f"(code {fila.get('code')})")
 
+
+    def _items_de_a_uno(self, ids, atributos=None):
+        """Mismo formato que el multiget ({code, body}), pero con /items/{id}."""
+        params = {"attributes": ",".join(atributos)} if atributos else {}
+        resp = self.get_varios([f"/items/{i}" for i in ids], **params)
+        filas = []
+        for i in ids:
+            r = resp.get(f"/items/{i}")
+            if isinstance(r, MeliError):
+                filas.append({"code": 500, "body": {"id": i, "error": str(r)}})
+            else:
+                filas.append({"code": 200, "body": r})
+        return filas
 
     # ------------------------------------------------------------- escritura
 
