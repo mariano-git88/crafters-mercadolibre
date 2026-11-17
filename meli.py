@@ -456,14 +456,24 @@ class Meli:
             params = {"ids": ",".join(lote)}
             if atributos:
                 params["attributes"] = ",".join(atributos)
-            try:
-                filas = self.get("/items", **params)
-            except MeliError as e:
-                if "ResourceDeprecated" not in str(e):
-                    raise
-                # ML ya no deja el multiget para este lote (o lo apago del
-                # todo): de a una publicacion, que sigue andando.
+            # Cada lote rechazado cuesta ~30 s de reintentos antes de caer al
+            # respaldo: con el catalogo entero (~200 lotes) serian ~100 min
+            # colgados. Despues de 3 rechazos SEGUIDOS se da por apagado y se
+            # va directo de a una por el resto de esta sesion.
+            if getattr(self, "_rechazos_multiget", 0) >= 3:
                 filas = self._items_de_a_uno(lote, atributos)
+            else:
+                try:
+                    filas = self.get("/items", **params)
+                    self._rechazos_multiget = 0
+                except MeliError as e:
+                    if "ResourceDeprecated" not in str(e):
+                        raise
+                    # ML ya no deja el multiget para este lote (o lo apago del
+                    # todo): de a una publicacion, que sigue andando.
+                    self._rechazos_multiget = getattr(
+                        self, "_rechazos_multiget", 0) + 1
+                    filas = self._items_de_a_uno(lote, atributos)
             for fila in filas:
                 if fila.get("code") == 200:
                     yield fila["body"]

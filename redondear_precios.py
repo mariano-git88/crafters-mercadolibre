@@ -71,11 +71,12 @@ def analizar(ml, pubs=None, callback=None):
         if callback:
             callback(f"Leyendo precios... {i}/{len(ids)}")
         try:
-            lote = ml.get("/items", ids=",".join(ids[i:i + 20]))
+            # list(): items_detalle es un generador y el error tiene que
+            # saltar adentro del try. Si ML apaga el multiget, cae a /items/{id}.
+            lote = list(ml.items_detalle(ids[i:i + 20]))
         except Exception:                              # noqa: BLE001
             continue
-        for w in lote:
-            b = (w or {}).get("body") or {}
+        for b in lote:
             precio = b.get("price")
             if b.get("status") != "active" or precio is None:
                 continue

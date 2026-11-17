@@ -19,6 +19,14 @@ name: Sincronizar stock
 # día pasa a privado, el plan gratuito da 2.000 min/mes y esto se los comería
 # en dos días: por eso, en un repo privado, cada corrida hace UNA sola pasada
 # (como antes) en vez del bucle.
+#
+# **Al terminar bien, la corrida se relanza sola** (último paso). Medido del
+# 10 al 17/11/2026: aun con el bucle de 5 h, los disparos del `*/15` llegaban
+# tan espaciados que el bucle estuvo parado 38 de 186 horas (~20%), con
+# huecos de hasta 4,4 h sin stock ni preguntas. El cron queda de respaldo: si
+# una corrida falla, NO se relanza (para no encadenar fallas) y la retoma el
+# próximo disparo programado. Para frenar la cadena: Actions → este workflow
+# → "Disable workflow".
 on:
   schedule:
     - cron: '*/15 * * * *'
@@ -35,6 +43,9 @@ jobs:
     runs-on: ubuntu-latest
     # El límite de GitHub para un job es 6 horas; el bucle corta a las 5:30.
     timeout-minutes: 350
+    permissions:
+      contents: read      # checkout
+      actions: write      # relanzarse al terminar
 
     steps:
       - uses: actions/checkout@v7
@@ -71,3 +82,12 @@ jobs:
       - name: Limpiar credenciales
         if: always()
         run: rm -f .streamlit/secrets.toml
+
+      - name: Relanzar el bucle
+        # Solo si terminó bien y en el repo público (en privado gastaría los
+        # minutos del plan). Un workflow_dispatch con el token del propio job
+        # sí dispara corridas nuevas (los demás eventos no).
+        if: success() && github.event.repository.private == false
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run sincronizar_stock.yml --repo "$GITHUB_REPOSITORY" --ref main

@@ -176,8 +176,8 @@ def _frescos(ml, pubs, callback=None):
         if callback:
             callback(f"Releyendo precios... {i}/{len(ids)}")
         try:
-            for w in ml.get("/items", ids=",".join(ids[i:i + 20])):
-                b = (w or {}).get("body") or {}
+            # items_detalle: si ML apaga el multiget, cae a /items/{id}.
+            for b in ml.items_detalle(ids[i:i + 20]):
                 if b.get("id"):
                     vivos[b["id"]] = b
         except Exception:                              # noqa: BLE001

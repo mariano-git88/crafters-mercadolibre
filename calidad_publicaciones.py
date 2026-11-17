@@ -72,8 +72,7 @@ while True:
 
 todo = {}
 for i in range(0, len(ids), 20):
-    for w in ml.get("/items", ids=",".join(ids[i:i + 20])):
-        d = w.get("body") or {}
+    for d in ml.items_detalle(ids[i:i + 20]):
         todo[d["id"]] = d
 
 por_sku = {}
